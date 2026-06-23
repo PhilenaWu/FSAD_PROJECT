@@ -1,0 +1,1 @@
+-- Migration: Create notifications table

@@ -1,0 +1,1 @@
+-- Migration: Create reports table

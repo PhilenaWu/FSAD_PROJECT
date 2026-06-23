@@ -1,0 +1,1 @@
+-- Migration: Create ai_predictions table

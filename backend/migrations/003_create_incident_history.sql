@@ -1,0 +1,1 @@
+-- Migration: Create incident_history table

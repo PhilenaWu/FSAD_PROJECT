@@ -1,0 +1,1 @@
+-- Migration: Create incidents table

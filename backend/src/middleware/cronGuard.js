@@ -1,0 +1,1 @@
+// validateCronSecret() for scheduled endpoints

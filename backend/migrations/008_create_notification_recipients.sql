@@ -1,0 +1,1 @@
+-- Migration: Create notification_recipients table

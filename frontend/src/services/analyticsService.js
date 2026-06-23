@@ -1,0 +1,1 @@
+// getHeatmap(), getTrends(), getSla()

@@ -1,0 +1,1 @@
+// Read receipt badge component

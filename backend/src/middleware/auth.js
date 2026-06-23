@@ -1,0 +1,1 @@
+// verifyJWT(), requireRole('manager')

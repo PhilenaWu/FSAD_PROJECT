@@ -1,0 +1,1 @@
+-- Migration: Create cv_detections table
