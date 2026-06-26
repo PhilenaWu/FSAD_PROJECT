@@ -1,1 +1,0 @@
-// Incident card component
