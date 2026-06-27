@@ -12,7 +12,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-router": "^7.18.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
