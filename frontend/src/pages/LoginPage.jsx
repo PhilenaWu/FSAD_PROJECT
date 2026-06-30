@@ -1,12 +1,15 @@
 // Login page — centered MUI card on the light background. No header/nav.
 // Uses the AuthContext login() (which wraps Supabase signIn).
 import { useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router';
+import { Link as RouterLink, Navigate, useNavigate } from 'react-router';
 import {
   Alert,
   Box,
   Button,
+  Checkbox,
+  CircularProgress,
   Container,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   Link,
@@ -19,12 +22,15 @@ import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { user, loading, login } = useAuth();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState('');
+  // Pre-fill the email from a previous "Remember me" (email only, never password).
+  const savedEmail = localStorage.getItem('rememberedEmail') ?? '';
+  const [email, setEmail] = useState(savedEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(Boolean(savedEmail));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -38,7 +44,34 @@ export default function LoginPage() {
       setError(signInError.message);
       return;
     }
+    // Remember (or forget) the email for next time — email only.
+    if (rememberMe) {
+      localStorage.setItem('rememberedEmail', email);
+    } else {
+      localStorage.removeItem('rememberedEmail');
+    }
     navigate('/dashboard');
+  }
+
+  // Already signed in: skip the form. Wait for the session check first so we
+  // don't flash the login form before redirecting.
+  if (loading) {
+    return (
+      <Box
+        sx={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: 'background.default',
+        }}
+      >
+        <CircularProgress />
+      </Box>
+    );
+  }
+  if (user) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (
@@ -98,6 +131,16 @@ export default function LoginPage() {
                     </InputAdornment>
                   ),
                 }}
+              />
+
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                  />
+                }
+                label="Remember me"
               />
 
               <Button
