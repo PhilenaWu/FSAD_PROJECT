@@ -15,6 +15,9 @@ const required = [
   'DATABASE_URL',
   'SUPABASE_URL',
   'SUPABASE_PUBLISHABLE_KEY',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
 ];
 
 const missing = required.filter((key) => !process.env[key]);
@@ -33,6 +36,9 @@ const config = Object.freeze({
   DATABASE_URL: process.env.DATABASE_URL,
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY,
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
 });
 
 module.exports = config;

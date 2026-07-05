@@ -8,6 +8,7 @@ const cors = require('cors');
 const config = require('./config/env');
 const rateLimiter = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
+const incidentRoutes = require('./routes/incidents');
 
 const app = express();
 
@@ -32,7 +33,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// TODO: mount feature routes here (auth, incidents, analytics, ...) as they land.
+// Feature routes (more mounted here as they land).
+app.use('/api/incidents', incidentRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);
