@@ -9,6 +9,7 @@ const config = require('./config/env');
 const rateLimiter = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const incidentRoutes = require('./routes/incidents');
+const userRoutes = require('./routes/users');
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.get('/health', (req, res) => {
 
 // Feature routes (more mounted here as they land).
 app.use('/api/incidents', incidentRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);

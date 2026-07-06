@@ -4,11 +4,15 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { signIn, signOut, onAuthChange } from '../lib/auth';
+import api from '../services/api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  // profile = the user's row from the `users` table (name/role/block/unit),
+  // fetched separately since the Supabase auth user doesn't carry these.
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,11 +28,32 @@ export function AuthProvider({ children }) {
     return unsubscribe;
   }, []);
 
+  // Load the profile row whenever the signed-in user changes; clear it on
+  // logout. Header fields degrade gracefully until this resolves.
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      return;
+    }
+    let active = true;
+    api
+      .get('/api/users/me')
+      .then((res) => {
+        if (active) setProfile(res.data);
+      })
+      .catch(() => {
+        if (active) setProfile(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
   // Return the signIn result so callers can read its { error }.
   const login = (email, password) => signIn(email, password);
   const logout = () => signOut();
 
-  const value = { user, loading, login, logout };
+  const value = { user, profile, loading, login, logout };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

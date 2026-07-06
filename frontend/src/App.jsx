@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router'
 import ProtectedRoute from './components/ProtectedRoute'
+import ResidentLayout from './components/ResidentLayout'
 import LoginPage from './pages/LoginPage'
 import ReportIssuePage from './pages/ReportIssuePage'
 import IncidentListPage from './pages/IncidentListPage'
@@ -16,11 +17,17 @@ function App() {
 
       {/* Protected: ProtectedRoute renders these via <Outlet /> only when authed */}
       <Route element={<ProtectedRoute />}>
-        <Route path="/report" element={<ReportIssuePage />} />
+        {/* Resident pages share the resident header/layout. Managers get a
+            separate layout later, so their pages stay outside this group. */}
+        <Route element={<ResidentLayout />}>
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/report" element={<ReportIssuePage />} />
+          <Route path="/my-reports" element={<MyReportsPage />} />
+        </Route>
+
+        {/* Other protected pages (manager/other) — no resident header for now. */}
         <Route path="/incidents" element={<IncidentListPage />} />
         <Route path="/incidents/:id" element={<IncidentDetailPage />} />
-        <Route path="/my-reports" element={<MyReportsPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/reports" element={<ReportsArchivePage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
       </Route>
