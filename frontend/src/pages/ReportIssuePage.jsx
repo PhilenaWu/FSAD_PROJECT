@@ -110,7 +110,7 @@ export default function ReportIssuePage() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', py: { xs: 4, sm: 6 }, px: 2 }}>
       <Container maxWidth="sm" disableGutters sx={{ maxWidth: 720 }}>
-        <Typography variant="h4" component="h1" fontWeight={700} sx={{ mb: 3 }}>
+        <Typography variant="h4" component="h1" fontWeight={700} sx={{ mb: 3, color: 'primary.main' }}>
           Report an issue
         </Typography>
 
@@ -139,6 +139,7 @@ export default function ReportIssuePage() {
                 fullWidth
                 multiline
                 minRows={4}
+                helperText="Describe the issue and exactly where it is, e.g. Level 3 lift lobby"
               />
 
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
@@ -150,6 +151,9 @@ export default function ReportIssuePage() {
                   required
                   fullWidth
                 >
+                  <MenuItem value="" disabled>
+                    Select block
+                  </MenuItem>
                   {BLOCKS.map((b) => (
                     <MenuItem key={b} value={b}>
                       {b}
@@ -161,6 +165,7 @@ export default function ReportIssuePage() {
                   label="Unit"
                   value={unit}
                   onChange={(e) => setUnit(e.target.value)}
+                  placeholder="#12-05"
                   fullWidth
                 />
               </Stack>

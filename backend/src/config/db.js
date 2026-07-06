@@ -14,6 +14,10 @@ const pool = new Pool({
   connectionString: config.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 10,
+  // Fail fast: if the handshake doesn't complete in 10s (e.g. a network that
+  // blocks the Postgres port), reject instead of hanging forever so startup
+  // surfaces a clear error rather than silently never listening.
+  connectionTimeoutMillis: 10000,
 });
 
 // Errors on idle clients are emitted here; log them so a dropped backend
