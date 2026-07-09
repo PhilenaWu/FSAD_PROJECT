@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS retry_queue (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   image_url   VARCHAR(500) NOT NULL,
-  incident_id UUID         REFERENCES incidents(id),
+  inspection_id UUID       REFERENCES inspections(id),
   attempts    INTEGER NOT NULL DEFAULT 0,
   status      VARCHAR(20)  NOT NULL DEFAULT 'pending'
               CHECK (status IN ('pending','processed','failed')),
