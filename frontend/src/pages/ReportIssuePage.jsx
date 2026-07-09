@@ -1,5 +1,5 @@
-// UC-001 "Report an issue" page. Residents file an incident (optional photo)
-// via POST /api/incidents. Category/priority are set by the backend AI.
+// UC-001 "Report an issue" page. Residents file a complaint (optional photo)
+// via POST /api/inspections. Category/priority are set by the backend AI.
 import { useEffect, useState } from 'react';
 import {
   Alert,
@@ -81,7 +81,7 @@ export default function ReportIssuePage() {
     setSubmitting(true);
     try {
       // Let the browser set the multipart boundary; the api interceptor adds auth.
-      await api.post('/api/incidents', formData);
+      await api.post('/api/inspections', formData);
       setFeedback({
         severity: 'success',
         message: 'Report submitted — category and priority will be set automatically.',

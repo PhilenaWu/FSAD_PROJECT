@@ -1,13 +1,14 @@
-// Incident controllers. UC-001: a resident creates an incident with an optional
-// photo, which is AI-categorised. (list/assign/close/rate land with UC-002+.)
+// Inspection controllers. UC-001: a resident files a complaint with an optional
+// photo, which is AI-categorised. (Lift inspections, assign/close/rate land later.)
 'use strict';
 
 const { query } = require('../config/db');
-const incidentModel = require('../models/incidentModel');
+const inspectionModel = require('../models/inspectionModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
 
-// POST /api/incidents — resident submits a new incident.
+// POST /api/inspections — resident submits a new complaint (source_type
+// 'resident_complaint'). Inspector/lift-inspection flows are out of scope here.
 async function create(req, res, next) {
   try {
     const resident_id = req.user.id;
@@ -25,7 +26,7 @@ async function create(req, res, next) {
     // certainly a double submit. One-off query, so it lives here rather than in
     // the model (which stays to its three UC-001 methods for now).
     const dup = await query(
-      `SELECT id FROM incidents
+      `SELECT id FROM inspections
        WHERE resident_id = $1 AND title = $2
          AND is_deleted = FALSE
          AND created_at > NOW() - INTERVAL '2 minutes'
@@ -51,7 +52,8 @@ async function create(req, res, next) {
       description
     );
 
-    const incident = await incidentModel.create({
+    const inspection = await inspectionModel.create({
+      source_type: 'resident_complaint',
       resident_id,
       title,
       description,
@@ -62,7 +64,7 @@ async function create(req, res, next) {
       ai_priority_score: priority_score,
     });
 
-    res.status(201).json(incident);
+    res.status(201).json(inspection);
   } catch (err) {
     next(err);
   }

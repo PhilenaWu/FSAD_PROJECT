@@ -1,6 +1,6 @@
-// Integration tests for incidents — POST /api/incidents (UC-001 create).
-// The app runs in-process (supertest). Three boundaries are mocked so the test
-// is deterministic and hits no network:
+// Integration tests for inspections — POST /api/inspections (UC-001 create,
+// resident complaint). The app runs in-process (supertest). Three boundaries are
+// mocked so the test is deterministic and hits no network:
 //   - config/supabase: fake getClaims to drive auth without real JWTs
 //   - config/db:        in-memory store so we exercise the real controller/model
 //                       flow without a Postgres/Supabase connection
@@ -32,7 +32,7 @@ const profiles = {
   'res-1': { role: 'resident', status: 'active' },
   'mgr-1': { role: 'manager', status: 'active' },
 };
-const store = { incidents: [] };
+const store = { inspections: [] };
 
 jest.mock('../../src/config/db', () => ({
   pool: {},
@@ -43,15 +43,16 @@ jest.mock('../../src/config/db', () => ({
       const p = profiles[params[0]];
       return { rows: p ? [p] : [] };
     }
-    // create: INSERT INTO incidents (...) RETURNING *
-    if (/INSERT INTO incidents/i.test(sql)) {
+    // create: INSERT INTO inspections (...) RETURNING *
+    if (/INSERT INTO inspections/i.test(sql)) {
       const [
-        resident_id, title, description, location_block, location_unit,
-        photo_url, category, ai_priority_score, source_flag,
+        source_type, resident_id, title, description, location_block,
+        location_unit, photo_url, category, ai_priority_score, source_flag,
       ] = params;
       const now = new Date().toISOString();
       const row = {
-        id: `inc-${store.incidents.length + 1}`,
+        id: `insp-${store.inspections.length + 1}`,
+        source_type,
         resident_id, title, description, location_block,
         location_unit: location_unit ?? null,
         photo_url: photo_url ?? null,
@@ -65,13 +66,13 @@ jest.mock('../../src/config/db', () => ({
         created_at: now,
         updated_at: now,
       };
-      store.incidents.push(row);
+      store.inspections.push(row);
       return { rows: [row] };
     }
-    // duplicate guard: SELECT id FROM incidents WHERE resident_id=$1 AND title=$2 ...
-    if (/SELECT id FROM incidents/i.test(sql)) {
+    // duplicate guard: SELECT id FROM inspections WHERE resident_id=$1 AND title=$2 ...
+    if (/SELECT id FROM inspections/i.test(sql)) {
       const [resident_id, title] = params;
-      const dup = store.incidents.filter(
+      const dup = store.inspections.filter(
         (i) => i.resident_id === resident_id && i.title === title && !i.is_deleted
       );
       return { rows: dup.map((i) => ({ id: i.id })) };
@@ -89,14 +90,14 @@ const PNG = Buffer.from(
 );
 
 beforeEach(() => {
-  store.incidents.length = 0;
+  store.inspections.length = 0;
   jest.clearAllMocks();
 });
 
-describe('POST /api/incidents', () => {
+describe('POST /api/inspections', () => {
   test('401 when no token is provided', async () => {
     const res = await request(app)
-      .post('/api/incidents')
+      .post('/api/inspections')
       .field('title', 'Leak')
       .field('description', 'Water everywhere')
       .field('location_block', 'A');
@@ -107,7 +108,7 @@ describe('POST /api/incidents', () => {
 
   test('403 when the user is not a resident', async () => {
     const res = await request(app)
-      .post('/api/incidents')
+      .post('/api/inspections')
       .set('Authorization', 'Bearer manager-token')
       .field('title', 'Leak')
       .field('description', 'Water everywhere')
@@ -119,7 +120,7 @@ describe('POST /api/incidents', () => {
 
   test('400 when title is missing', async () => {
     const res = await request(app)
-      .post('/api/incidents')
+      .post('/api/inspections')
       .set('Authorization', 'Bearer resident-token')
       .field('description', 'No title here')
       .field('location_block', 'A');
@@ -128,9 +129,9 @@ describe('POST /api/incidents', () => {
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
-  test('201 creates the incident, categorises it, and stores the photo', async () => {
+  test('201 creates the complaint, categorises it, and stores the photo', async () => {
     const res = await request(app)
-      .post('/api/incidents')
+      .post('/api/inspections')
       .set('Authorization', 'Bearer resident-token')
       .field('title', 'Water leak in stairwell')
       .field('description', 'Dripping from ceiling')
@@ -138,6 +139,7 @@ describe('POST /api/incidents', () => {
       .attach('photo', PNG, 'test.png');
 
     expect(res.status).toBe(201);
+    expect(res.body.source_type).toBe('resident_complaint');
     expect(res.body.category).toBe('Uncategorised');
     expect(res.body.ai_priority_score).toBe(50);
     expect(res.body.status).toBe('Open');
@@ -150,7 +152,7 @@ describe('POST /api/incidents', () => {
   test('409 on a duplicate title within 2 minutes', async () => {
     const submit = () =>
       request(app)
-        .post('/api/incidents')
+        .post('/api/inspections')
         .set('Authorization', 'Bearer resident-token')
         .field('title', 'Broken lift on level 3')
         .field('description', 'Lift is stuck')

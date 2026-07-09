@@ -1,11 +1,11 @@
-// Incident routes. UC-001: residents create incidents (with an optional photo).
+// Inspection routes. UC-001: residents file complaints (with an optional photo).
 'use strict';
 
 const express = require('express');
 const multer = require('multer');
 
 const { requireAuth, requireRole } = require('../middleware/auth');
-const incidentController = require('../controllers/incidentController');
+const inspectionController = require('../controllers/inspectionController');
 
 const router = express.Router();
 
@@ -19,13 +19,13 @@ const upload = multer({
   },
 });
 
-// POST /api/incidents — resident submits an incident; `photo` is optional.
+// POST /api/inspections — resident submits a complaint; `photo` is optional.
 router.post(
   '/',
   requireAuth,
   requireRole('resident'),
   upload.single('photo'),
-  incidentController.create
+  inspectionController.create
 );
 
 module.exports = router;
