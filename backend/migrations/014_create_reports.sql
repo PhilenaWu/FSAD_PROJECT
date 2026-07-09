@@ -1,4 +1,4 @@
--- Migration: Create reports table
+-- Migration: Create reports table (standalone audit archive of generated PDFs)
 CREATE TABLE IF NOT EXISTS reports (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   report_url      VARCHAR(500),                  -- Cloudinary /reports URL

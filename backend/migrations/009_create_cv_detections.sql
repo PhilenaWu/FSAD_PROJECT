@@ -12,15 +12,15 @@ CREATE TABLE IF NOT EXISTS cv_detections (
   detected_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Deferred foreign key from incidents (002) — cv_detections did not exist yet
+-- Deferred foreign key from inspections (004) — cv_detections did not exist yet
 -- when that table was created. Guarded so re-runs do not error.
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'fk_incidents_cv_detection'
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_inspections_cv_detection'
   ) THEN
-    ALTER TABLE incidents
-      ADD CONSTRAINT fk_incidents_cv_detection
+    ALTER TABLE inspections
+      ADD CONSTRAINT fk_inspections_cv_detection
       FOREIGN KEY (cv_detection_id) REFERENCES cv_detections(id);
   END IF;
 END $$;
