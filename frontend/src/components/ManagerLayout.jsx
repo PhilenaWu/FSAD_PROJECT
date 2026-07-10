@@ -36,7 +36,6 @@ import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../context/AuthContext';
 
@@ -220,16 +219,9 @@ export default function ManagerLayout() {
 
               <Divider />
 
-              {/* Stub — no profile page yet (disabled placeholder). */}
-              <MenuItem disabled>
+              <MenuItem onClick={() => { setMenuAnchor(null); navigate('/profile'); }}>
                 <PersonOutlineIcon fontSize="small" sx={{ mr: 1.5 }} />
                 Profile
-              </MenuItem>
-
-              {/* Stub — no settings page yet (disabled placeholder). */}
-              <MenuItem disabled>
-                <SettingsOutlinedIcon fontSize="small" sx={{ mr: 1.5 }} />
-                Settings
               </MenuItem>
 
               <MenuItem onClick={handleLogout} sx={{ color: 'primary.main' }}>

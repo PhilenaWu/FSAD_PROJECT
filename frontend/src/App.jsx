@@ -9,6 +9,7 @@ import MyReportsPage from './pages/MyReportsPage'
 import DashboardPage from './pages/DashboardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
+import ProfilePage from './pages/ProfilePage'
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
           <Route path="/incidents/:id" element={<IncidentDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
         </Route>
       </Route>
 

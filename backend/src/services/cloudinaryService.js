@@ -19,4 +19,22 @@ function uploadImage(buffer, folder) {
   });
 }
 
-module.exports = { uploadImage };
+// Upload a non-image file buffer (e.g. a .pptx deck) into `folder`.
+// resource_type 'raw' stores the bytes verbatim; public_id keeps the file
+// extension so the download opens in PowerPoint. Resolves with the https URL.
+function uploadRaw(buffer, folder, filename) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: 'raw', public_id: filename },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
+module.exports = { uploadImage, uploadRaw };

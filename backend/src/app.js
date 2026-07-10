@@ -10,6 +10,9 @@ const rateLimiter = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const inspectionRoutes = require('./routes/inspections');
 const userRoutes = require('./routes/users');
+const analyticsRoutes = require('./routes/analytics');
+const recommendationRoutes = require('./routes/recommendations');
+const exportRoutes = require('./routes/export');
 
 const app = express();
 
@@ -37,6 +40,9 @@ app.get('/health', (req, res) => {
 // Feature routes (more mounted here as they land).
 app.use('/api/inspections', inspectionRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/recommendations', recommendationRoutes);
+app.use('/api/export', exportRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);
