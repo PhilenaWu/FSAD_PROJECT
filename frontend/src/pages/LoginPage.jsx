@@ -88,10 +88,10 @@ export default function LoginPage() {
       <Container maxWidth="xs" disableGutters>
         <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
           <Stack spacing={1} sx={{ mb: 3 }}>
-            <Typography variant="h5" component="h1" fontWeight={700} sx={{ color: 'primary.main' }}>
+            <Typography variant="h5" component="h1" fontWeight={700} sx={{ color: 'primary.main', textAlign: 'center' }}>
               Welcome back
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
               Sign in to report and track estate issues
             </Typography>
           </Stack>

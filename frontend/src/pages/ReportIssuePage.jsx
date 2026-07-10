@@ -110,7 +110,7 @@ export default function ReportIssuePage() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', py: { xs: 4, sm: 6 }, px: 2 }}>
       <Container maxWidth="sm" disableGutters sx={{ maxWidth: 720 }}>
-        <Typography variant="h4" component="h1" fontWeight={700} sx={{ mb: 3, color: 'primary.main' }}>
+        <Typography variant="h4" component="h1" fontWeight={700} sx={{ mb: 3, color: 'primary.main', textAlign: 'center' }}>
           Report an issue
         </Typography>
 
