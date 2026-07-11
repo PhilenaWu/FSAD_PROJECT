@@ -13,6 +13,9 @@ export function AuthProvider({ children }) {
   // profile = the user's row from the `users` table (name/role/block/unit),
   // fetched separately since the Supabase auth user doesn't carry these.
   const [profile, setProfile] = useState(null);
+  // True while /api/users/me is in flight, so consumers (e.g. the login
+  // redirect) can tell "role not loaded yet" apart from "fetch failed".
+  const [profileLoading, setProfileLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,9 +36,11 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!user) {
       setProfile(null);
+      setProfileLoading(false);
       return;
     }
     let active = true;
+    setProfileLoading(true);
     api
       .get('/api/users/me')
       .then((res) => {
@@ -43,6 +48,9 @@ export function AuthProvider({ children }) {
       })
       .catch(() => {
         if (active) setProfile(null);
+      })
+      .finally(() => {
+        if (active) setProfileLoading(false);
       });
     return () => {
       active = false;
@@ -53,7 +61,7 @@ export function AuthProvider({ children }) {
   const login = (email, password) => signIn(email, password);
   const logout = () => signOut();
 
-  const value = { user, profile, loading, login, logout };
+  const value = { user, profile, profileLoading, loading, login, logout };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

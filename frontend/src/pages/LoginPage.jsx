@@ -1,7 +1,7 @@
 // Login page — centered MUI card on the light background. No header/nav.
 // Uses the AuthContext login() (which wraps Supabase signIn).
 import { useState } from 'react';
-import { Link as RouterLink, Navigate, useNavigate } from 'react-router';
+import { Link as RouterLink, Navigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -21,9 +21,18 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 
+// Where each role lands after login. Contractor/admin workspaces aren't built
+// yet — those routes render a "not ready yet" placeholder rather than erroring.
+const ROLE_HOME = {
+  resident: '/report',
+  inspector: '/inspections/new',
+  manager: '/dashboard',
+  contractor: '/contractor-inbox',
+  admin: '/admin/costs',
+};
+
 export default function LoginPage() {
-  const { user, loading, login } = useAuth();
-  const navigate = useNavigate();
+  const { user, profile, profileLoading, loading, login } = useAuth();
 
   // Pre-fill the email from a previous "Remember me" (email only, never password).
   const savedEmail = localStorage.getItem('rememberedEmail') ?? '';
@@ -50,7 +59,8 @@ export default function LoginPage() {
     } else {
       localStorage.removeItem('rememberedEmail');
     }
-    navigate('/dashboard');
+    // No explicit navigate: once the session lands, the redirect below routes
+    // by the profile's role (which needs /api/users/me to resolve first).
   }
 
   // Already signed in: skip the form. Wait for the session check first so we
@@ -71,7 +81,25 @@ export default function LoginPage() {
     );
   }
   if (user) {
-    return <Navigate to="/dashboard" replace />;
+    // Signed in: wait for the profile (role) before choosing a destination, so
+    // we don't briefly bounce to the wrong workspace.
+    if (profileLoading) {
+      return (
+        <Box
+          sx={{
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            bgcolor: 'background.default',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      );
+    }
+    // Profile fetch failed / unknown role: fall back to the dashboard.
+    return <Navigate to={ROLE_HOME[profile?.role] ?? '/dashboard'} replace />;
   }
 
   return (

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router'
 import ProtectedRoute from './components/ProtectedRoute'
 import RoleLayout from './components/RoleLayout'
+import WorkspacePlaceholder from './components/WorkspacePlaceholder'
 import LoginPage from './pages/LoginPage'
 import ReportIssuePage from './pages/ReportIssuePage'
 import IncidentListPage from './pages/IncidentListPage'
@@ -29,6 +30,9 @@ function App() {
           <Route path="/incidents/:id" element={<IncidentDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          {/* Role landing pages not built yet — placeholder, not an error. */}
+          <Route path="/contractor-inbox" element={<WorkspacePlaceholder />} />
+          <Route path="/admin/costs" element={<WorkspacePlaceholder />} />
         </Route>
       </Route>
 
