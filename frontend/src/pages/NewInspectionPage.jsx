@@ -28,6 +28,7 @@ import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import LocationCapture from '../components/LocationCapture';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { compressImage } from '../utils/imageCompress';
 
 const SEVERITIES = ['Minor', 'Major', 'Critical']; // checklist_results CHECK
 
@@ -146,7 +147,8 @@ export default function NewInspectionPage() {
     for (const i of items) {
       const a = answers[i.id];
       if (a?.result === 'Defect' && a.photo) {
-        formData.append(`photo_${i.id}`, a.photo);
+        // Compress just before upload (thumbnail still shows the original).
+        formData.append(`photo_${i.id}`, await compressImage(a.photo));
       }
     }
 

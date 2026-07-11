@@ -24,6 +24,7 @@ import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import StopIcon from '@mui/icons-material/Stop';
 import LocationCapture from '../components/LocationCapture';
 import api from '../services/api';
+import { compressImage } from '../utils/imageCompress';
 import {
   VOICE_LANGUAGES,
   isSpeechSupported,
@@ -127,7 +128,8 @@ export default function ReportIssuePage() {
     formData.append('description', description);
     formData.append('location_block', block);
     if (unit.trim()) formData.append('location_unit', unit);
-    if (file) formData.append('photo', file);
+    // Compress just before upload (preview still shows the original).
+    if (file) formData.append('photo', await compressImage(file));
     if (gps) {
       formData.append('gps_lat', gps.lat);
       formData.append('gps_lng', gps.lng);
