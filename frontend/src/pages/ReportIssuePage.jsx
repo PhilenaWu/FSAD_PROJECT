@@ -1,6 +1,7 @@
-// UC-001 "Report an issue" page. Residents file a complaint (optional photo)
-// via POST /api/inspections. Category/priority are set by the backend AI.
-import { useEffect, useState } from 'react';
+// UC-001 "Report an issue" page. Residents file a complaint (optional photo,
+// optional voice dictation into Description) via POST /api/inspections.
+// Category/priority are set by the backend AI.
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -18,8 +19,17 @@ import { alpha } from '@mui/material/styles';
 import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import CloseIcon from '@mui/icons-material/Close';
+import MicIcon from '@mui/icons-material/Mic';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
+import StopIcon from '@mui/icons-material/Stop';
+import LocationCapture from '../components/LocationCapture';
 import api from '../services/api';
+import { compressImage } from '../utils/imageCompress';
+import {
+  VOICE_LANGUAGES,
+  isSpeechSupported,
+  startRecognition,
+} from '../services/voiceService';
 
 // Placeholder block list until a real blocks source exists.
 const BLOCKS = ['44A', '44B', '44C', '45A', '45B'];
@@ -31,8 +41,48 @@ export default function ReportIssuePage() {
   const [unit, setUnit] = useState('');
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [gps, setGps] = useState(null); // optional; never replaces block/unit
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
+
+  // Voice dictation (Web Speech API). Finalised chunks are appended into the
+  // Description field; the in-progress guess shows as a live caption.
+  const voiceSupported = isSpeechSupported();
+  const [voiceLang, setVoiceLang] = useState('en-SG');
+  const [recording, setRecording] = useState(false);
+  const [interim, setInterim] = useState('');
+  const recognitionRef = useRef(null);
+
+  // Stop listening if the user navigates away mid-recording.
+  useEffect(() => {
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  function toggleVoice() {
+    if (recording) {
+      recognitionRef.current?.stop(); // onEnd resets the state below
+      return;
+    }
+    const recognition = startRecognition({
+      lang: voiceLang,
+      onResult: (finalChunk, interimText) => {
+        if (finalChunk) {
+          const chunk = finalChunk.trim();
+          setDescription((prev) => (prev ? `${prev.trimEnd()} ${chunk}` : chunk));
+        }
+        setInterim(interimText);
+      },
+      onEnd: () => {
+        setRecording(false);
+        setInterim('');
+        recognitionRef.current = null;
+      },
+    });
+    if (recognition) {
+      recognitionRef.current = recognition;
+      setRecording(true);
+    }
+  }
 
   // Keep an object URL for the chosen photo; revoke it whenever it changes or on
   // unmount so we don't leak blob URLs.
@@ -52,6 +102,7 @@ export default function ReportIssuePage() {
     setBlock('');
     setUnit('');
     setFile(null);
+    setGps(null);
   }
 
   function handleFileChange(e) {
@@ -63,6 +114,7 @@ export default function ReportIssuePage() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    recognitionRef.current?.stop(); // don't transcribe past submission
     setFeedback(null);
 
     // Light client guard mirroring the backend's required fields.
@@ -76,7 +128,14 @@ export default function ReportIssuePage() {
     formData.append('description', description);
     formData.append('location_block', block);
     if (unit.trim()) formData.append('location_unit', unit);
-    if (file) formData.append('photo', file);
+    // Compress just before upload (preview still shows the original).
+    if (file) formData.append('photo', await compressImage(file));
+    if (gps) {
+      formData.append('gps_lat', gps.lat);
+      formData.append('gps_lng', gps.lng);
+      formData.append('gps_accuracy_m', gps.accuracy_m);
+      formData.append('gps_captured_at', gps.captured_at);
+    }
 
     setSubmitting(true);
     try {
@@ -142,6 +201,53 @@ export default function ReportIssuePage() {
                 helperText="Describe the issue and exactly where it is, e.g. Level 3 lift lobby"
               />
 
+              {/* Voice dictation: pick a language, tap to talk, tap to stop.
+                  Transcript lands in Description (still editable). */}
+              <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+                <TextField
+                  select
+                  label="Voice language"
+                  size="small"
+                  value={voiceLang}
+                  onChange={(e) => setVoiceLang(e.target.value)}
+                  disabled={recording || !voiceSupported}
+                  sx={{ minWidth: 180 }}
+                >
+                  {VOICE_LANGUAGES.map((l) => (
+                    <MenuItem key={l.code} value={l.code}>
+                      {l.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <IconButton
+                  aria-label={recording ? 'Stop dictation' : 'Start dictation'}
+                  onClick={toggleVoice}
+                  disabled={!voiceSupported}
+                  sx={{
+                    color: recording ? 'primary.contrastText' : 'primary.main',
+                    bgcolor: recording ? 'primary.main' : 'transparent',
+                    border: 1,
+                    borderColor: 'primary.main',
+                    '&:hover': {
+                      bgcolor: recording
+                        ? 'primary.dark'
+                        : (theme) => alpha(theme.palette.primary.main, 0.08),
+                    },
+                  }}
+                >
+                  {recording ? <StopIcon /> : <MicIcon />}
+                </IconButton>
+                <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }}>
+                  {!voiceSupported
+                    ? 'Voice input not supported in this browser'
+                    : recording
+                      ? interim
+                        ? `Listening… “${interim}”`
+                        : 'Listening…'
+                      : 'Tap the mic to dictate your description'}
+                </Typography>
+              </Stack>
+
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
                   select
@@ -169,6 +275,9 @@ export default function ReportIssuePage() {
                   fullWidth
                 />
               </Stack>
+
+              {/* Optional GPS — supplements (never replaces) block/unit. */}
+              <LocationCapture value={gps} onChange={setGps} />
 
               {/* Photo picker / dropzone */}
               <Box>

@@ -5,10 +5,30 @@ import { createTheme } from '@mui/material/styles';
 
 const theme = createTheme({
   components: {
+    // Keep the viewport width constant everywhere so the header never shifts
+    // or leaves a right-edge gap:
+    // 1. Always show the page scrollbar (even on short pages), so navigating
+    //    between scrolling and non-scrolling pages doesn't change the width.
     MuiCssBaseline: {
       styleOverrides: {
-        html: { scrollbarGutter: 'stable' },
+        html: { overflowY: 'scroll' },
       },
+    },
+    // 2. Don't let popups lock body scroll — the lock hides the scrollbar and
+    //    pads the body, shifting the header sideways while a menu is open.
+    //    defaultProps don't cascade from Modal to its wrappers, so each popup
+    //    component gets its own default.
+    MuiMenu: {
+      defaultProps: { disableScrollLock: true },
+    },
+    MuiPopover: {
+      defaultProps: { disableScrollLock: true },
+    },
+    MuiDialog: {
+      defaultProps: { disableScrollLock: true },
+    },
+    MuiDrawer: {
+      defaultProps: { ModalProps: { disableScrollLock: true } },
     },
   },
   palette: {
