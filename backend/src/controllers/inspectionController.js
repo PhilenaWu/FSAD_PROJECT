@@ -9,6 +9,19 @@ const liftModel = require('../models/liftModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
 
+// Optional GPS fields captured client-side on explicit tap. Supplementary
+// metadata only — they never override or populate block/lift selection.
+// Multipart fields arrive as strings; absent/empty ones become NULL.
+function gpsFields(body) {
+  const pick = (v) => (v === undefined || v === '' ? undefined : v);
+  return {
+    gps_lat: pick(body.gps_lat),
+    gps_lng: pick(body.gps_lng),
+    gps_accuracy_m: pick(body.gps_accuracy_m),
+    gps_captured_at: pick(body.gps_captured_at),
+  };
+}
+
 // POST /api/inspections — resident submits a new complaint (source_type
 // 'resident_complaint'). Inspector/lift-inspection flows are out of scope here.
 async function create(req, res, next) {
@@ -64,6 +77,7 @@ async function create(req, res, next) {
       photo_url,
       category,
       ai_priority_score: priority_score,
+      ...gpsFields(req.body),
     });
 
     res.status(201).json(inspection);
@@ -152,6 +166,7 @@ async function createLiftInspection(req, res, next) {
       location_block: lift.block_number,
       contractor_id: lift.contractor_id,
       checklist,
+      ...gpsFields(req.body),
     });
 
     res.status(201).json(inspection);

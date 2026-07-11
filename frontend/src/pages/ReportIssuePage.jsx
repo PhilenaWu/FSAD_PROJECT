@@ -19,6 +19,7 @@ import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternate
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
+import LocationCapture from '../components/LocationCapture';
 import api from '../services/api';
 
 // Placeholder block list until a real blocks source exists.
@@ -31,6 +32,7 @@ export default function ReportIssuePage() {
   const [unit, setUnit] = useState('');
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [gps, setGps] = useState(null); // optional; never replaces block/unit
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
 
@@ -52,6 +54,7 @@ export default function ReportIssuePage() {
     setBlock('');
     setUnit('');
     setFile(null);
+    setGps(null);
   }
 
   function handleFileChange(e) {
@@ -77,6 +80,12 @@ export default function ReportIssuePage() {
     formData.append('location_block', block);
     if (unit.trim()) formData.append('location_unit', unit);
     if (file) formData.append('photo', file);
+    if (gps) {
+      formData.append('gps_lat', gps.lat);
+      formData.append('gps_lng', gps.lng);
+      formData.append('gps_accuracy_m', gps.accuracy_m);
+      formData.append('gps_captured_at', gps.captured_at);
+    }
 
     setSubmitting(true);
     try {
@@ -169,6 +178,9 @@ export default function ReportIssuePage() {
                   fullWidth
                 />
               </Stack>
+
+              {/* Optional GPS — supplements (never replaces) block/unit. */}
+              <LocationCapture value={gps} onChange={setGps} />
 
               {/* Photo picker / dropzone */}
               <Box>

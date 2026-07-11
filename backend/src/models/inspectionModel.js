@@ -22,14 +22,19 @@ async function create(data) {
     category,
     ai_priority_score,
     source_flag = 'Resident',
+    gps_lat,
+    gps_lng,
+    gps_accuracy_m,
+    gps_captured_at,
   } = data;
 
   const result = await query(
     `INSERT INTO inspections (
        source_type, resident_id, title, description, location_block,
-       location_unit, photo_url, category, ai_priority_score, source_flag
+       location_unit, photo_url, category, ai_priority_score, source_flag,
+       gps_lat, gps_lng, gps_accuracy_m, gps_captured_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING *`,
     [
       source_type,
@@ -42,6 +47,10 @@ async function create(data) {
       category,
       ai_priority_score,
       source_flag,
+      gps_lat,
+      gps_lng,
+      gps_accuracy_m,
+      gps_captured_at,
     ]
   );
   return result.rows[0];
@@ -61,6 +70,10 @@ async function createLiftInspection(data) {
     location_block,
     contractor_id,
     checklist,
+    gps_lat,
+    gps_lng,
+    gps_accuracy_m,
+    gps_captured_at,
   } = data;
 
   const client = await pool.connect();
@@ -70,11 +83,15 @@ async function createLiftInspection(data) {
     const inspectionResult = await client.query(
       `INSERT INTO inspections (
          source_type, inspector_id, lift_id, title, location_block,
-         contractor_id, source_flag
+         contractor_id, source_flag, gps_lat, gps_lng, gps_accuracy_m,
+         gps_captured_at
        )
-       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector')
+       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector', $6, $7, $8, $9)
        RETURNING *`,
-      [inspector_id, lift_id, title, location_block, contractor_id]
+      [
+        inspector_id, lift_id, title, location_block, contractor_id,
+        gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+      ]
     );
     const inspection = inspectionResult.rows[0];
 

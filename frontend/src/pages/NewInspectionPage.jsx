@@ -25,6 +25,7 @@ import {
 import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
+import LocationCapture from '../components/LocationCapture';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
@@ -41,6 +42,7 @@ export default function NewInspectionPage() {
   const [liftId, setLiftId] = useState('');
   // answers[itemId] = { result: 'Pass'|'Defect', severity, remark }
   const [answers, setAnswers] = useState({});
+  const [gps, setGps] = useState(null); // optional; never replaces lift choice
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
 
@@ -101,6 +103,7 @@ export default function NewInspectionPage() {
     }
     setLiftId('');
     setAnswers({});
+    setGps(null);
   }
 
   async function handleSubmit(e) {
@@ -134,6 +137,12 @@ export default function NewInspectionPage() {
     const formData = new FormData();
     formData.append('lift_id', liftId);
     formData.append('checklist', JSON.stringify(checklist));
+    if (gps) {
+      formData.append('gps_lat', gps.lat);
+      formData.append('gps_lng', gps.lng);
+      formData.append('gps_accuracy_m', gps.accuracy_m);
+      formData.append('gps_captured_at', gps.captured_at);
+    }
     for (const i of items) {
       const a = answers[i.id];
       if (a?.result === 'Defect' && a.photo) {
@@ -225,6 +234,9 @@ export default function NewInspectionPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+
+                {/* Optional GPS — supplements (never replaces) the lift choice. */}
+                <LocationCapture value={gps} onChange={setGps} />
 
                 {/* Checklist appears once a lift is chosen. */}
                 {liftId &&

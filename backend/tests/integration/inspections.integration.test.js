@@ -75,6 +75,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const [
       source_type, resident_id, title, description, location_block,
       location_unit, photo_url, category, ai_priority_score, source_flag,
+      gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
     ] = params;
     const now = new Date().toISOString();
     const row = {
@@ -83,6 +84,10 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       resident_id, title, description, location_block,
       location_unit: location_unit ?? null,
       photo_url: photo_url ?? null,
+      gps_lat: gps_lat ?? null,
+      gps_lng: gps_lng ?? null,
+      gps_accuracy_m: gps_accuracy_m ?? null,
+      gps_captured_at: gps_captured_at ?? null,
       photo_pending: false,
       status: 'Open',
       category,
@@ -98,12 +103,19 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   }
   // lift inspection create: INSERT INTO inspections (source_type, inspector_id, ...)
   if (/INSERT INTO inspections/i.test(sql) && /inspector_id/i.test(sql)) {
-    const [inspector_id, lift_id, title, location_block, contractor_id] = params;
+    const [
+      inspector_id, lift_id, title, location_block, contractor_id,
+      gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+    ] = params;
     const now = new Date().toISOString();
     const row = {
       id: `insp-${store.inspections.length + 1}`,
       source_type: 'lift_inspection',
       inspector_id, lift_id, title, location_block, contractor_id,
+      gps_lat: gps_lat ?? null,
+      gps_lng: gps_lng ?? null,
+      gps_accuracy_m: gps_accuracy_m ?? null,
+      gps_captured_at: gps_captured_at ?? null,
       status: 'Open',
       category: 'Uncategorised',
       priority: 'Medium',
@@ -215,10 +227,18 @@ describe('POST /api/inspections', () => {
       .field('title', 'Water leak in stairwell')
       .field('description', 'Dripping from ceiling')
       .field('location_block', 'B')
+      .field('gps_lat', '1.3521')
+      .field('gps_lng', '103.8198')
+      .field('gps_accuracy_m', '12')
+      .field('gps_captured_at', '2026-07-11T08:00:00.000Z')
       .attach('photo', PNG, 'test.png');
 
     expect(res.status).toBe(201);
     expect(res.body.source_type).toBe('resident_complaint');
+    // Optional GPS stored verbatim; block stays the authoritative location.
+    expect(res.body.gps_lat).toBe('1.3521');
+    expect(res.body.gps_accuracy_m).toBe('12');
+    expect(res.body.location_block).toBe('B');
     expect(res.body.category).toBe('Uncategorised');
     expect(res.body.ai_priority_score).toBe(50);
     expect(res.body.status).toBe('Open');
