@@ -72,16 +72,29 @@ async function create(req, res, next) {
   }
 }
 
-// POST /api/inspections/lift — inspector submits a lift spot-check (JSON body:
-// { lift_id, checklist: [{ checklist_item_id, result, severity?, remark? }] }).
-// Note: HLD §6.2 folds this into POST /api/inspections via source_type; it lives
-// on a sibling route here so the inspector role guard stays route-level and the
-// resident path stays untouched. No OpenAI categorisation and no duplicate guard
-// (that guard protects against resident double-submits).
+// POST /api/inspections/lift — inspector submits a lift spot-check (multipart:
+// `lift_id` + `checklist` [JSON string of { checklist_item_id, result,
+// severity?, remark? }] fields, plus optional `photo_<checklist_item_id>` file
+// parts for Defect rows). Note: HLD §6.2 folds this into POST /api/inspections
+// via source_type; it lives on a sibling route here so the inspector role guard
+// stays route-level and the resident path stays untouched. No OpenAI
+// categorisation and no duplicate guard (that guard protects against resident
+// double-submits).
 async function createLiftInspection(req, res, next) {
   try {
     const inspector_id = req.user.id;
-    const { lift_id, checklist } = req.body;
+    const { lift_id } = req.body;
+
+    // checklist arrives as a JSON string field alongside the file parts.
+    let checklist;
+    try {
+      checklist = JSON.parse(req.body.checklist);
+    } catch {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'checklist must be a valid JSON array.',
+      });
+    }
 
     // Required fields: a lift and a non-empty checklist.
     if (!lift_id || !Array.isArray(checklist) || checklist.length === 0) {
@@ -115,6 +128,19 @@ async function createLiftInspection(req, res, next) {
         code: 'NOT_FOUND',
         message: 'Lift not found.',
       });
+    }
+
+    // Per-item photos: file parts named photo_<checklist_item_id>. Upload to
+    // Cloudinary (defects folder) and attach the URL to the matching Defect
+    // entry; files for Pass/unknown items are ignored.
+    const byItemId = new Map(checklist.map((item) => [item.checklist_item_id, item]));
+    for (const file of req.files ?? []) {
+      const match = /^photo_(.+)$/.exec(file.fieldname);
+      if (!match) continue;
+      const item = byItemId.get(match[1]);
+      if (item && item.result === 'Defect') {
+        item.photo_url = await cloudinaryService.uploadImage(file.buffer, 'defects');
+      }
     }
 
     // Derived server-side from the lift: block, responsible contractor, and a

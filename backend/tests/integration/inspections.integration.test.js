@@ -124,7 +124,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   }
   // checklist results: INSERT INTO checklist_results (...) RETURNING *
   if (/INSERT INTO checklist_results/i.test(sql)) {
-    const [inspection_id, checklist_item_id, result, severity, remark] = params;
+    const [inspection_id, checklist_item_id, result, severity, remark, photo_url] = params;
     const row = {
       id: `chk-${store.checklist_results.length + 1}`,
       inspection_id,
@@ -132,6 +132,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       result,
       severity: severity ?? null,
       remark: remark ?? null,
+      photo_url: photo_url ?? null,
       rectified: false,
     };
     store.checklist_results.push(row);
@@ -246,19 +247,20 @@ describe('POST /api/inspections', () => {
 });
 
 describe('POST /api/inspections/lift', () => {
-  const validBody = {
-    lift_id: 'lift-1',
-    checklist: [
-      { checklist_item_id: 'item-1', result: 'Pass' },
-      { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
-    ],
-  };
+  // Multipart: lift_id + checklist (JSON string) fields, photos as
+  // photo_<checklist_item_id> file parts.
+  const validChecklist = [
+    { checklist_item_id: 'item-1', result: 'Pass' },
+    { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
+  ];
 
-  test('201 inspector creates a lift inspection with checklist results', async () => {
+  test('201 inspector creates a lift inspection with checklist results and a defect photo', async () => {
     const res = await request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
-      .send(validBody);
+      .field('lift_id', 'lift-1')
+      .field('checklist', JSON.stringify(validChecklist))
+      .attach('photo_item-2', PNG, 'defect.png');
 
     expect(res.status).toBe(201);
     expect(res.body.source_type).toBe('lift_inspection');
@@ -270,13 +272,20 @@ describe('POST /api/inspections/lift', () => {
     expect(res.body.title).toBe('Lift inspection — 44A-L1');
     expect(res.body.checklist_results).toHaveLength(2);
     expect(res.body.checklist_results[1].severity).toBe('Major');
+    // Photo landed on the Defect row only.
+    expect(res.body.checklist_results[1].photo_url).toBeTruthy();
+    expect(res.body.checklist_results[0].photo_url).toBeNull();
+
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(1);
   });
 
   test('403 when the user is not an inspector', async () => {
     const res = await request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer resident-token')
-      .send(validBody);
+      .field('lift_id', 'lift-1')
+      .field('checklist', JSON.stringify(validChecklist));
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
@@ -286,7 +295,18 @@ describe('POST /api/inspections/lift', () => {
     const res = await request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
-      .send({ checklist: validBody.checklist });
+      .field('checklist', JSON.stringify(validChecklist));
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('400 when checklist is not valid JSON', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .field('lift_id', 'lift-1')
+      .field('checklist', 'not-json');
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('VALIDATION_ERROR');
@@ -296,7 +316,8 @@ describe('POST /api/inspections/lift', () => {
     const res = await request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
-      .send({ ...validBody, lift_id: 'lift-nope' });
+      .field('lift_id', 'lift-nope')
+      .field('checklist', JSON.stringify(validChecklist));
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');

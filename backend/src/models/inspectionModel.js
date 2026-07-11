@@ -48,10 +48,11 @@ async function create(data) {
 }
 
 // Insert a lift inspection plus its checklist results atomically (one child row
-// per checklist item). Caller supplies inspector/lift/title/block/contractor and
-// the checklist array; category/photo/resident columns stay at their defaults —
-// no AI categorisation for lift inspections. Rolls back on any failure.
-// Returns the inspection row with a checklist_results array attached.
+// per checklist item; items may carry a per-defect photo_url). Caller supplies
+// inspector/lift/title/block/contractor and the checklist array; category and
+// resident columns stay at their defaults — no AI categorisation for lift
+// inspections. Rolls back on any failure. Returns the inspection row with a
+// checklist_results array attached.
 async function createLiftInspection(data) {
   const {
     inspector_id,
@@ -81,9 +82,9 @@ async function createLiftInspection(data) {
     for (const item of checklist) {
       const resultRow = await client.query(
         `INSERT INTO checklist_results (
-           inspection_id, checklist_item_id, result, severity, remark
+           inspection_id, checklist_item_id, result, severity, remark, photo_url
          )
-         VALUES ($1, $2, $3, $4, $5)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
         [
           inspection.id,
@@ -91,6 +92,7 @@ async function createLiftInspection(data) {
           item.result,
           item.severity,
           item.remark,
+          item.photo_url,
         ]
       );
       checklist_results.push(resultRow.rows[0]);
