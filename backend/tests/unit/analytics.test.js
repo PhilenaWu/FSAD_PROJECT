@@ -37,6 +37,22 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const p = profiles[params[0]];
     return { rows: p ? [p] : [] };
   }
+  // Filter options — distinct blocks / categories.
+  if (/SELECT DISTINCT location_block AS v/i.test(sql)) {
+    return { rows: [{ v: '44A' }, { v: '88B' }] };
+  }
+  if (/SELECT DISTINCT category AS v/i.test(sql)) {
+    return { rows: [{ v: 'Lift' }, { v: 'Plumbing' }] };
+  }
+  // KPI summary — first query (counts + windows), then its SLA sub-query.
+  if (/open_count/i.test(sql)) {
+    return {
+      rows: [{ open_count: 46, overdue_count: 4, avg_resolution_hours: 58.3, new_last_30: 58, new_prior_30: 41 }],
+    };
+  }
+  if (/AS compliant,/i.test(sql)) {
+    return { rows: [{ compliant: 42, total: 55 }] };
+  }
   // SLA compliance (aggregate FILTER query)
   if (/compliant_count/i.test(sql)) {
     return { rows: [{ compliant_count: 42, total_resolved: 55 }] };
@@ -112,6 +128,34 @@ describe('GET /api/analytics/issues-by-block', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
+  });
+});
+
+describe('GET /api/analytics/filter-options', () => {
+  test('200 with data-derived blocks and categories', async () => {
+    const res = await asManager(request(app).get('/api/analytics/filter-options'));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ blocks: ['44A', '88B'], categories: ['Lift', 'Plumbing'] });
+  });
+});
+
+describe('GET /api/analytics/summary', () => {
+  test('200 with KPI values and the vs-prior-period movement', async () => {
+    const res = await asManager(request(app).get('/api/analytics/summary'));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      open_count: 46,
+      overdue_count: 4,
+      avg_resolution_hours: 58.3,
+      new_last_30: 58,
+      new_prior_30: 41,
+      sla_threshold_hrs: 72,
+    });
+    // (58 - 41) / 41 = +41.5%
+    expect(res.body.new_records_change_pct).toBeCloseTo(41.5, 1);
+    expect(res.body.sla_percentage).toBeCloseTo(76.36, 1);
   });
 });
 

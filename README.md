@@ -140,3 +140,71 @@ npm run dev
 - All request bodies validated before reaching controllers; rate limiting on auth routes.
 
 ---
+
+## UC-005 — Manager Analytics Dashboard (Hasini)
+
+The `/dashboard` route (manager role) provides estate analytics computed live
+from the `inspections` table.
+
+### Features
+
+- **KPI row** — new reports (with % movement vs the prior 30 days), open
+  records, average resolution hours + SLA %, overdue contractor jobs.
+- **Charts** — block × category heatmap (click a cell to drill down), daily
+  issue trend line, SLA compliance gauge (72h target).
+- **Contractor scorecard** — jobs, avg rectification days, repeat-defect
+  rate, overdue count per contractor.
+- **Priority queue** — open records ranked by composite score
+  `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, with
+  priority/status filters and a Top 10 / All toggle. CSV export.
+- **AI risk alerts** — active `ai_predictions` rows as amber cards with
+  Accept / Dismiss (UC-006 provides the analysis engine).
+- **PowerPoint export** — `POST /api/export/pptx` renders the current
+  filtered view (charts + scorecard) into a native-chart .pptx via
+  PptxGenJS, stored on Cloudinary.
+- **CSV what-if preview** — import a CSV (`block,category[,date][,resolution_time_hours]`)
+  to blend simulated rows into the charts client-side; a Combined / Existing
+  only / Imported only switch compares views; Clear preview reverts. Nothing
+  touches the database and exports always use real data.
+- Filters (block / category / date range) persist in the URL, so a filtered
+  view is bookmarkable.
+
+### Endpoints (all manager-only)
+
+```
+GET  /api/analytics/filter-options        dropdown options (from data)
+GET  /api/analytics/summary               KPI tiles + movement
+GET  /api/analytics/issues-by-block       heatmap
+GET  /api/analytics/trends                daily counts
+GET  /api/analytics/sla-compliance        SLA summary
+GET  /api/analytics/contractor-scorecard  per-contractor metrics
+GET  /api/analytics/priority-queue        ranked open records (+ ?priority&status)
+GET  /api/recommendations                 active AI alerts
+POST /api/export/pptx                     PowerPoint deck  (manager or admin)
+```
+
+All accept `?from&to&block&category`.
+
+### Setup / demo data
+
+`npm run migrate` in `backend/` applies `018_seed_demo_data.sql`, which seeds
+demo inspections, assigned/closed jobs and two AI alerts (idempotent — skips
+if `Demo:` records exist). Contractors come from `016_seed_reference_data.sql`.
+
+### Tests
+
+- Backend: `npx jest tests/unit/analytics.test.js tests/unit/export.test.js tests/unit/recommendations.test.js`
+- Frontend: `npm test` in `frontend/` (vitest — CSV import/merge logic)
+
+### Demo script (~3 min)
+
+1. Log in as manager → dashboard: point out the KPI movement ("+X% new
+   reports vs last month") and the AI alert cards with estimated cost.
+2. Filter to Block 44A → all charts re-query; copy the URL to show the view
+   is shareable.
+3. Import a what-if CSV (lift-surge scenario) → heatmap cell rings, dashed
+   trend line, SLA delta; flick Combined → Imported only → Clear preview.
+4. Click **Export to PowerPoint** → open the deck: native editable charts,
+   ready for the weekly meeting.
+5. Edge cases: filter to an empty result (CSV button disables with a
+   tooltip), import a malformed CSV (specific error, nothing breaks).

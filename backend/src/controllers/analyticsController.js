@@ -45,6 +45,74 @@ function buildFilters({ from, to, block, category }, columnPrefix = '') {
 // Data fetchers — shared by the route handlers below and the pptx export.
 // ---------------------------------------------------------------------------
 
+// KPI summary with movement: current values plus % change vs the prior
+// 30-day window (created in the last 30 days vs the 30 before that).
+// Respects the block/category filters; the date filters are ignored here
+// because the deltas define their own two windows.
+async function fetchSummary({ block, category } = {}) {
+  const { where, params } = buildFilters({ block, category });
+  const and = where ? `${where} AND` : 'WHERE';
+
+  const { rows } = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE is_deleted = FALSE
+                          AND status NOT IN ('Resolved','Closed'))::int AS open_count,
+       COUNT(*) FILTER (WHERE target_deadline < NOW()
+                          AND status NOT IN ('Rectified','Resolved','Closed'))::int AS overdue_count,
+       ROUND(AVG(resolution_time_hours) FILTER (WHERE closed_at IS NOT NULL)::numeric, 1)::float
+         AS avg_resolution_hours,
+       COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS new_last_30,
+       COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
+                          AND created_at <  NOW() - INTERVAL '30 days')::int AS new_prior_30
+     FROM inspections
+     ${where}`,
+    params
+  );
+
+  const sla = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE resolution_time_hours <= ${SLA_THRESHOLD_HRS})::int AS compliant,
+       COUNT(*)::int AS total
+     FROM inspections
+     ${and} closed_at IS NOT NULL AND resolution_time_hours IS NOT NULL`,
+    params
+  );
+
+  const s = rows[0];
+  const { compliant, total } = sla.rows[0];
+  const pctChange =
+    s.new_prior_30 > 0
+      ? Number((((s.new_last_30 - s.new_prior_30) / s.new_prior_30) * 100).toFixed(1))
+      : null; // no prior-period data — the UI shows "no prior data" instead of a fake %
+
+  return {
+    open_count: s.open_count,
+    overdue_count: s.overdue_count,
+    avg_resolution_hours: s.avg_resolution_hours,
+    sla_percentage: total ? Number(((compliant / total) * 100).toFixed(2)) : 0,
+    new_last_30: s.new_last_30,
+    new_prior_30: s.new_prior_30,
+    new_records_change_pct: pctChange,
+    sla_threshold_hrs: SLA_THRESHOLD_HRS,
+  };
+}
+
+// Distinct blocks and categories that actually have records — drives the
+// filter dropdowns so they never go stale as new data arrives (nothing
+// hardcoded in the frontend).
+async function fetchFilterOptions() {
+  const blocks = await query(
+    `SELECT DISTINCT location_block AS v FROM inspections ORDER BY location_block`
+  );
+  const categories = await query(
+    `SELECT DISTINCT category AS v FROM inspections ORDER BY category`
+  );
+  return {
+    blocks: blocks.rows.map((r) => r.v),
+    categories: categories.rows.map((r) => r.v),
+  };
+}
+
 // [{ block, category, count }]
 async function fetchHeatmap(filters) {
   const { where, params } = buildFilters(filters);
@@ -181,8 +249,7 @@ async function fetchPriorityQueue(filters) {
          AND f.is_deleted = FALSE
      ) freq ON TRUE
      ${fullWhere}
-     ORDER BY composite_score DESC
-     LIMIT 50`,
+     ORDER BY composite_score DESC`,
     params
   );
   return rows;
@@ -191,6 +258,24 @@ async function fetchPriorityQueue(filters) {
 // ---------------------------------------------------------------------------
 // Route handlers (HLD §6.3 response shapes).
 // ---------------------------------------------------------------------------
+
+// GET /api/analytics/filter-options → { blocks: [...], categories: [...] }
+async function getFilterOptions(req, res, next) {
+  try {
+    res.json(await fetchFilterOptions());
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/analytics/summary → KPI tiles with vs-prior-period movement
+async function getSummary(req, res, next) {
+  try {
+    res.json(await fetchSummary(req.query));
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /api/analytics/issues-by-block → { data: [...] }
 async function getHeatmap(req, res, next) {
@@ -238,11 +323,16 @@ async function getPriorityQueue(req, res, next) {
 }
 
 module.exports = {
+  SLA_THRESHOLD_HRS,
+  getFilterOptions,
+  getSummary,
   getHeatmap,
   getTrends,
   getSlaCompliance,
   getContractorScorecard,
   getPriorityQueue,
+  fetchFilterOptions,
+  fetchSummary,
   fetchHeatmap,
   fetchTrends,
   fetchSlaCompliance,

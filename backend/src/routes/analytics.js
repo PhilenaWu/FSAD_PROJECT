@@ -11,6 +11,8 @@ const router = express.Router();
 // Every analytics endpoint is manager-only.
 router.use(requireAuth, requireRole('manager'));
 
+router.get('/filter-options', analyticsController.getFilterOptions);
+router.get('/summary', analyticsController.getSummary);
 router.get('/issues-by-block', analyticsController.getHeatmap);
 router.get('/trends', analyticsController.getTrends);
 router.get('/sla-compliance', analyticsController.getSlaCompliance);
