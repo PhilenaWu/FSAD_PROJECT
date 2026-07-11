@@ -1,6 +1,7 @@
-// Integration tests for inspections — POST /api/inspections (UC-001 create,
-// resident complaint). The app runs in-process (supertest). Three boundaries are
-// mocked so the test is deterministic and hits no network:
+// Integration tests for inspections — POST /api/inspections (UC-001 resident
+// complaint) and POST /api/inspections/lift (UC-001 inspector lift spot-check).
+// The app runs in-process (supertest). Three boundaries are mocked so the test is
+// deterministic and hits no network:
 //   - config/supabase: fake getClaims to drive auth without real JWTs
 //   - config/db:        in-memory store so we exercise the real controller/model
 //                       flow without a Postgres/Supabase connection
@@ -17,6 +18,9 @@ jest.mock('../../src/config/supabase', () => ({
       if (token === 'manager-token') {
         return { data: { claims: { sub: 'mgr-1', email: 'mgr@example.com' } }, error: null };
       }
+      if (token === 'inspector-token') {
+        return { data: { claims: { sub: 'ins-1', email: 'ins@example.com' } }, error: null };
+      }
       return { data: null, error: { message: 'invalid token' } };
     }),
   },
@@ -27,58 +31,131 @@ jest.mock('../../src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(async () => 'https://cloudinary.test/defects/mock.png'),
 }));
 
-// --- Mock: the pg layer. A tiny in-memory model of the two tables we touch. ---
+// --- Mock: the pg layer. A tiny in-memory model of the tables we touch. ---
 const profiles = {
   'res-1': { role: 'resident', status: 'active' },
   'mgr-1': { role: 'manager', status: 'active' },
+  'ins-1': { role: 'inspector', status: 'active' },
 };
-const store = { inspections: [] };
+const lifts = {
+  'lift-1': {
+    id: 'lift-1',
+    block_number: '44A',
+    lift_code: '44A-L1',
+    brand: 'Otis',
+    contractor_id: 'con-1',
+    contractor_name: 'Otis Service SG',
+  },
+};
+// Deliberately unordered + one inactive item, so the ORDER BY / active filter
+// in checklistItemModel.findActive is actually exercised.
+const checklistItems = [
+  { id: 'item-2', section: 'Doors', item_text: 'Door sensor reopens', display_order: 2, active: true },
+  { id: 'item-3', section: 'Safety', item_text: 'Emergency intercom works', display_order: 3, active: false },
+  { id: 'item-1', section: 'Structural', item_text: 'Shaft walls free of cracks', display_order: 1, active: true },
+];
+const store = { inspections: [], checklist_results: [] };
+
+const mockQuery = jest.fn(async (sql, params = []) => {
+  // requireRole: SELECT role, status FROM users WHERE id = $1
+  if (/FROM users/i.test(sql)) {
+    const p = profiles[params[0]];
+    return { rows: p ? [p] : [] };
+  }
+  // liftModel.findById: SELECT ... FROM lifts l ... WHERE l.id = $1
+  if (/FROM lifts/i.test(sql)) {
+    if (/WHERE l\.id/i.test(sql)) {
+      const l = lifts[params[0]];
+      return { rows: l ? [l] : [] };
+    }
+    return { rows: Object.values(lifts) };
+  }
+  // resident create: INSERT INTO inspections (source_type, resident_id, ...)
+  if (/INSERT INTO inspections/i.test(sql) && /resident_id/i.test(sql)) {
+    const [
+      source_type, resident_id, title, description, location_block,
+      location_unit, photo_url, category, ai_priority_score, source_flag,
+    ] = params;
+    const now = new Date().toISOString();
+    const row = {
+      id: `insp-${store.inspections.length + 1}`,
+      source_type,
+      resident_id, title, description, location_block,
+      location_unit: location_unit ?? null,
+      photo_url: photo_url ?? null,
+      photo_pending: false,
+      status: 'Open',
+      category,
+      priority: 'Medium',
+      ai_priority_score,
+      is_deleted: false,
+      source_flag: source_flag ?? 'Resident',
+      created_at: now,
+      updated_at: now,
+    };
+    store.inspections.push(row);
+    return { rows: [row] };
+  }
+  // lift inspection create: INSERT INTO inspections (source_type, inspector_id, ...)
+  if (/INSERT INTO inspections/i.test(sql) && /inspector_id/i.test(sql)) {
+    const [inspector_id, lift_id, title, location_block, contractor_id] = params;
+    const now = new Date().toISOString();
+    const row = {
+      id: `insp-${store.inspections.length + 1}`,
+      source_type: 'lift_inspection',
+      inspector_id, lift_id, title, location_block, contractor_id,
+      status: 'Open',
+      category: 'Uncategorised',
+      priority: 'Medium',
+      is_deleted: false,
+      source_flag: 'Inspector',
+      created_at: now,
+      updated_at: now,
+    };
+    store.inspections.push(row);
+    return { rows: [row] };
+  }
+  // checklist template: SELECT * FROM checklist_items WHERE active ... ORDER BY
+  if (/FROM checklist_items/i.test(sql)) {
+    const rows = checklistItems
+      .filter((i) => i.active)
+      .sort((a, b) => a.display_order - b.display_order);
+    return { rows };
+  }
+  // checklist results: INSERT INTO checklist_results (...) RETURNING *
+  if (/INSERT INTO checklist_results/i.test(sql)) {
+    const [inspection_id, checklist_item_id, result, severity, remark] = params;
+    const row = {
+      id: `chk-${store.checklist_results.length + 1}`,
+      inspection_id,
+      checklist_item_id,
+      result,
+      severity: severity ?? null,
+      remark: remark ?? null,
+      rectified: false,
+    };
+    store.checklist_results.push(row);
+    return { rows: [row] };
+  }
+  // duplicate guard: SELECT id FROM inspections WHERE resident_id=$1 AND title=$2 ...
+  if (/SELECT id FROM inspections/i.test(sql)) {
+    const [resident_id, title] = params;
+    const dup = store.inspections.filter(
+      (i) => i.resident_id === resident_id && i.title === title && !i.is_deleted
+    );
+    return { rows: dup.map((i) => ({ id: i.id })) };
+  }
+  // BEGIN / COMMIT / ROLLBACK and anything else.
+  return { rows: [] };
+});
 
 jest.mock('../../src/config/db', () => ({
-  pool: {},
+  // The transactional model path uses pool.connect(); hand it the same query fn.
+  pool: {
+    connect: jest.fn(async () => ({ query: mockQuery, release: jest.fn() })),
+  },
   testConnection: jest.fn(),
-  query: jest.fn(async (sql, params = []) => {
-    // requireRole: SELECT role, status FROM users WHERE id = $1
-    if (/FROM users/i.test(sql)) {
-      const p = profiles[params[0]];
-      return { rows: p ? [p] : [] };
-    }
-    // create: INSERT INTO inspections (...) RETURNING *
-    if (/INSERT INTO inspections/i.test(sql)) {
-      const [
-        source_type, resident_id, title, description, location_block,
-        location_unit, photo_url, category, ai_priority_score, source_flag,
-      ] = params;
-      const now = new Date().toISOString();
-      const row = {
-        id: `insp-${store.inspections.length + 1}`,
-        source_type,
-        resident_id, title, description, location_block,
-        location_unit: location_unit ?? null,
-        photo_url: photo_url ?? null,
-        photo_pending: false,
-        status: 'Open',
-        category,
-        priority: 'Medium',
-        ai_priority_score,
-        is_deleted: false,
-        source_flag: source_flag ?? 'Resident',
-        created_at: now,
-        updated_at: now,
-      };
-      store.inspections.push(row);
-      return { rows: [row] };
-    }
-    // duplicate guard: SELECT id FROM inspections WHERE resident_id=$1 AND title=$2 ...
-    if (/SELECT id FROM inspections/i.test(sql)) {
-      const [resident_id, title] = params;
-      const dup = store.inspections.filter(
-        (i) => i.resident_id === resident_id && i.title === title && !i.is_deleted
-      );
-      return { rows: dup.map((i) => ({ id: i.id })) };
-    }
-    return { rows: [] };
-  }),
+  query: mockQuery,
 }));
 
 const request = require('supertest');
@@ -91,6 +168,7 @@ const PNG = Buffer.from(
 
 beforeEach(() => {
   store.inspections.length = 0;
+  store.checklist_results.length = 0;
   jest.clearAllMocks();
 });
 
@@ -164,5 +242,97 @@ describe('POST /api/inspections', () => {
     const second = await submit();
     expect(second.status).toBe(409);
     expect(second.body.code).toBe('DUPLICATE_SUBMISSION');
+  });
+});
+
+describe('POST /api/inspections/lift', () => {
+  const validBody = {
+    lift_id: 'lift-1',
+    checklist: [
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
+    ],
+  };
+
+  test('201 inspector creates a lift inspection with checklist results', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .send(validBody);
+
+    expect(res.status).toBe(201);
+    expect(res.body.source_type).toBe('lift_inspection');
+    expect(res.body.inspector_id).toBe('ins-1');
+    expect(res.body.lift_id).toBe('lift-1');
+    // Derived from the lift row, not the request.
+    expect(res.body.contractor_id).toBe('con-1');
+    expect(res.body.location_block).toBe('44A');
+    expect(res.body.title).toBe('Lift inspection — 44A-L1');
+    expect(res.body.checklist_results).toHaveLength(2);
+    expect(res.body.checklist_results[1].severity).toBe('Major');
+  });
+
+  test('403 when the user is not an inspector', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer resident-token')
+      .send(validBody);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('400 when lift_id is missing', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .send({ checklist: validBody.checklist });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('404 when the lift does not exist', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .send({ ...validBody, lift_id: 'lift-nope' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('GET /api/checklist-items', () => {
+  test('200 returns active template items sorted by display_order', async () => {
+    const res = await request(app)
+      .get('/api/checklist-items')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    // Inactive item-3 excluded; remaining two in display_order.
+    expect(res.body.map((i) => i.id)).toEqual(['item-1', 'item-2']);
+  });
+});
+
+describe('GET /api/lifts', () => {
+  test('200 returns lifts with contractor names for an inspector', async () => {
+    const res = await request(app)
+      .get('/api/lifts')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].lift_code).toBe('44A-L1');
+    expect(res.body[0].contractor_name).toBe('Otis Service SG');
+  });
+
+  test('403 for a non-inspector', async () => {
+    const res = await request(app)
+      .get('/api/lifts')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
   });
 });

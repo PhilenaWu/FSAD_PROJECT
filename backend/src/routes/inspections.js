@@ -1,4 +1,5 @@
-// Inspection routes. UC-001: residents file complaints (with an optional photo).
+// Inspection routes. UC-001: residents file complaints (with an optional photo);
+// inspectors file lift spot-checks with checklist results.
 'use strict';
 
 const express = require('express');
@@ -26,6 +27,15 @@ router.post(
   requireRole('resident'),
   upload.single('photo'),
   inspectionController.create
+);
+
+// POST /api/inspections/lift — inspector submits a lift spot-check (JSON, no
+// photo upload in this flow).
+router.post(
+  '/lift',
+  requireAuth,
+  requireRole('inspector'),
+  inspectionController.createLiftInspection
 );
 
 module.exports = router;

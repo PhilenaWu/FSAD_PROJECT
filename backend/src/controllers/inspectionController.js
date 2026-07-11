@@ -1,9 +1,11 @@
 // Inspection controllers. UC-001: a resident files a complaint with an optional
-// photo, which is AI-categorised. (Lift inspections, assign/close/rate land later.)
+// photo, which is AI-categorised; an inspector files a lift spot-check with
+// checklist results. (Assign/close/rate land later.)
 'use strict';
 
 const { query } = require('../config/db');
 const inspectionModel = require('../models/inspectionModel');
+const liftModel = require('../models/liftModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
 
@@ -70,4 +72,66 @@ async function create(req, res, next) {
   }
 }
 
-module.exports = { create };
+// POST /api/inspections/lift — inspector submits a lift spot-check (JSON body:
+// { lift_id, checklist: [{ checklist_item_id, result, severity?, remark? }] }).
+// Note: HLD §6.2 folds this into POST /api/inspections via source_type; it lives
+// on a sibling route here so the inspector role guard stays route-level and the
+// resident path stays untouched. No OpenAI categorisation and no duplicate guard
+// (that guard protects against resident double-submits).
+async function createLiftInspection(req, res, next) {
+  try {
+    const inspector_id = req.user.id;
+    const { lift_id, checklist } = req.body;
+
+    // Required fields: a lift and a non-empty checklist.
+    if (!lift_id || !Array.isArray(checklist) || checklist.length === 0) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'lift_id and a non-empty checklist array are required.',
+      });
+    }
+
+    // Each result row must reference a template item and be Pass/Defect;
+    // severity is optional but constrained (mirrors the schema CHECKs).
+    for (const item of checklist) {
+      if (!item.checklist_item_id || !['Pass', 'Defect'].includes(item.result)) {
+        return res.status(400).json({
+          code: 'VALIDATION_ERROR',
+          message:
+            'Each checklist entry needs a checklist_item_id and a result of Pass or Defect.',
+        });
+      }
+      if (item.severity && !['Minor', 'Major', 'Critical'].includes(item.severity)) {
+        return res.status(400).json({
+          code: 'VALIDATION_ERROR',
+          message: 'severity must be Minor, Major or Critical.',
+        });
+      }
+    }
+
+    const lift = await liftModel.findById(lift_id);
+    if (!lift) {
+      return res.status(404).json({
+        code: 'NOT_FOUND',
+        message: 'Lift not found.',
+      });
+    }
+
+    // Derived server-side from the lift: block, responsible contractor, and a
+    // title (inspections.title is NOT NULL; the HLD lift request has none).
+    const inspection = await inspectionModel.createLiftInspection({
+      inspector_id,
+      lift_id,
+      title: `Lift inspection — ${lift.lift_code}`,
+      location_block: lift.block_number,
+      contractor_id: lift.contractor_id,
+      checklist,
+    });
+
+    res.status(201).json(inspection);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, createLiftInspection };
