@@ -1,39 +1,44 @@
 -- Migration: Seed demo data for the UC-005 analytics dashboard.
--- Contractors + lifts, then inspections shaped so every dashboard widget has
--- data: open records (heatmap / trends / priority queue), assigned jobs with
--- some overdue (contractor scorecard), closed records with resolution times
--- (SLA gauge — 42 of 55 within the 72h target = 76.4%), and two active
--- ai_predictions rows (AI alert cards).
+-- Inspections shaped so every dashboard widget has data: open records
+-- (heatmap / trends / priority queue), assigned jobs with some overdue
+-- (contractor scorecard), closed records with resolution times (SLA gauge —
+-- 42 of 55 within the 72h target = 76.4%), and two active ai_predictions
+-- rows (AI alert cards).
 --
+-- Contractors come from 016_seed_reference_data.sql (UC-001) — this file
+-- reuses them by name rather than creating rivals, and inserts them only if
+-- 016 has not run (same WHERE NOT EXISTS pattern, so either order is safe).
 -- resident_id / inspector_id stay NULL: users.id must reference a real
 -- Supabase auth account, and the analytics queries never read originators.
--- Idempotent: inspection/prediction inserts are skipped when 'Demo:' rows
--- already exist; contractors/lifts use ON CONFLICT DO NOTHING.
+-- Idempotent: skipped entirely when 'Demo:' rows already exist.
 
-INSERT INTO contractors (id, name, brands_serviced, contact_email) VALUES
-  ('c0000000-0000-4000-8000-000000000001', 'Otis Elevator Co.',  'Otis',      'service@otis.example.com'),
-  ('c0000000-0000-4000-8000-000000000002', 'Schindler Lifts SG', 'Schindler', 'defects@schindler.example.com'),
-  ('c0000000-0000-4000-8000-000000000003', 'KONE Pte Ltd',       'KONE',      'support@kone.example.com')
-ON CONFLICT (id) DO NOTHING;
+-- Ensure the three brand contractors exist (no-ops after 016).
+INSERT INTO contractors (name, brands_serviced, contact_email)
+SELECT 'Otis Service SG', 'Otis', 'defects@otis-sg.example.com'
+WHERE NOT EXISTS (SELECT 1 FROM contractors WHERE name = 'Otis Service SG');
 
-INSERT INTO lifts (block_number, lift_code, brand, contractor_id, bca_cert_expiry) VALUES
-  ('44A', '44A-L1', 'Otis',      'c0000000-0000-4000-8000-000000000001', '2027-03-31'),
-  ('44A', '44A-L2', 'Otis',      'c0000000-0000-4000-8000-000000000001', '2027-05-31'),
-  ('44B', '44B-L1', 'Schindler', 'c0000000-0000-4000-8000-000000000002', '2026-11-30'),
-  ('88B', '88B-L1', 'KONE',      'c0000000-0000-4000-8000-000000000003', '2027-01-31'),
-  ('90C', '90C-L1', 'Schindler', 'c0000000-0000-4000-8000-000000000002', '2026-09-30')
-ON CONFLICT (block_number, lift_code) DO NOTHING;
+INSERT INTO contractors (name, brands_serviced, contact_email)
+SELECT 'Schindler Care', 'Schindler', 'alerts@schindlercare.example.com'
+WHERE NOT EXISTS (SELECT 1 FROM contractors WHERE name = 'Schindler Care');
+
+INSERT INTO contractors (name, brands_serviced, contact_email)
+SELECT 'KONE Maintenance', 'KONE', 'service@kone-maint.example.com'
+WHERE NOT EXISTS (SELECT 1 FROM contractors WHERE name = 'KONE Maintenance');
 
 DO $$
 DECLARE
-  otis  UUID := 'c0000000-0000-4000-8000-000000000001';
-  schin UUID := 'c0000000-0000-4000-8000-000000000002';
-  kone  UUID := 'c0000000-0000-4000-8000-000000000003';
+  otis  UUID;
+  schin UUID;
+  kone  UUID;
 BEGIN
   -- Marker guard: seed once, skip on re-runs.
   IF EXISTS (SELECT 1 FROM inspections WHERE title LIKE 'Demo:%') THEN
     RETURN;
   END IF;
+
+  SELECT id INTO otis  FROM contractors WHERE name = 'Otis Service SG';
+  SELECT id INTO schin FROM contractors WHERE name = 'Schindler Care';
+  SELECT id INTO kone  FROM contractors WHERE name = 'KONE Maintenance';
 
   -- A) Open records — block × category spread for the heatmap; created_at
   -- spread over the last 14 days so the trend line has shape.
@@ -95,7 +100,7 @@ BEGIN
 
   -- C) Closed records: 55 total, 42 within the 72h SLA (30–69h) and 13 over
   -- (80–119h) → 76.4% compliance. Rectification gaps differ per contractor
-  -- (~4 / ~7 / ~3 days) so the scorecard averages spread. actual_cost feeds
+  -- (~3 / ~4 / ~7 days) so the scorecard averages spread. actual_cost feeds
   -- the future UC-011 cost dashboard.
   INSERT INTO inspections
     (source_type, title, location_block, category, priority, status,

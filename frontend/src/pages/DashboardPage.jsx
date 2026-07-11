@@ -2,11 +2,12 @@
 // trend + SLA gauge → contractor scorecard → priority queue, with CSV and
 // PowerPoint export. Data comes from analyticsService (mocked until the
 // Phase 3 backend endpoints land — see USE_MOCK there).
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   FormControl,
   Grid2 as Grid,
@@ -17,13 +18,22 @@ import {
   Snackbar,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
+import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
 import SlideshowOutlinedIcon from '@mui/icons-material/SlideshowOutlined';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import { useAuth } from '../context/AuthContext';
+import {
+  parseInspectionsCsv,
+  mergeHeatmap,
+  mergeTrends,
+  mergeSla,
+} from '../utils/csvImport';
 import HeatmapChart from '../components/analytics/HeatmapChart';
 import TrendLineChart from '../components/analytics/TrendLineChart';
 import SlaGauge from '../components/analytics/SlaGauge';
@@ -54,7 +64,9 @@ const CATEGORIES = [
 function Panel({ title, children, sx }) {
   return (
     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, height: '100%', ...sx }}>
-      <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 2 }}>
+      {/* component="div": titles may contain a Chip (a div), which isn't valid
+          inside the default h6 element. */}
+      <Typography variant="subtitle1" component="div" fontWeight={700} sx={{ mb: 2 }}>
         {title}
       </Typography>
       {children}
@@ -103,24 +115,119 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [alertBusy, setAlertBusy] = useState(false);
   const [toast, setToast] = useState('');
+  // What-if preview: imported CSV rows blended into the charts client-side.
+  // null = normal (database) view. Nothing is written to the database.
+  const [imported, setImported] = useState(null);
+  // Shared preview view: all charts follow one switch on the banner —
+  // combined | existing only | imported only.
+  const [previewView, setPreviewView] = useState('all');
+  const fileInputRef = useRef(null);
+
+  // Charts render these — merged with the import in preview mode. The charts
+  // also receive the imported portion separately so they can visually mark
+  // what's real vs simulated (ring on heatmap cells, dashed trend line,
+  // before → after on the gauge).
+  // Imported rows alone, aggregated to heatmap shape [{ block, category, count }].
+  const importedHeatmap = useMemo(
+    () => (imported ? mergeHeatmap([], imported) : []),
+    [imported]
+  );
+  const displayHeatmap = useMemo(() => {
+    if (!imported) return heatmap;
+    if (previewView === 'existing') return heatmap;
+    if (previewView === 'imported') return importedHeatmap;
+    return mergeHeatmap(heatmap, imported);
+  }, [heatmap, imported, importedHeatmap, previewView]);
+  const displaySla = useMemo(
+    () => (imported && sla ? mergeSla(sla, imported) : sla),
+    [sla, imported]
+  );
+  // { "block|category": importedCount } — which heatmap cells to ring.
+  const importedMap = useMemo(() => {
+    if (!imported) return null;
+    const map = {};
+    for (const r of imported) {
+      const key = `${r.block}|${r.category}`;
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    return map;
+  }, [imported]);
+  // [{ date, count }] — the dashed "Imported (preview)" trend series.
+  const importedTrend = useMemo(() => {
+    if (!imported) return null;
+    return mergeTrends([], imported);
+  }, [imported]);
+  // SLA of the imported rows alone; null when the import has no resolved rows.
+  const importedSla = useMemo(() => {
+    if (!imported || !sla) return null;
+    const resolved = imported.filter((r) => r.resolution_time_hours != null);
+    if (!resolved.length) return null;
+    return mergeSla(
+      { compliant_count: 0, total_resolved: 0, sla_percentage: 0, sla_threshold_hrs: sla.sla_threshold_hrs },
+      imported
+    );
+  }, [imported, sla]);
+
+  // Which dataset each chart shows under the current preview view. With no
+  // import active the view switch is irrelevant — always show the real data.
+  const showExisting = !imported || previewView !== 'imported';
+  const showImported = Boolean(imported) && previewView !== 'existing';
+
+  function clearPreview() {
+    setImported(null);
+    setPreviewView('all'); // stale "Imported only" must not linger past the import
+  }
+
+  // Panel-title chip marking charts that currently include preview data.
+  const previewChip = imported ? (
+    <Chip
+      label="preview"
+      size="small"
+      sx={{ ml: 1, bgcolor: 'warning.dark', color: 'common.white', fontWeight: 600 }}
+    />
+  ) : null;
+
+  function handleCsvImport(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const rows = parseInspectionsCsv(reader.result);
+        setImported(rows);
+        setPreviewView('all'); // fresh import always starts on the combined view
+        setToast(`Previewing ${rows.length} imported row${rows.length === 1 ? '' : 's'} — charts updated.`);
+      } catch (err) {
+        setToast(err.message);
+      }
+    };
+    reader.onerror = () => setToast('Could not read that file — try again.');
+    reader.readAsText(file);
+  }
 
   // Re-fetch everything whenever a filter changes (phase task 5.9).
   const fetchAll = useCallback(async () => {
     setLoading(true);
     const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
-    const [hm, tr, sl, sc, rec] = await Promise.all([
-      getHeatmap(params),
-      getTrends(params),
-      getSlaCompliance(params),
-      getContractorScorecard(params),
-      getRecommendations(),
-    ]);
-    setHeatmap(hm.data);
-    setTrends(tr.data);
-    setSla(sl);
-    setScorecard(sc.data);
-    setAlerts(rec.data);
-    setLoading(false);
+    try {
+      const [hm, tr, sl, sc, rec] = await Promise.all([
+        getHeatmap(params),
+        getTrends(params),
+        getSlaCompliance(params),
+        getContractorScorecard(params),
+        getRecommendations(),
+      ]);
+      setHeatmap(hm.data);
+      setTrends(tr.data);
+      setSla(sl);
+      setScorecard(sc.data);
+      setAlerts(rec.data);
+    } catch {
+      setToast('Could not load dashboard data — check the backend is running, then change a filter to retry.');
+    } finally {
+      setLoading(false);
+    }
   }, [filters]);
 
   useEffect(() => {
@@ -134,7 +241,9 @@ export default function DashboardPage() {
     const params = Object.fromEntries(
       Object.entries({ ...filters, ...queueFilters }).filter(([, v]) => v)
     );
-    getPriorityQueue(params).then((pq) => setQueue(pq.data));
+    getPriorityQueue(params)
+      .then((pq) => setQueue(pq.data))
+      .catch(() => setQueue([]));
   }, [filters, queueFilters, isManager]);
 
   const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
@@ -204,6 +313,23 @@ export default function DashboardPage() {
           Analytics Dashboard
         </Typography>
         <Stack direction="row" spacing={1}>
+          {/* What-if preview: blend a CSV into the charts client-side. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            onChange={handleCsvImport}
+          />
+          <Tooltip title="Preview how the charts change with extra rows (block,category[,date][,resolution_time_hours]). Nothing is saved.">
+            <Button
+              variant="outlined"
+              startIcon={<FileUploadOutlinedIcon />}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Import CSV
+            </Button>
+          </Tooltip>
           {/* ANA-T05: disabled with a tooltip when the filter result is empty.
               span wrapper — MUI tooltips need a focusable child when disabled. */}
           <Tooltip title={queue.length ? '' : 'No records match the current filters — nothing to export.'}>
@@ -268,6 +394,53 @@ export default function DashboardPage() {
         </Stack>
       </Paper>
 
+      {/* What-if preview banner — orange to match the preview accent used on
+          the charts (rings, dashed line, chips), with a white pop-out Clear
+          button. Distinct from both brand-red data and the amber alert cards. */}
+      {imported && (
+        <Paper
+          elevation={4}
+          sx={{
+            mb: 3,
+            px: 2.5,
+            py: 1.75,
+            borderRadius: 2,
+            bgcolor: 'warning.dark',
+            color: 'common.white',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          <FileUploadOutlinedIcon />
+          <Box sx={{ flexGrow: 1, minWidth: 240 }}>
+            <Typography fontWeight={700} lineHeight={1.3}>
+              What-if preview active — {imported.length} imported row
+              {imported.length === 1 ? '' : 's'}
+            </Typography>
+            <Typography variant="body2" sx={{ opacity: 0.9 }}>
+              Blended into the heatmap, trend and SLA gauge. Not saved — exports still use real data.
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            disableElevation
+            onClick={clearPreview}
+            sx={{
+              bgcolor: 'common.white',
+              color: 'warning.dark',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              px: 2.5,
+              '&:hover': { bgcolor: 'grey.100' },
+            }}
+          >
+            ✕ Clear preview
+          </Button>
+        </Paper>
+      )}
+
       {/* AI risk alerts (5.12/5.13) above the heatmap */}
       {alerts.length > 0 && (
         <Stack spacing={1.5} sx={{ mb: 3 }}>
@@ -283,13 +456,56 @@ export default function DashboardPage() {
         </Stack>
       )}
 
+      {/* Preview view switch — its own bar right above the charts it controls:
+          one switch flips the heatmap, trend and SLA gauge together. */}
+      {imported && (
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="center"
+          flexWrap="wrap"
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="subtitle2" fontWeight={700} color="warning.dark">
+            Chart view:
+          </Typography>
+          <ToggleButtonGroup
+            value={previewView}
+            exclusive
+            size="small"
+            onChange={(_e, v) => v && setPreviewView(v)}
+            sx={{
+              bgcolor: 'background.paper',
+              '& .MuiToggleButton-root': {
+                px: 2,
+                textTransform: 'none',
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                '&.Mui-selected': {
+                  bgcolor: 'warning.dark',
+                  color: 'common.white',
+                  '&:hover': { bgcolor: 'warning.main' },
+                },
+              },
+            }}
+          >
+            <ToggleButton value="all">Combined</ToggleButton>
+            <ToggleButton value="existing">Existing only</ToggleButton>
+            <ToggleButton value="imported">Imported only</ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+      )}
+
       {/* Charts row: heatmap + trend + SLA gauge */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
         <Grid size={{ xs: 12, md: 6 }}>
-          <Panel title="Issues by block × category">
-            {heatmap.length ? (
+          <Panel title={<>Issues by block × category{previewChip}</>}>
+            {displayHeatmap.length ? (
               <Box sx={{ height: 300 }}>
-                <HeatmapChart data={heatmap} />
+                <HeatmapChart
+                  data={displayHeatmap}
+                  importedMap={showImported && imported ? importedMap : null}
+                />
               </Box>
             ) : (
               <Alert severity="info">No records match the current filters.</Alert>
@@ -297,15 +513,32 @@ export default function DashboardPage() {
           </Panel>
         </Grid>
         <Grid size={{ xs: 12, sm: 7, md: 3.5 }}>
-          <Panel title="Issue trend">
+          <Panel title={<>Issue trend{previewChip}</>}>
             <Box sx={{ height: 300 }}>
-              <TrendLineChart data={trends} />
+              <TrendLineChart
+                data={showExisting ? trends : null}
+                imported={showImported ? importedTrend : null}
+              />
             </Box>
           </Panel>
         </Grid>
         <Grid size={{ xs: 12, sm: 5, md: 2.5 }}>
-          <Panel title="SLA compliance">
-            <Box sx={{ height: 300 }}>{sla && <SlaGauge sla={sla} />}</Box>
+          <Panel title={<>SLA compliance{previewChip}</>}>
+            <Box sx={{ height: 300 }}>
+              {imported && previewView === 'imported' ? (
+                importedSla ? (
+                  <SlaGauge sla={importedSla} />
+                ) : (
+                  <Alert severity="info">
+                    No resolved rows in the import — SLA needs resolution_time_hours values.
+                  </Alert>
+                )
+              ) : imported && previewView === 'existing' ? (
+                sla && <SlaGauge sla={sla} />
+              ) : (
+                displaySla && <SlaGauge sla={displaySla} baseline={imported ? sla : null} />
+              )}
+            </Box>
           </Panel>
         </Grid>
       </Grid>
