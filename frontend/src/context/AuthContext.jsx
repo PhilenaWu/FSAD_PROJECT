@@ -13,10 +13,16 @@ export function AuthProvider({ children }) {
   // profile = the user's row from the `users` table (name/role/block/unit),
   // fetched separately since the Supabase auth user doesn't carry these.
   const [profile, setProfile] = useState(null);
-  // True while /api/users/me is in flight, so consumers (e.g. the login
-  // redirect) can tell "role not loaded yet" apart from "fetch failed".
-  const [profileLoading, setProfileLoading] = useState(false);
+  // True when /api/users/me actually failed (as opposed to not fetched yet).
+  const [profileError, setProfileError] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Derived, not state: true from the instant a user exists until the profile
+  // resolves or errors. Deriving it closes the one-render gap right after
+  // login where a state flag would still be false — that gap made role-based
+  // redirects fire before the role was known (managers landed on the
+  // resident side).
+  const profileLoading = Boolean(user) && profile === null && !profileError;
 
   useEffect(() => {
     // Seed from the current session, then subscribe to future changes.
@@ -36,21 +42,19 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!user) {
       setProfile(null);
-      setProfileLoading(false);
+      setProfileError(false);
       return;
     }
     let active = true;
-    setProfileLoading(true);
+    setProfile(null);
+    setProfileError(false);
     api
       .get('/api/users/me')
       .then((res) => {
         if (active) setProfile(res.data);
       })
       .catch(() => {
-        if (active) setProfile(null);
-      })
-      .finally(() => {
-        if (active) setProfileLoading(false);
+        if (active) setProfileError(true);
       });
     return () => {
       active = false;
