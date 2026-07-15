@@ -327,16 +327,16 @@ export default function DashboardPage() {
       </InputAdornment>
     ) : null;
 
-  // Accept/dismiss endpoints are UC-006 (not built yet) — surface a toast
-  // instead of crashing until they land.
+  // UC-006 alert actions. Accept opens a preventive-maintenance record and
+  // removes the card; on error, surface the backend's message.
   async function handleAccept(id) {
     setAlertBusy(true);
     try {
       await acceptRecommendation(id);
       setAlerts((a) => a.filter((x) => x.id !== id));
       setToast('Alert accepted — preventive maintenance record created.');
-    } catch {
-      setToast('Accept needs the UC-006 backend — coming soon.');
+    } catch (err) {
+      setToast(err.response?.data?.message ?? err.message);
     }
     setAlertBusy(false);
   }
@@ -347,21 +347,22 @@ export default function DashboardPage() {
       await dismissRecommendation(id);
       setAlerts((a) => a.filter((x) => x.id !== id));
       setToast('Alert dismissed.');
-    } catch {
-      setToast('Dismiss needs the UC-006 backend — coming soon.');
+    } catch (err) {
+      setToast(err.response?.data?.message ?? err.message);
     }
     setAlertBusy(false);
   }
 
-  // Manager-triggered "run the nightly analysis now" (HLD §6.4). The endpoint
-  // is UC-006; until it exists the failure surfaces as a toast.
+  // Manager-triggered "run the nightly analysis now" (HLD §6.4 / UC-006). Runs
+  // the velocity scan on the backend, then refreshes so new alert cards appear.
   async function handleRunAnalysis() {
+    setToast('Running AI analysis…');
     try {
       const result = await runAnalysis();
       setToast(`Analysis complete — ${result.alerts_generated} alert(s) generated.`);
       fetchAll();
     } catch (err) {
-      setToast(err.response ? 'Run Analysis needs the UC-006 backend — coming soon.' : err.message);
+      setToast(err.response?.data?.message ?? err.message);
     }
   }
 
