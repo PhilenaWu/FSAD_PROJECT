@@ -2,7 +2,7 @@
 # Lift Inspection & Estate Defect Management System — Phase Plan
 
 > Problem statement: **4C-1** primary · **4C-2** secondary · **4D** thematic
-> New in this revision: UC-010 (contractor portal), UC-011 (admin cost dashboard), voice complaints, PowerPoint export, lift/contractor/checklist/signature domain.
+> New in this revision: UC-010 (contractor portal), UC-011 (admin cost dashboard), UC-012 (vendor account lifecycle), UC-005 Data Playground extension, voice complaints, PowerPoint export, lift/contractor/checklist/signature domain.
 
 ---
 
@@ -41,7 +41,7 @@ Week 1         Week 2         Week 3         Week 4         Week 5         Week 
 |-------|-------|---------|-------------------|
 | 1 — Foundation | 1–2 | Philena | Auth/JWT, DB schema, DevOps setup |
 | 2 — Core | 3–4 | Philena (UC-001 incl. voice, 002, 004 e-sign) · Zoe (UC-003 + UC-010 contractor portal) · Mahdiya (UC-007) | UC-001, 002, 003, 004, 007, 010 |
-| 3 — Intelligence | 5 | Hasini (UC-005 + PPT export + UC-011 UI) · Davian (UC-006 + cost + UC-009 + UC-011 backend) | UC-005, 006, 009, 011 |
+| 3 — Intelligence | 5 | Hasini (UC-005 + PPT export + Data Playground + UC-011 UI + UC-012) · Davian (UC-006 + cost + UC-009 + UC-011 backend) | UC-005, 006, 009, 011, 012 |
 | 4 — Polish | 6 | All | UC-008, integration testing, demo prep |
 
 ---
@@ -57,7 +57,7 @@ Phase 1: Foundation (critical path — blocks everything)
 └── DevOps (Vercel + Render deploy happens at end of Phase 1 week 2)
 ```
 
-**Critical path:** Phase 1 Week 1 completion (auth routes + Supabase running) is the gate for everything else. If this slips, the entire team is blocked. Philena must complete the Supabase-token middleware and DB connection before Week 2.
+**Critical path:** Phase 1 Week 1 completion (auth routes + Supabase running) is the gate for everything else. If this slips, the entire team is blocked. Philena must complete the JWT middleware and DB connection before Week 2.
 
 ---
 
@@ -84,12 +84,12 @@ Phase 1: Foundation (critical path — blocks everything)
 
 | # | Task | File(s) | Notes |
 |---|------|---------|-------|
-| 1.1 | Set up Node.js + Express project | `server.js`, `src/app.js`, `package.json` | Install: `express`, `pg`, `@supabase/supabase-js`, `cors`, `dotenv`, `multer`, `cloudinary`, `express-rate-limit`, `joi` |
+| 1.1 | Set up Node.js + Express project | `server.js`, `src/app.js`, `package.json` | Install: `express`, `pg`, `jsonwebtoken`, `bcrypt`, `cors`, `dotenv`, `multer`, `cloudinary`, `express-rate-limit`, `joi` |
 | 1.2 | Configure Supabase connection | `src/config/db.js` | Use `pg` Pool; test with a ping query on startup |
 | 1.3 | Run all 10 SQL migrations | `migrations/001–010_*.sql` | Run in order in Supabase SQL editor; verify tables exist |
 | 1.4 | Create `users` model | `src/models/userModel.js` | `findByEmail()`, `create()`, `findById()` |
-| 1.5 | Implement `userController.js` (`getMe`) | `src/controllers/userController.js` | Auth (sign-up/login/logout) handled by Supabase client-side; backend exposes `GET /users/me` |
-| 1.6 | Create users route | `src/routes/users.js` | `GET /api/users/me` (Supabase handles register/login/logout on the client) |
+| 1.5 | Implement `authController.js` | `src/controllers/authController.js` | `register()` with bcrypt, `login()` returning JWT, `logout()` |
+| 1.6 | Create auth routes | `src/routes/auth.js` | `POST /api/auth/register`, `/login`, `/logout` |
 | 1.7 | Build JWT middleware | `src/middleware/auth.js` | `verifyJWT()` — attaches `req.user`; `requireRole('manager')` |
 | 1.8 | Build cron guard middleware | `src/middleware/cronGuard.js` | Validates `Authorization: Bearer <CRON_SECRET>` |
 | 1.9 | Build global error handler | `src/middleware/errorHandler.js` | Returns `{ code, message }` for all unhandled errors |
@@ -103,7 +103,7 @@ Phase 1: Foundation (critical path — blocks everything)
 |---|------|---------|-------|
 | 1.13 | Scaffold React app with Vite | `frontend/` | `npm create vite@latest` with React template |
 | 1.14 | Create `AuthContext` | `src/context/AuthContext.jsx` | Stores JWT in memory; provides `login()`, `logout()`, `user` |
-| 1.15 | Build `LoginForm.jsx` | `src/components/auth/LoginForm.jsx` | Calls `supabase.auth.signInWithPassword`; session/token managed by Supabase, exposed via AuthContext |
+| 1.15 | Build `LoginForm.jsx` | `src/components/auth/LoginForm.jsx` | Calls `POST /api/auth/login`; stores token in context |
 | 1.16 | Create `api.js` axios instance | `src/services/api.js` | `baseURL = import.meta.env.VITE_API_URL`; attach JWT header |
 | 1.17 | Add protected route wrapper | `src/App.jsx` | Redirects to `/login` if no token in context |
 
@@ -125,11 +125,11 @@ Phase 1: Foundation (critical path — blocks everything)
 
 | Test ID | Input | Expected Output |
 |---------|-------|----------------|
-| AUTH-T01 | Supabase sign-up + profile row created | `users` row exists with correct role; no password stored in `users` |
-| AUTH-T02 | Sign-up with duplicate email | Supabase returns an auth error on the client (no duplicate profile row) |
-| AUTH-T03 | Supabase login with correct credentials | Session returned; `GET /users/me` returns correct `role` |
-| AUTH-T04 | Login with wrong password | Supabase returns `INVALID_CREDENTIALS` on the client |
-| AUTH-T05 | `GET /users/me` with no/expired token | 401, `UNAUTHORIZED` |
+| AUTH-T01 | `POST /auth/register` with valid data | 201, user object returned, password not in response |
+| AUTH-T02 | `POST /auth/register` with duplicate email | 400, `EMAIL_ALREADY_EXISTS` |
+| AUTH-T03 | `POST /auth/login` with correct credentials | 200, JWT token present, `user.role` correct |
+| AUTH-T04 | `POST /auth/login` with wrong password | 401, `INVALID_CREDENTIALS` |
+| AUTH-T05 | `POST /auth/login` with unknown email | 401, `INVALID_CREDENTIALS` (same code — no enumeration) |
 | AUTH-T06 | `GET /api/inspections` with no JWT | 401, `UNAUTHORIZED` |
 | AUTH-T07 | `GET /api/inspections` with resident JWT | 403, `FORBIDDEN` (manager-only route) |
 | AUTH-T08 | `GET /api/inspections` with valid manager JWT | 200 (even if empty array) |
@@ -139,7 +139,7 @@ Phase 1: Foundation (critical path — blocks everything)
 ### 3.5 Phase 1 Definition of Done
 
 - [ ] All 10 migration tables exist in Supabase
-- [ ] Supabase sign-up/login/logout work on the client; `GET /users/me` returns the profile with correct role
+- [ ] `POST /auth/register`, `/login`, `/logout` return correct responses
 - [ ] JWT middleware blocks unauthenticated requests to protected routes
 - [ ] Role middleware blocks residents from manager routes
 - [ ] Backend live on Render at `https://your-app.onrender.com`
@@ -301,6 +301,10 @@ Phase 1: Foundation (critical path — blocks everything)
 | 5.13a | Frontend: Contractor scorecard table | `src/components/analytics/ContractorScorecard.jsx` | Renders `/analytics/contractor-scorecard` — beyond the Sembawang baseline |
 | 5.13b | Backend + Frontend: PowerPoint export | `src/services/pptxService.js`, `src/routes/export.js`, export button on dashboard | `POST /api/export/pptx` (PptxGenJS) renders current filtered charts/tables into a .pptx; download link returned (4C-2 / 4D pain point) |
 | 5.13c | Frontend: UC-011 Admin Cost Dashboard page | `src/pages/AdminCostPage.jsx` | Role-gated to `admin`; KPI tiles, cost-by-category bar, cost-per-contractor table, cost trend line; reuses Chart.js components with cost data |
+| 5.13d | Frontend: Data Playground page (UC-005 ext) | `src/pages/DataPlaygroundPage.jsx` | Client-side CSV/XLSX parse (PapaParse / SheetJS); column preview + type inference; map columns to axes; render via shared Chart.js components; session-only (no DB writes); ≤ 5 MB; charts addable to PPT export selection. **Verify spec against actual Claude Code implementation** |
+| 5.13e | Backend: UC-012 vendor lifecycle controller + routes | `src/controllers/vendorController.js`, `src/routes/vendors.js` | `onboard()` (creates contractors + users rows, validates dates, Cloudinary /contracts upload), `list()` (sorted by contract_end), `renew()`, `suspend()` — all `requireRole('admin')`. **Coordinate with Philena — touches users table + auth (403 ACCOUNT_SUSPENDED on suspended login)** |
+| 5.13f | Frontend: UC-012 Vendor Accounts page | `src/pages/AdminVendorPage.jsx` | Onboard form (manual entry — no contract parsing), vendor list with days-until-expiry, Renew + Suspend actions with confirm dialogs |
+| 5.13g | Scheduled job: contract expiry check | `.github/workflows/contract-expiry-check.yml` + `GET /api/admin/vendors/expiry-check` (cron-guarded) | Daily; suspends contractors past `contract_end`; notifies admin (Socket.IO + email); same cron-secret pattern as §5.4 |
 
 ### 5.3 Week 5 Tasks — Davian: UC-006 + UC-009
 
@@ -430,6 +434,15 @@ startNotificationDispatcher();
 | RPT-T02 | OpenAI fails during report generation | 200, fallback template summary used, report still delivered |
 | RPT-T03 | `POST /reports/generate-manual` with manager JWT | 201, `triggered_by: "manual"` |
 | RPT-T04 | `GET /reports` | 200, array of report records with `report_url` links |
+| PLG-T01 | Upload valid CSV to playground | Column preview shown; chart renders from selected columns; nothing written to DB |
+| PLG-T02 | Upload 6 MB file | Rejected client-side with size message; no parse attempted |
+| PLG-T03 | Upload .txt file | "Could not be read" error; no partial state |
+| VND-T01 | POST /admin/vendors with valid data | 201; contractors + users rows created; status active |
+| VND-T02 | POST /admin/vendors, contract_end < contract_start | 400 INVALID_CONTRACT_DATES |
+| VND-T03 | POST /admin/vendors with existing login email | 409 EMAIL_ALREADY_EXISTS; no rows created |
+| VND-T04 | Expiry job runs with 1 vendor past contract_end | users.status → suspended; admin notified |
+| VND-T05 | Suspended vendor attempts login | 403 ACCOUNT_SUSPENDED |
+| VND-T06 | POST /admin/vendors/:id/renew on suspended vendor | 200; status active; new contract_end stored |
 
 ### 5.6 Phase 3 Definition of Done
 
@@ -439,6 +452,8 @@ startNotificationDispatcher();
 - [ ] Velocity analysis correctly skips pairs with < 3 records
 - [ ] **PowerPoint export** produces a downloadable .pptx of the current dashboard view (PptxGenJS)
 - [ ] **Admin cost dashboard (UC-011)** renders KPI tiles, cost-by-category, cost-per-contractor, and trend — role-gated to `admin`
+- [ ] **Data Playground (UC-005 ext)** parses a CSV and an XLSX client-side, renders an ad-hoc chart, rejects >5 MB and malformed files gracefully, persists nothing
+- [ ] **Vendor lifecycle (UC-012)**: onboard creates linked contractors + users rows; expiry job suspends past-contract vendors; suspended vendor login returns 403 ACCOUNT_SUSPENDED; renew reactivates
 - [ ] Cost figures derive only from the system's own data (actual_cost + estimated_cost); no EM corporate financials
 - [ ] Monthly PDF contains: title, period, executive summary, data tables, cost summary
 - [ ] PDF stored in Cloudinary `/reports`, URL in `reports` table; manager receives email (real SMTP)
@@ -511,7 +526,8 @@ The demo follows one **continuous user journey** through the lift-inspection lif
 | 3. Contractor portal (the 4C-1 differentiator) | Zoe | Login as contractor → assigned-defects inbox with deadline countdown → acknowledge → upload completion photo + remark → **e-sign on the signature pad** → submit work done | 3 min |
 | 4. Manager joint endorsement + close | Zoe → Philena | Manager sees "Rectified — awaiting endorsement" → opens record → reviews completion proof → **dual e-signature** → enters actual_cost → close (record enters 5-year audit trail) | 2 min |
 | 5. CV auto-detection | Mahdiya | Upload a lift defect photo → Roboflow detects rust/crack with bounding box → auto-record created → manager receives Socket.IO alert | 2 min |
-| 6. Analytics + PowerPoint export | Hasini | Manager dashboard → heatmap + SLA gauge + **contractor scorecard** → filter Block 44A → **accept a cost-aware AI alert** ("$800 now vs $3,200 later") → **click Export to PowerPoint**, open the generated deck | 3 min |
+| 6. Analytics + PowerPoint export | Hasini | Manager dashboard → heatmap + SLA gauge + **contractor scorecard** → filter Block 44A → **accept a cost-aware AI alert** ("$800 now vs $3,200 later") → **Data Playground: upload a client CSV, chart it live** → **click Export to PowerPoint** (deck includes the playground chart) | 3.5 min |
+| 6b. Vendor lifecycle (UC-012) | Hasini | Admin portal → onboard a vendor with contract dates → show expiry countdown on vendor list → suspend + renew flow | 1.5 min |
 | 7. Admin cost dashboard + monthly report | Davian | Login as admin → **operational cost dashboard** (actual vs projected, cost-per-contractor) → then trigger the monthly PDF report → open it → show executive summary + cost section | 2 min |
 | **Total** | | | **~17 min** |
 
