@@ -14,7 +14,7 @@
 5. [Database Schema](#5-database-schema)
    - [5.11 Entity Relationship Summary](#511-entity-relationship-summary)
 6. [API Endpoints](#6-api-endpoints)
-   - 6.2 Inspections & Complaints · 6.9 Contractor Portal · 6.10 Admin Cost Analytics · 6.11 Export
+   - 6.2 Inspections & Complaints · 6.9 Contractor Portal · 6.10 Admin Cost Analytics · 6.11 Export · 6.12 Vendor Account Lifecycle · 6.13 Data Playground
 7. [Auth & Security](#7-auth--security)
 8. [Environment Variables Reference](#8-environment-variables-reference)
 
@@ -31,7 +31,7 @@ The Lift Inspection & Estate Defect Management System is a full-stack web applic
 | `inspector` | LMS staff; performs structured digital lift spot-check inspections |
 | `manager` | Triages, assigns to contractors, closes with dual e-sign; views analytics; sends notifications |
 | `contractor` | Lift company staff; acknowledges defects, rectifies, uploads proof photos, e-signs |
-| `admin` | Views operational cost-analytics dashboard (UC-011) |
+| `admin` | Views operational cost-analytics dashboard (UC-011); manages external vendor (contractor) account lifecycle — onboarding, contract-linked expiry, renewal (UC-012) |
 | `system` | Automated actor — CV pipeline, AI recommendations + cost prediction, scheduled reports, auto-chase |
 
 **Core data-model note:** a single `inspections` table stores all records via a `source_type` discriminator (`lift_inspection`, `resident_complaint`, `cv_auto_detected`). All three share the same downstream lifecycle (triage → assign → rectify → close → audit), so one normalised table with type-specific nullable fields keeps the schema clean.
@@ -53,7 +53,7 @@ The Lift Inspection & Estate Defect Management System is a full-stack web applic
 │   ├── REST API routes (auth, inspections, contractor, analytics,     │
 │   │                     admin/costs, export, reports…)               │
 │   ├── Socket.IO server (manager-room, block-N, contractor-N, insp-N) │
-│   ├── Supabase-token middleware (role-based, from users.role)        │
+│   ├── JWT middleware (role-based: resident / manager)                │
 │   └── CRON_SECRET guard (protects scheduled endpoints)              │
 └───────┬──────────────┬──────────────┬───────────────┬───────────────┘
         │              │              │               │
@@ -112,8 +112,8 @@ The Lift Inspection & Estate Defect Management System is a full-stack web applic
 | PowerPoint export | PptxGenJS | 3.x | Server-side .pptx generation of dashboards (4C-2 / weekly-meeting pain point) |
 | Scheduling | GitHub Actions | — | Free cron trigger for UC-006, UC-008, UC-009 |
 | Uptime | UptimeRobot | — | Prevents Render free-tier cold starts |
-| Auth | Supabase Auth (@supabase/supabase-js) | 2.x | Sign-up/login/session + JWT issuance; backend verifies the token |
-| Password hashing | Supabase Auth (managed) | — | Handled by Supabase; no passwords stored in our `users` table |
+| Auth | JWT (jsonwebtoken) | 9.x | Stateless auth, stored in memory (not localStorage) |
+| Password hashing | bcrypt | 5.x | Salted password hashing |
 | File handling | multer | 1.x | Multipart/form-data for photo uploads |
 
 ---
@@ -128,10 +128,11 @@ Two separate repositories — different runtimes, deploy targets, and package.js
 backend/
 ├── src/
 │   ├── routes/
-│   │   ├── users.js             # GET /users/me (auth handled by Supabase client-side)
+│   │   ├── auth.js              # POST /auth/login, /auth/logout, /auth/register
 │   │   ├── inspections.js       # CRUD for inspection/complaint records (UC-001–004)
 │   │   ├── contractor.js        # contractor portal: acknowledge, rectify, e-sign (UC-010)
 │   │   ├── admin.js             # admin cost analytics endpoints (UC-011)
+│   │   ├── vendors.js           # UC-012 vendor lifecycle: onboard, list, renew, suspend
 │   │   ├── export.js            # PptxGenJS PowerPoint export (UC-005/011)
 │   │   ├── analytics.js         # GET /analytics/issues-by-block, /trends, /sla-compliance
 │   │   ├── recommendations.js   # GET /recommendations/run (AI engine trigger)
@@ -140,10 +141,11 @@ backend/
 │   │   └── cv.js                # POST /cv/detect, GET /cv/batch-scan
 │   │
 │   ├── controllers/
-│   │   ├── userController.js        # getMe() (Supabase Auth handles register/login/logout client-side)
+│   │   ├── authController.js        # register(), login(), logout()
 │   │   ├── inspectionController.js  # create(), list(), getById(), assign(), close() + dual e-sign
 │   │   ├── contractorController.js  # acknowledge(), submitWork(), eSign() (UC-010)
 │   │   ├── adminController.js       # costSummary(), costByCategory(), costPerContractor() (UC-011)
+│   │   ├── vendorController.js      # onboard(), list(), renew(), suspend() (UC-012)
 │   │   ├── exportController.js      # generatePptx() (UC-005/011)
 │   │   ├── analyticsController.js   # getHeatmap(), getTrends(), getSlaCompliance()
 │   │   ├── recommendationController.js # runAnalysis(), acceptAlert(), dismissAlert()
@@ -161,7 +163,7 @@ backend/
 │   │   └── socketService.js         # emitToRoom(), broadcastToBlock()
 │   │
 │   ├── middleware/
-│   │   ├── auth.js                  # verifySupabaseToken(), requireRole('manager')
+│   │   ├── auth.js                  # verifyJWT(), requireRole('manager')
 │   │   ├── cronGuard.js             # validateCronSecret() for scheduled endpoints
 │   │   ├── rateLimiter.js           # express-rate-limit config
 │   │   ├── errorHandler.js          # global error handler, standardised JSON errors
@@ -185,7 +187,7 @@ backend/
 │   │
 │   ├── utils/
 │   │   ├── notificationDispatcher.js  # startNotificationDispatcher() — 60 s setInterval, calls dispatchDueNotifications()
-│   │   ├── (no jwtHelpers — Supabase issues/refreshes tokens; backend verifies)
+│   │   ├── jwtHelpers.js            # signToken(), verifyToken()
 │   │   ├── velocityCalculator.js    # failure velocity formula for UC-006
 │   │   ├── slaHelpers.js            # SLA compliance calculation
 │   │   └── csvExporter.js           # Client-side CSV generation helper
@@ -238,6 +240,8 @@ frontend/
 │   │   ├── InspectionListPage.jsx   # UC-002: manager triage queue
 │   │   ├── ContractorInboxPage.jsx   # UC-010: contractor assigned-defects inbox
 │   │   ├── AdminCostPage.jsx         # UC-011: admin cost analytics dashboard
+│   │   ├── AdminVendorPage.jsx       # UC-012: vendor account lifecycle (onboard / renew / suspend)
+│   │   ├── DataPlaygroundPage.jsx    # UC-005 ext: ad-hoc CSV/XLSX import + charting (client-side only)
 │   │   ├── IncidentDetailPage.jsx   # UC-002 / UC-005: detail + status update
 │   │   ├── ReportIssuePage.jsx      # UC-001: resident submission form
 │   │   ├── MyReportsPage.jsx        # UC-003: resident status tracker
@@ -272,7 +276,7 @@ frontend/
 │   │       └── EmptyState.jsx
 │   │
 │   ├── context/
-│   │   ├── AuthContext.jsx          # Supabase session + user role/profile
+│   │   ├── AuthContext.jsx          # JWT token in memory, user role
 │   │   └── SocketContext.jsx        # Socket.IO connection, room management
 │   │
 │   ├── hooks/
@@ -283,7 +287,7 @@ frontend/
 │   │
 │   ├── services/
 │   │   ├── api.js                   # axios instance with baseURL = VITE_API_URL
-│   │   ├── auth.js                  # Supabase signUp/signIn/signOut/getAccessToken wrappers
+│   │   ├── authService.js           # login(), logout()
 │   │   ├── inspectionService.js     # create(), list(), assign(), close()
 │   │   ├── contractorService.js     # acknowledge(), submitWork(), eSign()
 │   │   ├── voiceService.js          # Web Speech API wrapper (start/stop/transcript)
@@ -317,7 +321,7 @@ frontend/
 CREATE TABLE users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email         VARCHAR(255) NOT NULL UNIQUE,
-  -- no password column: credentials live in Supabase Auth (auth.users); this row is the app profile, keyed by the auth user id
+  password_hash VARCHAR(255) NOT NULL,
   full_name     VARCHAR(255) NOT NULL,
   role          VARCHAR(20)  NOT NULL
                 CHECK (role IN ('resident','inspector','manager','contractor','admin')),
@@ -427,6 +431,9 @@ CREATE TABLE contractors (
   brands_serviced  TEXT,                         -- comma-separated brands
   contact_email    VARCHAR(255) NOT NULL,        -- for Nodemailer defect alerts
   user_id          UUID         REFERENCES users(id),  -- linked login account
+  contract_start   DATE,                         -- UC-012: vendor engagement start
+  contract_end     DATE,                         -- UC-012: drives auto-expiry job
+  contract_doc_url VARCHAR(500),                 -- UC-012: contract file, Cloudinary /contracts (reference only)
   created_at       TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
@@ -692,6 +699,7 @@ The diagram below shows every foreign-key relationship across the 15 tables. Rea
 | `inspections` → `checklist_results` | one-to-many | A lift inspection has many checklist result rows (`checklist_results.inspection_id → inspections.id`). Cascades on delete. |
 | `checklist_items` → `checklist_results` | one-to-many | A template item is answered across many inspections (`checklist_results.checklist_item_id → checklist_items.id`). |
 | `inspections` → `signatures` | one-to-many | An inspection carries up to two endorsement signatures (`signatures.inspection_id → inspections.id`). Cascades on delete. |
+| `contractors` → `users` (lifecycle) | one-to-one | A vendor's contract-bounded access (UC-012): `contractors.contract_end` drives the daily expiry job that flips the linked `users.status` to `suspended`. |
 | `users` → `signatures` | one-to-many | A user (inspector/manager/contractor) signs many records (`signatures.signer_id → users.id`). |
 | `cv_detections` → `inspections` | one-to-one | An auto-detected defect links to the record it created (`inspections.cv_detection_id → cv_detections.id`). Optional. |
 | `users` → `ai_predictions` | one-to-many | A manager can dismiss many predictions (`ai_predictions.dismissed_by → users.id`). Optional. |
@@ -712,29 +720,65 @@ The diagram below shows every foreign-key relationship across the 15 tables. Rea
 
 ### 6.1 Auth
 
-Authentication is handled by **Supabase Auth** on the client (via `@supabase/supabase-js`),
-not by custom backend endpoints. Sign-up, login, logout, password hashing, and session/
-token refresh are all managed by Supabase. The frontend obtains the access token with
-`getAccessToken()` and sends it to our API as `Authorization: Bearer <token>`; the backend
-verifies it and looks up the caller's role from the `users` profile row.
+#### POST /api/auth/register
+Creates a new resident account.
 
-- **Sign-up** → `supabase.auth.signUp({ email, password })` (client). On success, an app
-  profile row is created in `users` (id = the Supabase auth user id, plus full_name, role,
-  block/unit). Duplicate email is surfaced by Supabase as an auth error on the client.
-- **Login** → `supabase.auth.signInWithPassword({ email, password })` (client). Returns the
-  session; wrong credentials surface as a Supabase auth error on the client.
-- **Logout** → `supabase.auth.signOut()` (client) — clears the session.
+**Request:**
+```json
+{
+  "email": "ali@example.com",
+  "password": "SecurePass123",
+  "full_name": "Ali Hassan",
+  "role": "resident",
+  "block_number": "44A",
+  "unit_number": "12-05"
+}
+```
+**Response 201:**
+```json
+{
+  "id": "a1b2c3d4-...",
+  "email": "ali@example.com",
+  "full_name": "Ali Hassan",
+  "role": "resident",
+  "created_at": "2026-06-01T08:00:00Z"
+}
+```
+**Error 400 — duplicate email:**
+```json
+{ "code": "EMAIL_ALREADY_EXISTS", "message": "An account with this email is already registered." }
+```
 
-#### GET /api/users/me
-**Auth:** any authenticated role (valid Supabase `Authorization: Bearer <token>`)
-Returns the caller's own profile row from `users` (id, email, full_name, role, block/unit).
-Used by the frontend to show the signed-in user and drive role-based UI.
+---
+
+#### POST /api/auth/login
+Authenticates user and returns JWT.
+
+**Request:**
+```json
+{ "email": "ali@example.com", "password": "SecurePass123" }
+```
+**Response 200:**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": { "id": "a1b2c3d4-...", "email": "ali@example.com", "role": "resident", "full_name": "Ali Hassan" }
+}
+```
+**Error 401:**
+```json
+{ "code": "INVALID_CREDENTIALS", "message": "Incorrect email or password." }
+```
+
+---
+
+#### POST /api/auth/logout
+Invalidates the current session (client drops token).
 
 **Response 200:**
 ```json
-{ "id": "a1b2c3d4-...", "email": "ali@example.com", "full_name": "Ali Hassan", "role": "resident", "block_number": "44A", "unit_number": "12-05" }
+{ "message": "Logged out successfully." }
 ```
-**Error 401:** missing/expired token → `{ "code": "UNAUTHORIZED", "message": "..." }`
 
 ---
 
@@ -1381,14 +1425,126 @@ Renders the current filtered dashboard (charts + tables) into a PowerPoint deck 
 
 ---
 
+### 6.12 Vendor Account Lifecycle (UC-012)
+
+> Scoped to external vendor (contractor) accounts only. EM Services' own staff
+> (inspector/manager) are long-term employee accounts handled by EM's existing
+> HR/IT processes — out of scope (see Limitations).
+
+#### POST /api/admin/vendors
+**Auth:** `admin`  
+Onboards a new external vendor. Admin manually enters vendor details and
+contract duration (no automated contract parsing — deliberate scope decision);
+the contract document is uploaded to Cloudinary `/contracts` for record-keeping
+only. Creates a `contractors` row and a linked `users` row
+(`role = 'contractor'`, `status = 'active'`).
+
+**Request (form-data):**
+```
+name             = "Otis Elevator Co."
+contact_email    = "service@otis.example.com"
+brands_serviced  = "Otis"
+contract_start   = "2026-07-01"
+contract_end     = "2027-06-30"
+contract_doc     = [binary PDF/DOCX]
+login_email      = "otis.contractor@example.com"
+login_password   = [admin-set temporary password]
+```
+**Response 201:**
+```json
+{
+  "contractor_id": "CTR-4f2a...",
+  "user_id": "USR-9b1c...",
+  "status": "active",
+  "contract_end": "2027-06-30",
+  "contract_doc_url": "https://res.cloudinary.com/.../contracts/otis.pdf"
+}
+```
+**Error 400 — invalid dates:**
+```json
+{ "code": "INVALID_CONTRACT_DATES", "message": "Contract end date must be after start date." }
+```
+**Error 409 — email exists:**
+```json
+{ "code": "EMAIL_ALREADY_EXISTS", "message": "An account with this email already exists." }
+```
+
+#### GET /api/admin/vendors
+**Auth:** `admin`  
+Lists all vendor accounts with contract status, sorted by `contract_end`
+ascending (soonest-expiring first).
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "contractor_id": "CTR-4f2a...",
+      "name": "Otis Elevator Co.",
+      "status": "active",
+      "contract_end": "2027-06-30",
+      "days_until_expiry": 349
+    }
+  ]
+}
+```
+
+#### POST /api/admin/vendors/:id/renew
+**Auth:** `admin`  
+Extends a vendor's contract with a new `contract_end` (optional new contract
+document). If the account was `suspended` due to expiry, reactivates it to
+`active`. Appends audit entry `Contract Renewed`.
+
+**Request:**
+```json
+{ "contract_end": "2028-06-30" }
+```
+**Response 200:**
+```json
+{ "contractor_id": "CTR-4f2a...", "status": "active", "contract_end": "2028-06-30" }
+```
+
+#### POST /api/admin/vendors/:id/suspend
+**Auth:** `admin`  
+Manually suspends a vendor before contract end (early termination). Sets
+`users.status = 'suspended'` immediately; open records assigned to that
+contractor surface in the manager's "Pending Reassignment" queue (UC-002 Alt C).
+
+**Response 200:**
+```json
+{ "contractor_id": "CTR-4f2a...", "status": "suspended" }
+```
+
+**Scheduled job — contract expiry check**
+(`.github/workflows/contract-expiry-check.yml`, same pattern as §5.4): runs
+daily, finds `contractors` where `contract_end < NOW()` and the linked
+`users.status = 'active'`, sets status to `suspended`, and notifies `admin`
+(Socket.IO + email) that the vendor has expired and their open records need
+renewal or reassignment. Suspended vendors receive `403 ACCOUNT_SUSPENDED` at
+login.
+
+### 6.13 Data Playground (UC-005 Extension)
+
+> Client-side only — no persistence, no schema impact. Verify details against
+> the actual implementation (built in Claude Code) and amend if they differ.
+
+No new backend endpoints. The playground parses uploaded CSV (PapaParse) or
+XLSX (SheetJS) entirely in the browser, holds the dataset in component state
+for the session, and renders ad-hoc charts with the shared UC-005 Chart.js
+components. Charts built in the playground can be added to the current
+PowerPoint export selection, which flows through the existing
+`POST /api/export/pptx` (§6.11) — the exported deck simply includes the
+playground chart images alongside dashboard charts. Limits: ≤ 5 MB per file;
+`.csv`/`.xlsx` only; refresh clears all playground state.
+
 ## 7. Auth & Security
 
 | Mechanism | Implementation |
 |-----------|---------------|
-| Authentication provider | **Supabase Auth** — handles sign-up, password hashing, and session/JWT issuance |
-| Token | Supabase-issued **JWT** (access token); auto-refreshed by the Supabase client |
-| Token storage | Supabase client manages the session; the access token is read via `getAccessToken()` and attached to API calls as `Authorization: Bearer <token>` |
-| Role enforcement | `requireRole(...)` middleware reads the role from the user's `users` profile row (keyed by the Supabase auth user id) — five roles (`resident`, `inspector`, `manager`, `contractor`, `admin`); contractor routes gated to own assignments, admin cost dashboard gated to `admin` only |
+| Password hashing | `bcrypt` with salt rounds = 12 |
+| Authentication | JWT signed with `JWT_SECRET`, expiry 30 minutes, sliding window |
+| Token storage | Frontend stores JWT **in memory only** (React context) — never localStorage |
+| Role enforcement | `requireRole(...)` middleware — five roles (`resident`, `inspector`, `manager`, `contractor`, `admin`); contractor routes gated to own assignments, admin cost dashboard gated to `admin` only |
 | Cron endpoint protection | `cronGuard.js` middleware validates `Authorization: Bearer <CRON_SECRET>` |
 | CORS | `cors({ origin: process.env.FRONTEND_URL, credentials: true })` |
 | Socket.IO CORS | `new Server(httpServer, { cors: { origin: process.env.FRONTEND_URL } })` |
@@ -1400,14 +1556,14 @@ Renders the current filtered dashboard (charts + tables) into a PowerPoint deck 
 
 | Code | HTTP | Meaning |
 |------|------|---------|
-| `INVALID_CREDENTIALS` | 401 | Wrong email or password (surfaced by Supabase Auth on the client) |
+| `INVALID_CREDENTIALS` | 401 | Wrong email or password |
 | `UNAUTHORIZED` | 401 | Missing or expired JWT |
 | `FORBIDDEN` | 403 | Role does not have access |
 | `VALIDATION_ERROR` | 400 | Request body failed validation |
 | `NOT_FOUND` | 404 | Resource does not exist |
 | `DUPLICATE_SUBMISSION` | 409 | Duplicate record detected |
 | `ALREADY_RATED` | 409 | Satisfaction rating already submitted |
-| `EMAIL_ALREADY_EXISTS` | 400 | Registration email conflict (surfaced by Supabase Auth on the client) |
+| `EMAIL_ALREADY_EXISTS` | 400 | Registration email conflict |
 | `SERVER_ERROR` | 500 | Unhandled internal error |
 
 ---
@@ -1419,8 +1575,7 @@ Renders the current filtered dashboard (charts + tables) into a PowerPoint deck 
 | Variable | Example Value | Used By |
 |----------|--------------|---------|
 | `DATABASE_URL` | `postgresql://user:pass@host.supabase.co:5432/postgres` | All DB queries |
-| `SUPABASE_URL` | `https://<ref>.supabase.co` | Supabase client (token verification) |
-| `SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_...` | Supabase client (token verification) |
+| `JWT_SECRET` | `s3cr3t-256bit-random-string` | `jwtHelpers.js` |
 | `FRONTEND_URL` | `https://your-app.vercel.app` | CORS, Socket.IO |
 | `NODE_ENV` | `production` | Express config |
 | `CLOUDINARY_CLOUD_NAME` | `your-cloud-name` | `cloudinaryService.js` |
@@ -1449,3 +1604,23 @@ Renders the current filtered dashboard (charts + tables) into a PowerPoint deck 
 ---
 
 *End of HIGH_LEVEL_DESIGN.md*
+
+---
+
+## Limitations & Deliberate Scope Boundaries (UC-012 / Data Playground additions)
+
+**Vendor account lifecycle (UC-012):** Contract detail extraction from the
+uploaded document (vendor name, contact, duration) is entered manually by the
+admin rather than auto-parsed — automated document parsing was considered and
+scoped out as disproportionate effort for this project. The uploaded contract
+file is retained for reference only. UC-012 is scoped exclusively to external
+vendor (contractor) accounts; EM Services' own employees (inspector / manager)
+are standard long-term accounts whose onboarding/offboarding is assumed to be
+handled by EM's existing HR/IT processes, outside this system's scope.
+
+**Data Playground (UC-005 extension):** Uploaded datasets are session-only and
+never persisted — the playground is an exploration surface, not an ingestion
+pipeline. This is deliberate: it lets managers explore external files (e.g.
+client-provided exports) visually without any schema change or data-governance
+burden, and cleanly separates ad-hoc analysis from the system's operational
+data.
