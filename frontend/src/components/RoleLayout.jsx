@@ -6,6 +6,7 @@ import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import ResidentLayout from './ResidentLayout';
 import ManagerLayout from './ManagerLayout';
+import AdminLayout from './AdminLayout';
 
 export default function RoleLayout() {
   const { profile, profileLoading } = useAuth();
@@ -27,5 +28,7 @@ export default function RoleLayout() {
   }
 
   // Profile fetch failed / unknown role: resident chrome is the safe default.
-  return profile?.role === 'manager' ? <ManagerLayout /> : <ResidentLayout />;
+  if (profile?.role === 'manager') return <ManagerLayout />;
+  if (profile?.role === 'admin') return <AdminLayout />;
+  return <ResidentLayout />;
 }
