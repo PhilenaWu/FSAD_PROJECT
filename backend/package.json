@@ -25,6 +25,7 @@
     "express-rate-limit": "^7.4.0",
     "helmet": "^8.0.0",
     "multer": "^2.2.0",
+    "openai": "^6.47.0",
     "pg": "^8.22.0",
     "pptxgenjs": "^4.0.1"
   },
