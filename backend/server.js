@@ -7,6 +7,7 @@ const app = require('./src/app');
 const config = require('./src/config/env');
 const db = require('./src/config/db');
 const { initSocket } = require('./src/config/socket');
+const { startNotificationDispatcher } = require('./src/utils/notificationDispatcher');
 
 // Wrap the Express app in a bare HTTP server so Socket.IO can share the port.
 const server = http.createServer(app);
@@ -19,6 +20,8 @@ db.testConnection()
     console.log('Database connection OK');
     server.listen(config.PORT, () => {
       console.log(`Server listening on port ${config.PORT} (${config.NODE_ENV})`);
+      // Server-side scheduled-notification dispatch (UC-008) — no external cron.
+      startNotificationDispatcher();
     });
   })
   .catch((err) => {
