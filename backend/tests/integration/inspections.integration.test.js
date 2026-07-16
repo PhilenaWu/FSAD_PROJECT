@@ -1,11 +1,12 @@
 // Integration tests for inspections — POST /api/inspections (UC-001 resident
 // complaint) and POST /api/inspections/lift (UC-001 inspector lift spot-check).
-// The app runs in-process (supertest). Three boundaries are mocked so the test is
+// The app runs in-process (supertest). Boundaries are mocked so the test is
 // deterministic and hits no network:
 //   - config/supabase: fake getClaims to drive auth without real JWTs
 //   - config/db:        in-memory store so we exercise the real controller/model
 //                       flow without a Postgres/Supabase connection
 //   - cloudinaryService: fake uploadImage (no upload)
+//   - cvController:     fake detect (no Roboflow call)
 'use strict';
 
 // --- Mock: Supabase auth. Token string maps to a set of claims. ---
@@ -29,6 +30,19 @@ jest.mock('../../src/config/supabase', () => ({
 // --- Mock: Cloudinary upload. Returns a fixed URL, no network. ---
 jest.mock('../../src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(async () => 'https://cloudinary.test/defects/mock.png'),
+}));
+
+// --- Mock: CV detection. detect() is fired fire-and-forget by the controller
+// (its resolved value isn't used), so a resolved no-op is enough. batchScan/
+// listDetections aren't exercised here but must exist as functions — app.js
+// requires this module at load time and cv.js passes listDetections directly
+// as a route handler, so an undefined export would blow up require(). No
+// Roboflow call happens, and no extra cv_auto_detected row lands in the
+// in-memory store.
+jest.mock('../../src/controllers/cvController', () => ({
+  detect: jest.fn(async () => ({ cvDetection: { id: 'cv-mock-1', status: 'low_confidence' }, inspection: null })),
+  batchScan: jest.fn(async () => ({ processed: 0, failed: 0, remaining: 0 })),
+  listDetections: jest.fn((req, res) => res.json({ data: [], total: 0 })),
 }));
 
 // --- Mock: the pg layer. A tiny in-memory model of the tables we touch. ---
@@ -75,7 +89,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const [
       source_type, resident_id, title, description, location_block,
       location_unit, photo_url, category, ai_priority_score, source_flag,
-      gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+      cv_detection_id, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
     ] = params;
     const now = new Date().toISOString();
     const row = {
@@ -84,6 +98,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       resident_id, title, description, location_block,
       location_unit: location_unit ?? null,
       photo_url: photo_url ?? null,
+      cv_detection_id: cv_detection_id ?? null,
       gps_lat: gps_lat ?? null,
       gps_lng: gps_lng ?? null,
       gps_accuracy_m: gps_accuracy_m ?? null,

@@ -8,6 +8,7 @@ const inspectionModel = require('../models/inspectionModel');
 const liftModel = require('../models/liftModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
+const cvController = require('./cvController');
 
 // Optional GPS fields captured client-side on explicit tap. Supplementary
 // metadata only — they never override or populate block/lift selection.
@@ -79,6 +80,21 @@ async function create(req, res, next) {
       ai_priority_score: priority_score,
       ...gpsFields(req.body),
     });
+
+    // CV defect detection on the same photo (UC-007), fired asynchronously so
+    // it never blocks the resident's submission. On a high-confidence match
+    // it creates its own separate cv_auto_detected ticket; a Roboflow rate
+    // limit queues the image to retry_queue, linked back to this inspection.
+    // Other failures are logged only.
+    if (photo_url) {
+      cvController
+        .detect(photo_url, 'resident_upload', {
+          location_block,
+          location_unit,
+          inspection_id: inspection.id,
+        })
+        .catch((err) => console.error('CV detection failed:', err.message));
+    }
 
     res.status(201).json(inspection);
   } catch (err) {
