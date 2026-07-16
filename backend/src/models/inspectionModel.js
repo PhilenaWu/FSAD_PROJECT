@@ -8,8 +8,10 @@ const { pool, query } = require('../config/db');
 // the caller supplies the resident + report fields plus the AI-derived
 // category/score. Everything else (status 'Open', priority 'Medium',
 // photo_pending, is_deleted, timestamps) uses the schema defaults, and all
-// inspector/lift/contractor/cost columns are left NULL. photo_url and
-// location_unit are optional (pass undefined → NULL). Returns the created row.
+// inspector/lift/contractor/cost columns are left NULL. photo_url,
+// location_unit and cv_detection_id are optional (pass undefined → NULL);
+// cv_detection_id links back to a confirmed CV detection on the same photo.
+// Returns the created row.
 async function create(data) {
   const {
     source_type = 'resident_complaint',
@@ -22,6 +24,7 @@ async function create(data) {
     category,
     ai_priority_score,
     source_flag = 'Resident',
+    cv_detection_id,
     gps_lat,
     gps_lng,
     gps_accuracy_m,
@@ -32,9 +35,9 @@ async function create(data) {
     `INSERT INTO inspections (
        source_type, resident_id, title, description, location_block,
        location_unit, photo_url, category, ai_priority_score, source_flag,
-       gps_lat, gps_lng, gps_accuracy_m, gps_captured_at
+       cv_detection_id, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING *`,
     [
       source_type,
@@ -47,6 +50,7 @@ async function create(data) {
       category,
       ai_priority_score,
       source_flag,
+      cv_detection_id,
       gps_lat,
       gps_lng,
       gps_accuracy_m,
