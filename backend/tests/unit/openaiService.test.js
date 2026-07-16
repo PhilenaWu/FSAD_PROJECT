@@ -23,14 +23,30 @@ beforeEach(() => {
 });
 
 describe('generateRiskAlert', () => {
-  test('returns the deterministic fallback when no API key is configured', async () => {
+  test('returns the deterministic, data-driven fallback when no API key is configured', async () => {
     const text = await openaiService.generateRiskAlert('44A', 'Lift', 150, 1200);
 
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(text).toMatch(/^High risk:/); // professional format
     expect(text).toMatch(/Block 44A/);
     expect(text).toMatch(/Lift/);
-    expect(text).toMatch(/150%/);
+    expect(text).toMatch(/increased by 150%/);
     expect(text).toMatch(/\$1,200/); // projected cost included
+    // category-specific action, not generic filler
+    expect(text).toMatch(/lift cable and brake inspection/i);
+    expect(text).not.toMatch(/take preventive action/i);
+  });
+
+  test('fallback tailors the preventive action to the defect category', async () => {
+    const lift = await openaiService.generateRiskAlert('A', 'Lift', 150, null);
+    const electrical = await openaiService.generateRiskAlert('A', 'Electrical', 150, null);
+    const plumbing = await openaiService.generateRiskAlert('A', 'Plumbing', 150, null);
+
+    expect(lift).toMatch(/lift cable and brake inspection/i);
+    expect(electrical).toMatch(/electrical safety inspection/i);
+    expect(plumbing).toMatch(/leaks/i);
+    // the three recommendations must genuinely differ
+    expect(new Set([lift, electrical, plumbing]).size).toBe(3);
   });
 
   test('fallback omits the cost sentence when estimated_cost is null', async () => {
