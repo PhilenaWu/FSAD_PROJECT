@@ -236,12 +236,11 @@ frontend/
 ├── src/
 │   ├── pages/
 │   │   ├── LoginPage.jsx            # UC-auth: login form
-│   │   ├── DashboardPage.jsx        # UC-005: analytics + AI alert cards
+│   │   ├── DashboardPage.jsx        # UC-005: analytics + AI alert cards + CSV what-if preview
 │   │   ├── InspectionListPage.jsx   # UC-002: manager triage queue
 │   │   ├── ContractorInboxPage.jsx   # UC-010: contractor assigned-defects inbox
 │   │   ├── AdminCostPage.jsx         # UC-011: admin cost analytics dashboard
 │   │   ├── AdminVendorPage.jsx       # UC-012: vendor account lifecycle (onboard / renew / suspend)
-│   │   ├── DataPlaygroundPage.jsx    # UC-005 ext: ad-hoc CSV/XLSX import + charting (client-side only)
 │   │   ├── IncidentDetailPage.jsx   # UC-002 / UC-005: detail + status update
 │   │   ├── ReportIssuePage.jsx      # UC-001: resident submission form
 │   │   ├── MyReportsPage.jsx        # UC-003: resident status tracker
@@ -1523,19 +1522,30 @@ daily, finds `contractors` where `contract_end < NOW()` and the linked
 renewal or reassignment. Suspended vendors receive `403 ACCOUNT_SUSPENDED` at
 login.
 
-### 6.13 Data Playground (UC-005 Extension)
+### 6.13 Data Playground — CSV What-If Preview (UC-005)
 
-> Client-side only — no persistence, no schema impact. Verify details against
-> the actual implementation (built in Claude Code) and amend if they differ.
+> Client-side only — no persistence, no new backend endpoints, no schema impact.
+> Built directly into the manager Analytics Dashboard (`DashboardPage.jsx`), not
+> a separate page.
 
-No new backend endpoints. The playground parses uploaded CSV (PapaParse) or
-XLSX (SheetJS) entirely in the browser, holds the dataset in component state
-for the session, and renders ad-hoc charts with the shared UC-005 Chart.js
-components. Charts built in the playground can be added to the current
-PowerPoint export selection, which flows through the existing
-`POST /api/export/pptx` (§6.11) — the exported deck simply includes the
-playground chart images alongside dashboard charts. Limits: ≤ 5 MB per file;
-`.csv`/`.xlsx` only; refresh clears all playground state.
+The dashboard has an **Import CSV** control that lets a manager blend
+hypothetical inspection rows into the existing analytics charts to preview how
+the numbers would change — a what-if view. Parsing and merging happen entirely
+in the browser; nothing is written to the database, and **Clear preview** simply
+drops the parsed rows.
+
+- Accepts a CSV with header `block,category[,date][,resolution_time_hours]`
+  (`block` and `category` required; `date` and `resolution_time_hours` optional).
+- Imported rows are merged client-side into the heatmap (issues by block ×
+  category), the trend line, and the SLA gauge.
+- A **chart-view toggle** switches all charts between **Combined**, **Existing
+  only**, and **Imported only**.
+- Imported data is visually distinguished — a ring on affected heatmap cells, a
+  dashed "Imported (preview)" trend series, and a before → after SLA gauge.
+- Limits: ≤ 1 MB per file and ≤ 5,000 rows; CSV only. Malformed files surface a
+  readable error message.
+- Exports (CSV / PowerPoint) always use the real database data, never the
+  previewed rows.
 
 ## 7. Auth & Security
 
@@ -1618,9 +1628,12 @@ vendor (contractor) accounts; EM Services' own employees (inspector / manager)
 are standard long-term accounts whose onboarding/offboarding is assumed to be
 handled by EM's existing HR/IT processes, outside this system's scope.
 
-**Data Playground (UC-005 extension):** Uploaded datasets are session-only and
-never persisted — the playground is an exploration surface, not an ingestion
-pipeline. This is deliberate: it lets managers explore external files (e.g.
-client-provided exports) visually without any schema change or data-governance
-burden, and cleanly separates ad-hoc analysis from the system's operational
-data.
+**Data Playground — CSV what-if preview (UC-005 extension):** Imported CSV rows
+are session-only and never persisted — the feature is a what-if preview surface,
+not an ingestion pipeline. This is deliberate: it lets managers preview how the
+analytics charts would shift under a hypothetical set of rows without any schema
+change or data-governance burden, and cleanly separates the simulated view from
+the system's operational data (exports always use real data). Scope is limited
+to CSV in the fixed `block,category[,date][,resolution_time_hours]` shape;
+arbitrary spreadsheet formats (e.g. XLSX) and free-form column mapping are out
+of scope.
