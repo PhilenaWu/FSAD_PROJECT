@@ -39,6 +39,11 @@ const config = Object.freeze({
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
+  // Optional (feature-gated). CRON_SECRET guards the scheduled analysis run;
+  // OPENAI_API_KEY enables real risk-alert text (falls back to a template when
+  // unset). Both are documented in .env.example.
+  CRON_SECRET: process.env.CRON_SECRET,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 });
 
 module.exports = config;
