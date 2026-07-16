@@ -12,6 +12,7 @@ import DashboardPage from './pages/DashboardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
 import ProfilePage from './pages/ProfilePage'
+import CvReviewPage from './pages/CvReviewPage'
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
           <Route path="/inspections/new" element={<NewInspectionPage />} />
           <Route path="/incidents" element={<IncidentListPage />} />
           <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+          <Route path="/cv-review" element={<CvReviewPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
