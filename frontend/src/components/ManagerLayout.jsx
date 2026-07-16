@@ -10,7 +10,6 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   AppBar,
   Avatar,
-  Badge,
   Box,
   Container,
   Divider,
@@ -34,10 +33,10 @@ import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
-import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../context/AuthContext';
+import NotificationBell from './notifications/NotificationBell';
 
 const NAV_ITEMS = [
   { label: 'Dashboard', to: '/dashboard', icon: GridViewOutlinedIcon },
@@ -169,14 +168,9 @@ export default function ManagerLayout() {
                 when the inline nav (the desktop spacer) is hidden. */}
             <Box sx={{ flexGrow: 1, display: { xs: 'block', md: 'none' } }} />
 
-            {/* Right: notification placeholder + user menu */}
+            {/* Right: live notification bell (UC-008) + user menu */}
             <Stack direction="row" spacing={1} alignItems="center">
-              {/* Placeholder only — UC-008 not built, so this bell does nothing. */}
-              <IconButton aria-label="Notifications (coming soon)" color="inherit" disabled>
-                <Badge color="primary" variant="dot">
-                  <NotificationsNoneOutlinedIcon />
-                </Badge>
-              </IconButton>
+              <NotificationBell />
 
               <Divider orientation="vertical" flexItem sx={{ my: 1.5 }} />
 

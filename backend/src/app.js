@@ -15,6 +15,7 @@ const userRoutes = require('./routes/users');
 const analyticsRoutes = require('./routes/analytics');
 const recommendationRoutes = require('./routes/recommendations');
 const exportRoutes = require('./routes/export');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/recommendations', recommendationRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);
