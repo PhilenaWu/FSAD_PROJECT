@@ -301,7 +301,7 @@ Phase 1: Foundation (critical path — blocks everything)
 | 5.13a | Frontend: Contractor scorecard table | `src/components/analytics/ContractorScorecard.jsx` | Renders `/analytics/contractor-scorecard` — beyond the Sembawang baseline |
 | 5.13b | Backend + Frontend: PowerPoint export | `src/services/pptxService.js`, `src/routes/export.js`, export button on dashboard | `POST /api/export/pptx` (PptxGenJS) renders current filtered charts/tables into a .pptx; download link returned (4C-2 / 4D pain point) |
 | 5.13c | Frontend: UC-011 Admin Cost Dashboard page | `src/pages/AdminCostPage.jsx` | Role-gated to `admin`; KPI tiles, cost-by-category bar, cost-per-contractor table, cost trend line; reuses Chart.js components with cost data |
-| 5.13d | Frontend: Data Playground page (UC-005 ext) | `src/pages/DataPlaygroundPage.jsx` | Client-side CSV/XLSX parse (PapaParse / SheetJS); column preview + type inference; map columns to axes; render via shared Chart.js components; session-only (no DB writes); ≤ 5 MB; charts addable to PPT export selection. **Verify spec against actual Claude Code implementation** |
+| 5.13d | Frontend: Data Playground — CSV what-if preview (UC-005 ext) | `src/pages/DashboardPage.jsx`, `src/utils/csvImport.js` | Embedded in the dashboard (not a separate page). Import CSV control blends hypothetical rows (`block,category[,date][,resolution_time_hours]`) into the heatmap / trend / SLA charts client-side; Combined / Existing only / Imported only view toggle; imported data marked (ring / dashed series / before→after gauge); session-only (no DB writes); ≤ 1 MB and ≤ 5,000 rows; CSV only; exports use real data. |
 | 5.13e | Backend: UC-012 vendor lifecycle controller + routes | `src/controllers/vendorController.js`, `src/routes/vendors.js` | `onboard()` (creates contractors + users rows, validates dates, Cloudinary /contracts upload), `list()` (sorted by contract_end), `renew()`, `suspend()` — all `requireRole('admin')`. **Coordinate with Philena — touches users table + auth (403 ACCOUNT_SUSPENDED on suspended login)** |
 | 5.13f | Frontend: UC-012 Vendor Accounts page | `src/pages/AdminVendorPage.jsx` | Onboard form (manual entry — no contract parsing), vendor list with days-until-expiry, Renew + Suspend actions with confirm dialogs |
 | 5.13g | Scheduled job: contract expiry check | `.github/workflows/contract-expiry-check.yml` + `GET /api/admin/vendors/expiry-check` (cron-guarded) | Daily; suspends contractors past `contract_end`; notifies admin (Socket.IO + email); same cron-secret pattern as §5.4 |
@@ -434,7 +434,7 @@ startNotificationDispatcher();
 | RPT-T02 | OpenAI fails during report generation | 200, fallback template summary used, report still delivered |
 | RPT-T03 | `POST /reports/generate-manual` with manager JWT | 201, `triggered_by: "manual"` |
 | RPT-T04 | `GET /reports` | 200, array of report records with `report_url` links |
-| PLG-T01 | Upload valid CSV to playground | Column preview shown; chart renders from selected columns; nothing written to DB |
+| PLG-T01 | Import valid CSV (`block,category[,date][,resolution_time_hours]`) | Rows merged into heatmap / trend / SLA charts as a preview; view toggle switches Combined / Existing / Imported; nothing written to DB |
 | PLG-T02 | Upload 6 MB file | Rejected client-side with size message; no parse attempted |
 | PLG-T03 | Upload .txt file | "Could not be read" error; no partial state |
 | VND-T01 | POST /admin/vendors with valid data | 201; contractors + users rows created; status active |
@@ -452,7 +452,7 @@ startNotificationDispatcher();
 - [ ] Velocity analysis correctly skips pairs with < 3 records
 - [ ] **PowerPoint export** produces a downloadable .pptx of the current dashboard view (PptxGenJS)
 - [ ] **Admin cost dashboard (UC-011)** renders KPI tiles, cost-by-category, cost-per-contractor, and trend — role-gated to `admin`
-- [ ] **Data Playground (UC-005 ext)** parses a CSV and an XLSX client-side, renders an ad-hoc chart, rejects >5 MB and malformed files gracefully, persists nothing
+- [ ] **Data Playground — CSV what-if preview (UC-005 ext)** imports a CSV client-side, merges it into the dashboard charts as a preview, rejects >1 MB / >5,000 rows and malformed files gracefully, persists nothing (exports use real data)
 - [ ] **Vendor lifecycle (UC-012)**: onboard creates linked contractors + users rows; expiry job suspends past-contract vendors; suspended vendor login returns 403 ACCOUNT_SUSPENDED; renew reactivates
 - [ ] Cost figures derive only from the system's own data (actual_cost + estimated_cost); no EM corporate financials
 - [ ] Monthly PDF contains: title, period, executive summary, data tables, cost summary
@@ -526,7 +526,7 @@ The demo follows one **continuous user journey** through the lift-inspection lif
 | 3. Contractor portal (the 4C-1 differentiator) | Zoe | Login as contractor → assigned-defects inbox with deadline countdown → acknowledge → upload completion photo + remark → **e-sign on the signature pad** → submit work done | 3 min |
 | 4. Manager joint endorsement + close | Zoe → Philena | Manager sees "Rectified — awaiting endorsement" → opens record → reviews completion proof → **dual e-signature** → enters actual_cost → close (record enters 5-year audit trail) | 2 min |
 | 5. CV auto-detection | Mahdiya | Upload a lift defect photo → Roboflow detects rust/crack with bounding box → auto-record created → manager receives Socket.IO alert | 2 min |
-| 6. Analytics + PowerPoint export | Hasini | Manager dashboard → heatmap + SLA gauge + **contractor scorecard** → filter Block 44A → **accept a cost-aware AI alert** ("$800 now vs $3,200 later") → **Data Playground: upload a client CSV, chart it live** → **click Export to PowerPoint** (deck includes the playground chart) | 3.5 min |
+| 6. Analytics + PowerPoint export | Hasini | Manager dashboard → heatmap + SLA gauge + **contractor scorecard** → filter Block 44A → **accept a cost-aware AI alert** ("$800 now vs $3,200 later") → **Data Playground: import a CSV to preview a what-if scenario on the charts** → **click Export to PowerPoint** (deck uses the real dashboard data) | 3.5 min |
 | 6b. Vendor lifecycle (UC-012) | Hasini | Admin portal → onboard a vendor with contract dates → show expiry countdown on vendor list → suspend + renew flow | 1.5 min |
 | 7. Admin cost dashboard + monthly report | Davian | Login as admin → **operational cost dashboard** (actual vs projected, cost-per-contractor) → then trigger the monthly PDF report → open it → show executive summary + cost section | 2 min |
 | **Total** | | | **~17 min** |
