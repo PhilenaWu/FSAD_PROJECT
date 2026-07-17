@@ -18,29 +18,7 @@ import {
 } from '@mui/material';
 import api from '../services/api';
 import { STATUS_GROUPS, statusDisplay, statusGroup } from '../utils/statusDisplay';
-
-// "2 days ago" style relative time — small local helper, no date library.
-const TIME_UNITS = [
-  [60, 'minute'], // after 60s
-  [3600, 'hour'],
-  [86400, 'day'],
-  [604800, 'week'],
-  [2629800, 'month'],
-  [31557600, 'year'],
-];
-
-function timeAgo(iso) {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso)) / 1000));
-  if (seconds < 60) return 'just now';
-  let label = 'minute';
-  let value = Math.floor(seconds / 60);
-  for (const [size, unit] of TIME_UNITS) {
-    if (seconds < size) break;
-    label = unit;
-    value = Math.floor(seconds / size);
-  }
-  return `${value} ${label}${value === 1 ? '' : 's'} ago`;
-}
+import { timeAgo } from '../utils/timeAgo';
 
 export default function StatusBoardPage() {
   const [rows, setRows] = useState([]);
