@@ -43,6 +43,10 @@ jest.mock('../../src/controllers/cvController', () => ({
   detect: jest.fn(async () => ({ cvDetection: { id: 'cv-mock-1', status: 'low_confidence' }, inspection: null })),
   batchScan: jest.fn(async () => ({ processed: 0, failed: 0, remaining: 0 })),
   listDetections: jest.fn((req, res) => res.json({ data: [], total: 0 })),
+// --- Mock: Socket.IO emit seam (no server in tests). ---
+jest.mock('../../src/services/socketService', () => ({
+  emitToRoom: jest.fn(),
+  emitToRooms: jest.fn(),
 }));
 
 // --- Mock: the pg layer. A tiny in-memory model of the tables we touch. ---
@@ -68,7 +72,7 @@ const checklistItems = [
   { id: 'item-3', section: 'Safety', item_text: 'Emergency intercom works', display_order: 3, active: false },
   { id: 'item-1', section: 'Structural', item_text: 'Shaft walls free of cracks', display_order: 1, active: true },
 ];
-const store = { inspections: [], checklist_results: [] };
+const store = { inspections: [], checklist_results: [], history: [] };
 
 const mockQuery = jest.fn(async (sql, params = []) => {
   // requireRole: SELECT role, status FROM users WHERE id = $1
@@ -165,6 +169,71 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.checklist_results.push(row);
     return { rows: [row] };
   }
+  // manager queue: SELECT * FROM inspections WHERE is_deleted = FALSE [AND ...]
+  if (/SELECT \* FROM inspections\s+WHERE is_deleted/i.test(sql)) {
+    let rows = store.inspections.filter((i) => !i.is_deleted);
+    // Apply whichever filters appear in the SQL, in param order.
+    for (const [, field, idx] of sql.matchAll(/(\w+) = \$(\d+)/g)) {
+      rows = rows.filter((i) => i[field] === params[Number(idx) - 1]);
+    }
+    rows = [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
+    return { rows };
+  }
+  // detail history: SELECT ... FROM inspection_history h LEFT JOIN users ...
+  if (/FROM inspection_history/i.test(sql)) {
+    const rows = store.history
+      .filter((h) => h.inspection_id === params[0])
+      .map((h) => ({ ...h, actor_name: h.actor_id === 'mgr-1' ? 'Mdm Tan' : null }));
+    return { rows };
+  }
+  // contractor dropdown: SELECT * FROM contractors ORDER BY name
+  if (/SELECT \* FROM contractors/i.test(sql)) {
+    return { rows: [{ id: 'con-1', name: 'Otis Service SG', brands_serviced: 'Otis' }] };
+  }
+  // updateByManager row lock: SELECT * FROM inspections WHERE id = $1 ... FOR UPDATE
+  // Return a copy — Postgres returns a snapshot, and the UPDATE branch below
+  // mutates the stored object in place.
+  if (/SELECT \* FROM inspections WHERE id/i.test(sql)) {
+    const row = store.inspections.find((i) => i.id === params[0] && !i.is_deleted);
+    return { rows: row ? [{ ...row }] : [] };
+  }
+  // updateByManager: UPDATE inspections SET <dynamic fields> WHERE id = $N
+  if (/UPDATE inspections SET/i.test(sql)) {
+    const row = store.inspections.find((i) => i.id === params[params.length - 1]);
+    if (!row) return { rows: [] };
+    for (const [, field, idx] of sql.matchAll(/(\w+) = \$(\d+)/g)) {
+      if (field !== 'id') row[field] = params[Number(idx) - 1];
+    }
+    row.updated_at = new Date().toISOString();
+    return { rows: [row] };
+  }
+  // audit trail: INSERT INTO inspection_history (...)
+  if (/INSERT INTO inspection_history/i.test(sql)) {
+    const [inspection_id, actor_id, action, previous_status, new_status, note] = params;
+    store.history.push({ inspection_id, actor_id, action, previous_status, new_status, note });
+    return { rows: [] };
+  }
+  // contractor existence check: SELECT id FROM contractors WHERE id = $1
+  if (/SELECT id FROM contractors/i.test(sql)) {
+    return { rows: params[0] === 'con-1' ? [{ id: 'con-1' }] : [] };
+  }
+  // status board: SELECT id, location_block, ... WHERE source_type = 'resident_complaint'
+  if (/SELECT id, location_block/i.test(sql)) {
+    const rows = store.inspections
+      .filter((i) => i.source_type === 'resident_complaint' && !i.is_deleted)
+      .map(({ id, location_block, category, status, created_at }) => ({
+        id, location_block, category, status, created_at,
+      }));
+    return { rows };
+  }
+  // listMine: SELECT * FROM inspections WHERE (resident_id = $1 OR inspector_id = $1) ...
+  if (/SELECT \* FROM inspections/i.test(sql) && /inspector_id = \$1/i.test(sql)) {
+    const [userId] = params;
+    const rows = store.inspections.filter(
+      (i) => (i.resident_id === userId || i.inspector_id === userId) && !i.is_deleted
+    );
+    return { rows };
+  }
   // duplicate guard: SELECT id FROM inspections WHERE resident_id=$1 AND title=$2 ...
   if (/SELECT id FROM inspections/i.test(sql)) {
     const [resident_id, title] = params;
@@ -197,8 +266,20 @@ const PNG = Buffer.from(
 beforeEach(() => {
   store.inspections.length = 0;
   store.checklist_results.length = 0;
+  store.history.length = 0;
   jest.clearAllMocks();
 });
+
+// Seed one resident complaint through the real create path; returns its id.
+async function seedComplaint(title = 'Corridor light out') {
+  const res = await request(app)
+    .post('/api/inspections')
+    .set('Authorization', 'Bearer resident-token')
+    .field('title', title)
+    .field('description', 'Details here')
+    .field('location_block', '44A');
+  return res.body.id;
+}
 
 describe('POST /api/inspections', () => {
   test('401 when no token is provided', async () => {
@@ -356,6 +437,258 @@ describe('POST /api/inspections/lift', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('GET /api/inspections/my', () => {
+  test('200 returns only the caller\'s own reports, wrapped in { data }', async () => {
+    // Seed one report belonging to the resident via the real create path.
+    await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Cracked tile at void deck')
+      .field('description', 'Sharp edge exposed')
+      .field('location_block', 'A');
+
+    const res = await request(app)
+      .get('/api/inspections/my')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].title).toBe('Cracked tile at void deck');
+    expect(res.body.data[0].resident_id).toBe('res-1');
+  });
+
+  test('403 for a manager (originators only)', async () => {
+    const res = await request(app)
+      .get('/api/inspections/my')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+});
+
+describe('GET /api/inspections/status-board', () => {
+  test('200 returns privacy-safe complaint rows only (no lift inspections)', async () => {
+    // Seed one resident complaint and one lift inspection via the real paths.
+    await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Void deck light flickering')
+      .field('description', 'Near block letterboxes')
+      .field('location_block', '44A')
+      .field('location_unit', '12-05');
+    await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .field('lift_id', 'lift-1')
+      .field('checklist', JSON.stringify([{ checklist_item_id: 'item-1', result: 'Pass' }]));
+
+    const res = await request(app)
+      .get('/api/inspections/status-board')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1); // lift inspection excluded
+    const row = res.body.data[0];
+    expect(row.location_block).toBe('44A');
+    expect(row.status).toBe('Open');
+    // Privacy guard: no identifying fields may ever appear.
+    expect(row).not.toHaveProperty('title');
+    expect(row).not.toHaveProperty('description');
+    expect(row).not.toHaveProperty('resident_id');
+    expect(row).not.toHaveProperty('location_unit');
+    expect(row).not.toHaveProperty('photo_url');
+  });
+
+  test('200 for other authenticated roles (e.g. manager)', async () => {
+    const res = await request(app)
+      .get('/api/inspections/status-board')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  test('401 without a token', async () => {
+    const res = await request(app).get('/api/inspections/status-board');
+
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('UNAUTHENTICATED');
+  });
+});
+
+describe('PATCH /api/inspections/:id', () => {
+  test('200 manager assigns a contractor — status, deadline, history, socket', async () => {
+    const id = await seedComplaint();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ contractor_id: 'con-1', note: 'Lift specialist to attend' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.contractor_id).toBe('con-1');
+    expect(res.body.status).toBe('Assigned'); // UC-002 default on assign
+    expect(res.body.target_deadline).toBeTruthy(); // 14-day rule auto-set
+
+    // Audit row written with the transition.
+    expect(store.history).toHaveLength(1);
+    expect(store.history[0]).toMatchObject({
+      inspection_id: id,
+      actor_id: 'mgr-1',
+      action: 'Assigned',
+      previous_status: 'Open',
+      new_status: 'Assigned',
+      note: 'Lift specialist to attend',
+    });
+
+    // Live update pushed to managers + the block's residents.
+    const socketService = require('../../src/services/socketService');
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'block-44A'],
+      'status_update',
+      expect.objectContaining({ id, status: 'Assigned' })
+    );
+  });
+
+  test('200 priority-only change writes a Priority Escalated history row', async () => {
+    const id = await seedComplaint('Loose railing');
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ priority: 'Critical' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.priority).toBe('Critical');
+    expect(store.history[0].action).toBe('Priority Escalated');
+  });
+
+  test('403 when the caller is not a manager', async () => {
+    const id = await seedComplaint();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer resident-token')
+      .send({ priority: 'High' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('404 for an unknown inspection id', async () => {
+    const res = await request(app)
+      .patch('/api/inspections/insp-nope')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ priority: 'High' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('400 for an invalid status value', async () => {
+    const id = await seedComplaint();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Fixed' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('400 when no updatable field is provided', async () => {
+    const id = await seedComplaint();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ note: 'just a note' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('GET /api/inspections (manager queue)', () => {
+  test('200 lists all records with filters applied', async () => {
+    await seedComplaint('Leak at 44A');
+    const id2 = (await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Broken bench')
+      .field('description', 'Slats missing')
+      .field('location_block', '45B')).body.id;
+
+    const all = await request(app)
+      .get('/api/inspections')
+      .set('Authorization', 'Bearer manager-token');
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(2);
+
+    const filtered = await request(app)
+      .get('/api/inspections?block=45B')
+      .set('Authorization', 'Bearer manager-token');
+    expect(filtered.body.total).toBe(1);
+    expect(filtered.body.data[0].id).toBe(id2);
+  });
+
+  test('403 for non-managers', async () => {
+    const res = await request(app)
+      .get('/api/inspections')
+      .set('Authorization', 'Bearer resident-token');
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('GET /api/inspections/:id (manager detail)', () => {
+  test('200 returns the record with its audit history', async () => {
+    const id = await seedComplaint('Stuck rubbish chute');
+    await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ priority: 'High', note: 'Escalating' });
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.title).toBe('Stuck rubbish chute');
+    expect(res.body.history).toHaveLength(1);
+    expect(res.body.history[0]).toMatchObject({
+      action: 'Priority Escalated',
+      actor_name: 'Mdm Tan',
+      note: 'Escalating',
+    });
+  });
+
+  test('404 for an unknown id', async () => {
+    const res = await request(app)
+      .get('/api/inspections/insp-nope')
+      .set('Authorization', 'Bearer manager-token');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/contractors', () => {
+  test('200 for a manager', async () => {
+    const res = await request(app)
+      .get('/api/contractors')
+      .set('Authorization', 'Bearer manager-token');
+    expect(res.status).toBe(200);
+    expect(res.body[0].name).toBe('Otis Service SG');
+  });
+
+  test('403 for a resident', async () => {
+    const res = await request(app)
+      .get('/api/contractors')
+      .set('Authorization', 'Bearer resident-token');
+    expect(res.status).toBe(403);
   });
 });
 

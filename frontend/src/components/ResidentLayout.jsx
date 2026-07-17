@@ -30,6 +30,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
+import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../context/AuthContext';
@@ -42,6 +43,7 @@ const NAV_BY_ROLE = {
     { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
     { label: 'Report issue', to: '/report', icon: AddCircleOutlineIcon },
     { label: 'My reports', to: '/my-reports', icon: AssignmentOutlinedIcon },
+    { label: 'Status board', to: '/status-board', icon: GridViewOutlinedIcon },
   ],
   inspector: [
     { label: 'New inspection', to: '/inspections/new', icon: AssignmentOutlinedIcon },

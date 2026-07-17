@@ -149,4 +149,148 @@ async function findByResident(residentId) {
   return result.rows;
 }
 
-module.exports = { create, createLiftInspection, findById, findByResident };
+// List all non-deleted inspections the user originated — resident complaints
+// they filed or lift inspections they performed — newest first (HLD §6.2 /my).
+async function findByOriginator(userId) {
+  const result = await query(
+    `SELECT * FROM inspections
+     WHERE (resident_id = $1 OR inspector_id = $1) AND is_deleted = FALSE
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return result.rows;
+}
+
+// Manager triage queue (UC-002): all non-deleted records, optionally filtered,
+// most urgent first (highest AI priority score, then newest).
+async function findAllForManager({ status, category, block } = {}) {
+  const where = ['is_deleted = FALSE'];
+  const params = [];
+  if (status) {
+    params.push(status);
+    where.push(`status = $${params.length}`);
+  }
+  if (category) {
+    params.push(category);
+    where.push(`category = $${params.length}`);
+  }
+  if (block) {
+    params.push(block);
+    where.push(`location_block = $${params.length}`);
+  }
+
+  const result = await query(
+    `SELECT * FROM inspections
+     WHERE ${where.join(' AND ')}
+     ORDER BY ai_priority_score DESC NULLS LAST, created_at DESC`,
+    params
+  );
+  return result.rows;
+}
+
+// Full detail for the manager view: the row plus its audit history (actor names
+// joined from users). Returns undefined when the id doesn't match a live record.
+// Note: the reporter is identified by block/unit only — no resident-name join.
+async function findDetailById(id) {
+  const inspection = await findById(id);
+  if (!inspection) return undefined;
+
+  const history = await query(
+    `SELECT h.action, h.previous_status, h.new_status, h.note, h.created_at,
+            u.full_name AS actor_name
+     FROM inspection_history h
+     LEFT JOIN users u ON u.id = h.actor_id
+     WHERE h.inspection_id = $1
+     ORDER BY h.created_at DESC`,
+    [id]
+  );
+  return { ...inspection, history: history.rows };
+}
+
+// Manager triage update (UC-002): apply the provided changes and write an
+// inspection_history audit row atomically. `changes` may contain priority,
+// status, contractor_id, target_deadline, hold_reason — only provided keys are
+// updated. Returns the updated row (with previous_status attached for the
+// caller), or undefined when the id doesn't match a live record.
+async function updateByManager(id, changes, actorId, note) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(
+      'SELECT * FROM inspections WHERE id = $1 AND is_deleted = FALSE FOR UPDATE',
+      [id]
+    );
+    const before = existing.rows[0];
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+
+    // Build SET clauses for just the provided fields.
+    const fields = ['priority', 'status', 'contractor_id', 'target_deadline', 'hold_reason'];
+    const sets = [];
+    const params = [];
+    for (const field of fields) {
+      if (changes[field] !== undefined) {
+        params.push(changes[field]);
+        sets.push(`${field} = $${params.length}`);
+      }
+    }
+    sets.push('updated_at = NOW()');
+    params.push(id);
+
+    const updated = await client.query(
+      `UPDATE inspections SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    const after = updated.rows[0];
+
+    // Audit trail: who changed what, from which status to which.
+    const action = changes.contractor_id !== undefined
+      ? 'Assigned'
+      : changes.status !== undefined
+        ? 'Status Updated'
+        : 'Priority Escalated';
+    await client.query(
+      `INSERT INTO inspection_history (
+         inspection_id, actor_id, action, previous_status, new_status, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, actorId, action, before.status, after.status, note]
+    );
+
+    await client.query('COMMIT');
+    return { ...after, previous_status: before.status };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Privacy-safe estate-wide feed for the resident status board. The column list
+// is a deliberate allow-list — NEVER add resident_id, location_unit, title,
+// description, photo/audio URLs, GPS, or any identifying field here.
+async function findForStatusBoard() {
+  const result = await query(
+    `SELECT id, location_block, category, status, created_at
+     FROM inspections
+     WHERE source_type = 'resident_complaint' AND is_deleted = FALSE
+     ORDER BY created_at DESC`
+  );
+  return result.rows;
+}
+
+module.exports = {
+  create,
+  createLiftInspection,
+  findById,
+  findAllForManager,
+  findByOriginator,
+  findByResident,
+  findDetailById,
+  findForStatusBoard,
+  updateByManager,
+};

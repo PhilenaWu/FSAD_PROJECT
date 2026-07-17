@@ -9,6 +9,14 @@ const liftModel = require('../models/liftModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
 const cvController = require('./cvController');
+const socketService = require('../services/socketService');
+
+// Schema enums (migration 004 CHECKs) for PATCH validation.
+const STATUSES = [
+  'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
+  'On Hold', 'Rectified', 'Resolved', 'Closed',
+];
+const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 
 // Optional GPS fields captured client-side on explicit tap. Supplementary
 // metadata only — they never override or populate block/lift selection.
@@ -191,4 +199,135 @@ async function createLiftInspection(req, res, next) {
   }
 }
 
-module.exports = { create, createLiftInspection };
+// GET /api/inspections/my — the caller's own reports (resident complaints they
+// filed / lift inspections they performed). Wrapped as { data } per HLD §6.2.
+async function listMine(req, res, next) {
+  try {
+    const data = await inspectionModel.findByOriginator(req.user.id);
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/inspections/status-board — privacy-safe estate-wide complaint feed
+// (block/category/status/date only; the model's allow-list guarantees no
+// identifying fields). Any authenticated user may read it.
+async function listStatusBoard(req, res, next) {
+  try {
+    const data = await inspectionModel.findForStatusBoard();
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/inspections — manager triage queue (UC-002): all records, optional
+// ?status=&category=&block= filters, most urgent first. { data, total } per HLD.
+async function listForManager(req, res, next) {
+  try {
+    const { status, category, block } = req.query;
+    const data = await inspectionModel.findAllForManager({ status, category, block });
+    res.json({ data, total: data.length });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/inspections/:id — full record + audit history for the manager
+// detail view. Reporter shown by block/unit only (no name join by design).
+async function getDetail(req, res, next) {
+  try {
+    const inspection = await inspectionModel.findDetailById(req.params.id);
+    if (!inspection) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
+    }
+    res.json(inspection);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// PATCH /api/inspections/:id — manager triage (UC-002): set priority, status,
+// contractor assignment, deadline, or hold reason. Writes an inspection_history
+// audit row and pushes a `status_update` socket event so originators see the
+// change live (Zoe's UC-003 layer listens for it).
+async function updateInspection(req, res, next) {
+  try {
+    const { priority, status, contractor_id, target_deadline, hold_reason, note } = req.body;
+
+    const changes = { priority, status, contractor_id, target_deadline, hold_reason };
+    const hasChange = Object.values(changes).some((v) => v !== undefined);
+    if (!hasChange) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'Provide at least one field to update.',
+      });
+    }
+    if (status !== undefined && !STATUSES.includes(status)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `status must be one of: ${STATUSES.join(', ')}.`,
+      });
+    }
+    if (priority !== undefined && !PRIORITIES.includes(priority)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `priority must be one of: ${PRIORITIES.join(', ')}.`,
+      });
+    }
+
+    // Assigning a contractor: verify it exists, and apply the UC-002 defaults —
+    // status moves to Assigned and the 14-day rectification deadline starts.
+    if (contractor_id !== undefined) {
+      const { rows } = await query('SELECT id FROM contractors WHERE id = $1', [contractor_id]);
+      if (rows.length === 0) {
+        return res.status(404).json({ code: 'NOT_FOUND', message: 'Contractor not found.' });
+      }
+      if (changes.status === undefined) changes.status = 'Assigned';
+      if (changes.target_deadline === undefined) {
+        changes.target_deadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      }
+    }
+
+    const inspection = await inspectionModel.updateByManager(
+      req.params.id,
+      changes,
+      req.user.id,
+      note
+    );
+    if (!inspection) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
+    }
+
+    // Real-time push; a socket hiccup must never fail the HTTP update.
+    try {
+      socketService.emitToRooms(
+        ['manager-room', `block-${inspection.location_block}`],
+        'status_update',
+        {
+          id: inspection.id,
+          status: inspection.status,
+          priority: inspection.priority,
+          updated_at: inspection.updated_at,
+        }
+      );
+    } catch {
+      // Socket not initialised (e.g. tests) or emit failed — ignore.
+    }
+
+    res.json(inspection);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  create,
+  createLiftInspection,
+  getDetail,
+  listForManager,
+  listMine,
+  listStatusBoard,
+  updateInspection,
+};

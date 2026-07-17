@@ -20,6 +20,19 @@ const upload = multer({
   },
 });
 
+// GET /api/inspections/status-board — privacy-safe estate-wide feed; any
+// authenticated user. Keep above any future '/:id' route.
+router.get('/status-board', requireAuth, inspectionController.listStatusBoard);
+
+// GET /api/inspections/my — the caller's own reports (resident or inspector).
+// Keep above any future '/:id' route so 'my' isn't captured as an id.
+router.get(
+  '/my',
+  requireAuth,
+  requireRole('resident', 'inspector'),
+  inspectionController.listMine
+);
+
 // POST /api/inspections — resident submits a complaint; `photo` is optional.
 router.post(
   '/',
@@ -38,6 +51,33 @@ router.post(
   requireRole('inspector'),
   upload.any(),
   inspectionController.createLiftInspection
+);
+
+// GET /api/inspections — manager triage queue with ?status=&category=&block=.
+router.get(
+  '/',
+  requireAuth,
+  requireRole('manager'),
+  inspectionController.listForManager
+);
+
+// GET /api/inspections/:id — full record + audit history (manager detail view).
+// Registered after the literal routes so /my and /status-board aren't captured.
+router.get(
+  '/:id',
+  requireAuth,
+  requireRole('manager'),
+  inspectionController.getDetail
+);
+
+// PATCH /api/inspections/:id — manager triage (UC-002): priority, status,
+// contractor assignment, deadline. Registered after /my and /status-board so
+// those aren't captured as :id.
+router.patch(
+  '/:id',
+  requireAuth,
+  requireRole('manager'),
+  inspectionController.updateInspection
 );
 
 module.exports = router;
