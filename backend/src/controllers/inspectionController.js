@@ -175,4 +175,15 @@ async function createLiftInspection(req, res, next) {
   }
 }
 
-module.exports = { create, createLiftInspection };
+// GET /api/inspections/my — the caller's own reports (resident complaints they
+// filed / lift inspections they performed). Wrapped as { data } per HLD §6.2.
+async function listMine(req, res, next) {
+  try {
+    const data = await inspectionModel.findByOriginator(req.user.id);
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, createLiftInspection, listMine };

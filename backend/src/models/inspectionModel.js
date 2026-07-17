@@ -145,4 +145,22 @@ async function findByResident(residentId) {
   return result.rows;
 }
 
-module.exports = { create, createLiftInspection, findById, findByResident };
+// List all non-deleted inspections the user originated — resident complaints
+// they filed or lift inspections they performed — newest first (HLD §6.2 /my).
+async function findByOriginator(userId) {
+  const result = await query(
+    `SELECT * FROM inspections
+     WHERE (resident_id = $1 OR inspector_id = $1) AND is_deleted = FALSE
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return result.rows;
+}
+
+module.exports = {
+  create,
+  createLiftInspection,
+  findById,
+  findByOriginator,
+  findByResident,
+};

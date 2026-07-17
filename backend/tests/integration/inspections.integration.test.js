@@ -150,6 +150,14 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.checklist_results.push(row);
     return { rows: [row] };
   }
+  // listMine: SELECT * FROM inspections WHERE (resident_id = $1 OR inspector_id = $1) ...
+  if (/SELECT \* FROM inspections/i.test(sql) && /inspector_id = \$1/i.test(sql)) {
+    const [userId] = params;
+    const rows = store.inspections.filter(
+      (i) => (i.resident_id === userId || i.inspector_id === userId) && !i.is_deleted
+    );
+    return { rows };
+  }
   // duplicate guard: SELECT id FROM inspections WHERE resident_id=$1 AND title=$2 ...
   if (/SELECT id FROM inspections/i.test(sql)) {
     const [resident_id, title] = params;
@@ -341,6 +349,36 @@ describe('POST /api/inspections/lift', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('GET /api/inspections/my', () => {
+  test('200 returns only the caller\'s own reports, wrapped in { data }', async () => {
+    // Seed one report belonging to the resident via the real create path.
+    await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Cracked tile at void deck')
+      .field('description', 'Sharp edge exposed')
+      .field('location_block', 'A');
+
+    const res = await request(app)
+      .get('/api/inspections/my')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].title).toBe('Cracked tile at void deck');
+    expect(res.body.data[0].resident_id).toBe('res-1');
+  });
+
+  test('403 for a manager (originators only)', async () => {
+    const res = await request(app)
+      .get('/api/inspections/my')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
   });
 });
 

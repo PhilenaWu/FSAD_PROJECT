@@ -20,6 +20,15 @@ const upload = multer({
   },
 });
 
+// GET /api/inspections/my — the caller's own reports (resident or inspector).
+// Keep above any future '/:id' route so 'my' isn't captured as an id.
+router.get(
+  '/my',
+  requireAuth,
+  requireRole('resident', 'inspector'),
+  inspectionController.listMine
+);
+
 // POST /api/inspections — resident submits a complaint; `photo` is optional.
 router.post(
   '/',
