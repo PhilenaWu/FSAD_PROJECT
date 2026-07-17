@@ -11,6 +11,7 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 const inspectionRoutes = require('./routes/inspections');
 const liftRoutes = require('./routes/lifts');
 const checklistItemRoutes = require('./routes/checklistItems');
+const contractorRoutes = require('./routes/contractors');
 const userRoutes = require('./routes/users');
 const analyticsRoutes = require('./routes/analytics');
 const recommendationRoutes = require('./routes/recommendations');
@@ -44,6 +45,7 @@ app.get('/health', (req, res) => {
 app.use('/api/inspections', inspectionRoutes);
 app.use('/api/lifts', liftRoutes);
 app.use('/api/checklist-items', checklistItemRoutes);
+app.use('/api/contractors', contractorRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/recommendations', recommendationRoutes);

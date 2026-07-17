@@ -4,10 +4,11 @@ import RoleLayout from './components/RoleLayout'
 import WorkspacePlaceholder from './components/WorkspacePlaceholder'
 import LoginPage from './pages/LoginPage'
 import ReportIssuePage from './pages/ReportIssuePage'
-import IncidentListPage from './pages/IncidentListPage'
-import IncidentDetailPage from './pages/IncidentDetailPage'
+import InspectionListPage from './pages/InspectionListPage'
+import InspectionDetailPage from './pages/InspectionDetailPage'
 import MyReportsPage from './pages/MyReportsPage'
 import NewInspectionPage from './pages/NewInspectionPage'
+import StatusBoardPage from './pages/StatusBoardPage'
 import DashboardPage from './pages/DashboardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
@@ -26,9 +27,10 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/report" element={<ReportIssuePage />} />
           <Route path="/my-reports" element={<MyReportsPage />} />
+          <Route path="/status-board" element={<StatusBoardPage />} />
           <Route path="/inspections/new" element={<NewInspectionPage />} />
-          <Route path="/incidents" element={<IncidentListPage />} />
-          <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+          <Route path="/inspections" element={<InspectionListPage />} />
+          <Route path="/inspections/:id" element={<InspectionDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/profile" element={<ProfilePage />} />

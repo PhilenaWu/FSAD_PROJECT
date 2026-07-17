@@ -17,19 +17,7 @@ import {
   Typography,
 } from '@mui/material';
 import api from '../services/api';
-
-// DB status (migration 004 CHECK) → resident-friendly label + chip colour.
-// Residents shouldn't see internal ops terms like "Open".
-const STATUS_DISPLAY = {
-  Open: { label: 'Submitted', color: 'default' },
-  'Pending Assignment': { label: 'Being reviewed', color: 'default' },
-  Assigned: { label: 'Contractor assigned', color: 'primary' },
-  Acknowledged: { label: 'In progress', color: 'primary' },
-  'On Hold': { label: 'On hold', color: 'warning' },
-  Rectified: { label: 'Work completed', color: 'success' },
-  Resolved: { label: 'Resolved', color: 'success' },
-  Closed: { label: 'Closed', color: 'default' },
-};
+import { statusDisplay } from '../utils/statusDisplay';
 
 // Ratable once the work is done; rating submission is a later task.
 const RATABLE_STATUSES = ['Resolved', 'Closed'];
@@ -101,7 +89,7 @@ export default function MyReportsPage() {
         ) : (
           <Stack spacing={2}>
             {reports.map((r) => {
-              const display = STATUS_DISPLAY[r.status] ?? { label: r.status, color: 'default' };
+              const display = statusDisplay(r.status);
               const ratable = RATABLE_STATUSES.includes(r.status);
               return (
                 <Paper key={r.id} elevation={2} sx={{ p: { xs: 2.5, sm: 3 }, borderRadius: 3 }}>

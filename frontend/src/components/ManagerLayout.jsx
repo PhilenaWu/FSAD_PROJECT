@@ -40,7 +40,7 @@ import NotificationBell from './notifications/NotificationBell';
 
 const NAV_ITEMS = [
   { label: 'Dashboard', to: '/dashboard', icon: GridViewOutlinedIcon },
-  { label: 'Incidents', to: '/incidents', icon: WarningAmberOutlinedIcon },
+  { label: 'Inspections', to: '/inspections', icon: WarningAmberOutlinedIcon },
   { label: 'Reports', to: '/reports', icon: DescriptionOutlinedIcon },
   { label: 'Notifications', to: '/notifications', icon: CampaignOutlinedIcon },
 ];
