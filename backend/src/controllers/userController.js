@@ -11,6 +11,14 @@ async function getMe(req, res, next) {
     if (!profile) {
       return res.status(404).json({ code: 'NOT_FOUND', message: 'Profile not found' });
     }
+    // UC-012: suspended accounts (expired/terminated vendors) may authenticate
+    // with Supabase but are refused here — the frontend signs them out.
+    if (profile.status === 'suspended') {
+      return res.status(403).json({
+        code: 'ACCOUNT_SUSPENDED',
+        message: 'This account is suspended. Contact the administrator.',
+      });
+    }
     res.json(profile); // raw row, per convention
   } catch (err) {
     next(err);

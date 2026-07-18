@@ -1,0 +1,14 @@
+name: Contract Expiry Check
+on:
+  schedule:
+    - cron: '0 17 * * *'     # 01:00 SGT = 17:00 UTC daily
+  workflow_dispatch:
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call vendor expiry-check endpoint
+        run: |
+          curl -X GET "${{ secrets.RENDER_BACKEND_URL }}/api/admin/vendors/expiry-check" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --fail --max-time 30

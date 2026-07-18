@@ -57,6 +57,7 @@ function initSocket(httpServer) {
     const { id, role, block_number } = socket.user;
 
     if (role === 'manager') socket.join('manager-room');
+    if (role === 'admin') socket.join('admin-room');
     if (role === 'inspector') socket.join('inspector-team');
     if (role === 'contractor') socket.join(`contractor-${id}`);
     if (role === 'resident' && block_number) socket.join(`block-${block_number}`);

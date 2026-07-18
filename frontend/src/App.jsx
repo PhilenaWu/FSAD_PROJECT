@@ -14,6 +14,7 @@ import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
 import ProfilePage from './pages/ProfilePage'
 import CvReviewPage from './pages/CvReviewPage'
+import AdminVendorPage from './pages/AdminVendorPage'
 
 function App() {
   return (
@@ -40,7 +41,7 @@ function App() {
           {/* Role landing pages not built yet — placeholder, not an error. */}
           <Route path="/contractor-inbox" element={<WorkspacePlaceholder />} />
           <Route path="/admin/costs" element={<WorkspacePlaceholder />} />
-          <Route path="/admin/vendors" element={<WorkspacePlaceholder />} />
+          <Route path="/admin/vendors" element={<AdminVendorPage />} />
         </Route>
       </Route>
 

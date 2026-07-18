@@ -208,3 +208,75 @@ if `Demo:` records exist). Contractors come from `016_seed_reference_data.sql`.
    ready for the weekly meeting.
 5. Edge cases: filter to an empty result (CSV button disables with a
    tooltip), import a malformed CSV (specific error, nothing breaks).
+
+## UC-012 — Vendor Account Lifecycle (Hasini)
+
+The `/admin/vendors` route (admin role) manages external vendor (contractor)
+accounts whose access is tied to their servicing contract: onboarding,
+contract-driven auto-suspension, renewal, and a per-vendor audit trail.
+
+### Features
+
+- **Accountable onboarding** — every login is created for a named person
+  (name, job title, work email) with a mandatory written reason for access;
+  the contract PDF is stored on Cloudinary `/contracts` (record-keeping only,
+  dates are entered manually by design). Login email is auto-suggested from
+  the holder's name + the company's email domain. Passwords are admin-set and
+  admin-managed (a Generate button produces a strong random one) — vendors do
+  not choose or rotate their own credential.
+- **Contract-driven offboarding** — a daily job (01:00 SGT) suspends any
+  vendor past `contract_end`; suspended vendors get `403 ACCOUNT_SUSPENDED`
+  at login and are blocked on every role-gated route. Admins can also run the
+  check on demand from the page, and the table live-refreshes via Socket.IO
+  (`vendor_expired` on `admin-room`) when a suspension happens.
+- **Renew / Suspend** — renew sets a new `contract_end` (optionally a new
+  contract document) and reactivates a suspended account; suspend is instant
+  early termination. Nothing is ever deleted — 5-year audit trail.
+- **Audit trail** — `vendor_history` records Onboarded / Contract Renewed /
+  Suspended / Auto-Suspended / Details Updated with the acting admin
+  ("System" for the scheduled job); viewable per vendor in the UI.
+- **Edit details** — company contact/brands and holder name/title are
+  editable after onboarding; contract dates only change via Renew and the
+  login email is immutable.
+
+### Endpoints (admin-only unless noted)
+
+```
+POST  /api/admin/vendors                    onboard (multipart, optional contract_doc)
+GET   /api/admin/vendors                    list, soonest-expiring first
+POST  /api/admin/vendors/:id/renew          new contract_end (+ optional contract_doc)
+POST  /api/admin/vendors/:id/suspend        early termination
+PATCH /api/admin/vendors/:id                edit non-contract details
+GET   /api/admin/vendors/:id/history        audit trail
+POST  /api/admin/vendors/run-expiry-check   on-demand expiry run
+GET   /api/admin/vendors/expiry-check       daily job (CRON_SECRET bearer, not JWT)
+```
+
+### Setup / demo data
+
+- Migrations `019`–`022` add the contract fields, holder fields
+  (`users.job_title`, `contractors.access_reason`), the `vendor_history`
+  table, and idempotent demo data: six vendors with staggered contracts and
+  named account holders, all with working logins (password `TempPass123!`).
+  One vendor (Schindler Care / Ahmad Faizal) is pre-suspended with an expired
+  contract to demo the offboarding state.
+- The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
+  repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
+  backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.
+
+### Tests
+
+- Backend: `npx jest tests/unit/vendors.test.js` (onboarding validation +
+  rollback, role gating, expiry job, suspended-login 403, renew/suspend,
+  edit + history)
+
+### Demo script (~2 min)
+
+1. Vendors table: expiry countdown chips (red/amber/green), the 30-day
+   warning banner, hover a holder for their access reason.
+2. Onboard a vendor live — watch the login email auto-suggest and Generate a
+   password; give it a contract that ended last month.
+3. Click **Run expiry check** — the new vendor flips to suspended without a
+   reload (Socket.IO), and its History shows "Auto-Suspended — System".
+4. Try logging in as that vendor → "This account is suspended."
+5. **Renew** with next year's date (+ new contract PDF) → active again.

@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 
 // Where each role lands after login. Contractor/admin workspaces aren't built
 // yet — those routes render a "not ready yet" placeholder rather than erroring.
@@ -32,7 +33,7 @@ const ROLE_HOME = {
 };
 
 export default function LoginPage() {
-  const { user, profile, profileLoading, loading, login } = useAuth();
+  const { user, profile, profileLoading, loading, login, logout } = useAuth();
 
   // Pre-fill the email from a previous "Remember me" (email only, never password).
   const savedEmail = localStorage.getItem('rememberedEmail') ?? '';
@@ -52,6 +53,18 @@ export default function LoginPage() {
     if (signInError) {
       setError(signInError.message);
       return;
+    }
+    // UC-012: suspended accounts (expired/terminated vendors) authenticate at
+    // Supabase but the backend refuses the profile — sign out and explain.
+    try {
+      await api.get('/api/users/me');
+    } catch (meErr) {
+      if (meErr.response?.data?.code === 'ACCOUNT_SUSPENDED') {
+        await logout();
+        setError('This account is suspended. Contact the administrator.');
+        return;
+      }
+      // Other profile errors: let the normal post-login flow handle them.
     }
     // Remember (or forget) the email for next time — email only.
     if (rememberMe) {
