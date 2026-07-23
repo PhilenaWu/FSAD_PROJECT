@@ -1,13 +1,11 @@
 // DB inspection priority (migration 004 CHECK: Critical/High/Medium/Low) →
 // display label + chip colours. DISPLAY-ONLY mapping — the DB enum is untouched.
-// Mirrors statusDisplay.js. Colours are theme palette tokens (used via sx), no
-// hex: heat ramps amber → orange → red → darkest red (primary.dark, #940000 in
-// the brand palette, is the darkest red token available).
+// Mirrors statusDisplay.js. Heat ramp: yellow → orange → red → dark red.
 export const PRIORITY_DISPLAY = {
-  Low: { label: 'Low', bg: 'warning.light', fg: 'text.primary' },
-  Medium: { label: 'Medium', bg: 'warning.main', fg: 'warning.contrastText' },
-  High: { label: 'High', bg: 'error.main', fg: 'error.contrastText' },
-  Critical: { label: 'Critical', bg: 'primary.dark', fg: 'primary.contrastText' },
+  Low: { label: 'Low', bg: '#fdd835', fg: 'text.primary' }, // yellow
+  Medium: { label: 'Medium', bg: '#fb8c00', fg: '#ffffff' }, // orange
+  High: { label: 'High', bg: '#e53935', fg: '#ffffff' }, // red
+  Critical: { label: 'Critical', bg: '#8b0000', fg: '#ffffff' }, // dark red
 };
 
 // Unknown/new values fall through unmapped rather than breaking the UI.

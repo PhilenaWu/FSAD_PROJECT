@@ -13,12 +13,7 @@ import {
   TableRow,
 } from '@mui/material';
 
-const PRIORITY_COLOR = {
-  Critical: 'error',
-  High: 'warning',
-  Medium: 'default',
-  Low: 'default',
-};
+import { priorityDisplay } from '../../utils/priorityDisplay';
 
 export default function PriorityQueue({ rows }) {
   return (
@@ -45,7 +40,14 @@ export default function PriorityQueue({ rows }) {
               <TableCell>{r.block}</TableCell>
               <TableCell>{r.category}</TableCell>
               <TableCell>
-                <Chip label={r.priority} size="small" color={PRIORITY_COLOR[r.priority]} variant="outlined" />
+                <Chip
+                  label={priorityDisplay(r.priority).label}
+                  size="small"
+                  sx={{
+                    bgcolor: priorityDisplay(r.priority).bg,
+                    color: priorityDisplay(r.priority).fg,
+                  }}
+                />
               </TableCell>
               <TableCell>{r.status}</TableCell>
               <TableCell align="right">{r.composite_score.toFixed(1)}</TableCell>
