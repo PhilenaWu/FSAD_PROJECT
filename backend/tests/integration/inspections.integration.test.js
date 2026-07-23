@@ -43,6 +43,8 @@ jest.mock('../../src/controllers/cvController', () => ({
   detect: jest.fn(async () => ({ cvDetection: { id: 'cv-mock-1', status: 'low_confidence' }, inspection: null })),
   batchScan: jest.fn(async () => ({ processed: 0, failed: 0, remaining: 0 })),
   listDetections: jest.fn((req, res) => res.json({ data: [], total: 0 })),
+}));
+
 // --- Mock: Socket.IO emit seam (no server in tests). ---
 jest.mock('../../src/services/socketService', () => ({
   emitToRoom: jest.fn(),
@@ -72,7 +74,9 @@ const checklistItems = [
   { id: 'item-3', section: 'Safety', item_text: 'Emergency intercom works', display_order: 3, active: false },
   { id: 'item-1', section: 'Structural', item_text: 'Shaft walls free of cracks', display_order: 1, active: true },
 ];
-const store = { inspections: [], checklist_results: [], history: [] };
+const store = {
+  inspections: [], checklist_results: [], history: [], signatures: [], ai_jobs: [],
+};
 
 const mockQuery = jest.fn(async (sql, params = []) => {
   // requireRole: SELECT role, status FROM users WHERE id = $1
@@ -197,6 +201,47 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const row = store.inspections.find((i) => i.id === params[0] && !i.is_deleted);
     return { rows: row ? [{ ...row }] : [] };
   }
+  // close (UC-004): UPDATE inspections SET status='Closed', is_deleted=TRUE, ...
+  // Intercept before the generic UPDATE branch (status/is_deleted/closed_at are
+  // SQL literals/expressions, not $-params, so the generic parser can't set them).
+  if (/UPDATE inspections[\s\S]*is_deleted = TRUE/i.test(sql)) {
+    const [id, closing_remark, actual_cost] = params;
+    const row = store.inspections.find((i) => i.id === id);
+    if (!row) return { rows: [] };
+    row.status = 'Closed';
+    row.is_deleted = true;
+    row.closing_remark = closing_remark;
+    row.actual_cost = actual_cost ?? null;
+    row.closed_at = new Date().toISOString();
+    row.resolution_time_hours =
+      Math.round(((Date.now() - new Date(row.created_at)) / 3600000) * 100) / 100;
+    row.updated_at = new Date().toISOString();
+    return { rows: [{ ...row }] };
+  }
+  // signatures: INSERT INTO signatures (...) RETURNING *
+  if (/INSERT INTO signatures/i.test(sql)) {
+    const [inspection_id, signer_role, signer_id, image_url] = params;
+    const row = {
+      id: `sig-${store.signatures.length + 1}`,
+      inspection_id, signer_role, signer_id, image_url,
+    };
+    store.signatures.push(row);
+    return { rows: [row] };
+  }
+  // recurrence count: SELECT COUNT(*)::int AS n FROM inspections WHERE status='Closed'
+  if (/COUNT\(\*\)/i.test(sql) && /status = 'Closed'/i.test(sql)) {
+    const [block, category] = params;
+    const n = store.inspections.filter(
+      (i) => i.status === 'Closed' && i.location_block === block && i.category === category
+    ).length;
+    return { rows: [{ n }] };
+  }
+  // recurrence queue: INSERT INTO ai_jobs (...)
+  if (/INSERT INTO ai_jobs/i.test(sql)) {
+    const [location_block, category, triggered_by] = params;
+    store.ai_jobs.push({ location_block, category, triggered_by });
+    return { rows: [] };
+  }
   // updateByManager: UPDATE inspections SET <dynamic fields> WHERE id = $N
   if (/UPDATE inspections SET/i.test(sql)) {
     const row = store.inspections.find((i) => i.id === params[params.length - 1]);
@@ -267,6 +312,8 @@ beforeEach(() => {
   store.inspections.length = 0;
   store.checklist_results.length = 0;
   store.history.length = 0;
+  store.signatures.length = 0;
+  store.ai_jobs.length = 0;
   jest.clearAllMocks();
 });
 
@@ -689,6 +736,117 @@ describe('GET /api/contractors', () => {
       .get('/api/contractors')
       .set('Authorization', 'Bearer resident-token');
     expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/inspections/:id/close', () => {
+  const REMARK = 'Technician replaced the faulty button; verified working on site.';
+
+  // Close a record with the two required signature parts + a valid endorser.
+  function closeRecord(id, extra = {}) {
+    const req = request(app)
+      .post(`/api/inspections/${id}/close`)
+      .set('Authorization', 'Bearer manager-token')
+      .field('closing_remark', extra.remark ?? REMARK)
+      .field('endorser_role', 'inspector')
+      .field('endorser_id', 'ins-1');
+    if (extra.actual_cost !== undefined) req.field('actual_cost', extra.actual_cost);
+    if (!extra.omitManagerSig) req.attach('manager_signature', PNG, 'mgr.png');
+    if (!extra.omitEndorserSig) req.attach('endorser_signature', PNG, 'insp.png');
+    return req;
+  }
+
+  test('200 closes with remark + dual signatures, computes fields, archives', async () => {
+    const id = await seedComplaint('Lift button stuck at L3');
+
+    const res = await closeRecord(id, { actual_cost: '250.50' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Closed');
+    expect(res.body.is_deleted).toBe(true);
+    expect(res.body.closed_at).toBeTruthy();
+    expect(res.body.resolution_time_hours).not.toBeNull();
+
+    // Two signatures stored: manager + endorser.
+    expect(store.signatures).toHaveLength(2);
+    expect(store.signatures.map((s) => s.signer_role).sort()).toEqual(['inspector', 'manager']);
+    expect(store.signatures.find((s) => s.signer_role === 'manager').signer_id).toBe('mgr-1');
+
+    // 'Closed' audit row written.
+    expect(store.history.some((h) => h.action === 'Closed')).toBe(true);
+
+    // Both signatures uploaded to the /signatures folder.
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledWith(expect.anything(), 'signatures');
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(2);
+  });
+
+  test('400 when the closing remark is too short', async () => {
+    const id = await seedComplaint('Short remark case');
+    const res = await closeRecord(id, { remark: 'too short' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(res.body.message).toBe('Closing remark must be at least 10 characters.');
+  });
+
+  test('400 when a signature image is missing', async () => {
+    const id = await seedComplaint('Missing signature case');
+    const res = await closeRecord(id, { omitEndorserSig: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('403 when the caller is not a manager', async () => {
+    const id = await seedComplaint('Wrong role case');
+    const res = await request(app)
+      .post(`/api/inspections/${id}/close`)
+      .set('Authorization', 'Bearer resident-token')
+      .field('closing_remark', REMARK)
+      .field('endorser_role', 'inspector')
+      .field('endorser_id', 'ins-1')
+      .attach('manager_signature', PNG, 'm.png')
+      .attach('endorser_signature', PNG, 'e.png');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('404 for an unknown inspection id', async () => {
+    const res = await closeRecord('insp-nope');
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('404 when the endorser is not a real user', async () => {
+    const id = await seedComplaint('Bad endorser case');
+    const res = await request(app)
+      .post(`/api/inspections/${id}/close`)
+      .set('Authorization', 'Bearer manager-token')
+      .field('closing_remark', REMARK)
+      .field('endorser_role', 'inspector')
+      .field('endorser_id', 'ghost-user')
+      .attach('manager_signature', PNG, 'm.png')
+      .attach('endorser_signature', PNG, 'e.png');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('queues an ai_jobs row on the 3rd close of a block+category in 30 days', async () => {
+    // Three complaints in the same block+category (default 'Uncategorised').
+    const ids = [];
+    for (let i = 0; i < 3; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      ids.push(await seedComplaint(`Recurring defect ${i}`));
+    }
+    // eslint-disable-next-line no-await-in-loop
+    for (const id of ids) await closeRecord(id);
+
+    // Only the 3rd close crosses the threshold → exactly one queued job.
+    expect(store.ai_jobs).toHaveLength(1);
+    expect(store.ai_jobs[0]).toMatchObject({ location_block: '44A', category: 'Uncategorised' });
   });
 });
 
