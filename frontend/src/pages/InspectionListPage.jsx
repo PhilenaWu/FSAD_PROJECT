@@ -23,18 +23,18 @@ import {
 } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { priorityDisplay } from '../utils/priorityDisplay';
 
-// Schema enums (migration 004) for the filter dropdowns.
+// Filterable statuses (migration 004 CHECK, minus 'Closed' — closed records are
+// archived with is_deleted = TRUE, so that filter could never return rows).
 const STATUSES = [
   'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
-  'On Hold', 'Rectified', 'Resolved', 'Closed',
+  'On Hold', 'Rectified', 'Resolved',
 ];
 const CATEGORIES = [
   'Structural', 'Electrical', 'Plumbing', 'Cleanliness', 'Lift', 'Doors',
   'Cabin', 'Safety', 'Landscaping', 'Pest', 'Other', 'Uncategorised',
 ];
-
-const PRIORITY_COLOR = { Critical: 'error', High: 'warning', Medium: 'default', Low: 'default' };
 
 export default function InspectionListPage() {
   const { profile } = useAuth();
@@ -161,7 +161,9 @@ export default function InspectionListPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  const p = priorityDisplay(r.priority);
+                  return (
                   <TableRow
                     key={r.id}
                     hover
@@ -178,9 +180,8 @@ export default function InspectionListPage() {
                     <TableCell>
                       <Chip
                         size="small"
-                        color={PRIORITY_COLOR[r.priority] ?? 'default'}
-                        variant={r.priority === 'Low' ? 'outlined' : 'filled'}
-                        label={r.priority}
+                        label={p.label}
+                        sx={{ bgcolor: p.bg, color: p.fg, fontWeight: 600 }}
                       />
                     </TableCell>
                     <TableCell align="right">{r.ai_priority_score ?? '—'}</TableCell>
@@ -188,7 +189,8 @@ export default function InspectionListPage() {
                       <Chip size="small" variant="outlined" label={r.status} />
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>

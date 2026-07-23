@@ -3,6 +3,7 @@
 'use strict';
 
 const { pool, query } = require('../config/db');
+const signatureModel = require('./signatureModel');
 
 // Insert a new inspection record. UC-001 uses source_type 'resident_complaint';
 // the caller supplies the resident + report fields plus the AI-derived
@@ -270,6 +271,89 @@ async function updateByManager(id, changes, actorId, note) {
   }
 }
 
+// Close a record (UC-004): set the closing fields + computed resolution time,
+// archive it (is_deleted = TRUE for the 5-year audit trail), store the dual
+// endorsement signatures, and write a 'Closed' audit row — all atomically.
+// `signatures` is an array of { signer_role, signer_id, image_url }.
+// Returns the updated row, or undefined if the id isn't a live record.
+async function closeInspection(id, { closing_remark, actual_cost, signatures }, actorId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(
+      'SELECT * FROM inspections WHERE id = $1 AND is_deleted = FALSE FOR UPDATE',
+      [id]
+    );
+    const before = existing.rows[0];
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+
+    const updated = await client.query(
+      `UPDATE inspections
+         SET status = 'Closed',
+             is_deleted = TRUE,
+             closing_remark = $2,
+             actual_cost = $3,
+             closed_at = NOW(),
+             resolution_time_hours = ROUND(
+               EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0, 2
+             ),
+             updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, closing_remark, actual_cost]
+    );
+    const after = updated.rows[0];
+
+    // Dual endorsement signatures (manager + the second endorser).
+    for (const sig of signatures) {
+      await signatureModel.create({ inspection_id: id, ...sig }, client);
+    }
+
+    await client.query(
+      `INSERT INTO inspection_history (
+         inspection_id, actor_id, action, previous_status, new_status, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, actorId, 'Closed', before.status, 'Closed', closing_remark]
+    );
+
+    await client.query('COMMIT');
+    return after;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Recurrence trigger (UC-004 → UC-006): if closing this record makes 3 or more
+// closed records for the same block + category within 30 days, queue an ai_jobs
+// row so the nightly recommendation run prioritises this pair. Best-effort —
+// callers wrap this so an analytics-queue hiccup never fails the close.
+// Returns true when a job was queued.
+async function queueRecurrenceJob(inspectionId, locationBlock, category) {
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS n FROM inspections
+     WHERE status = 'Closed' AND location_block = $1 AND category = $2
+       AND closed_at > NOW() - INTERVAL '30 days'`,
+    [locationBlock, category]
+  );
+  if (rows[0].n >= 3) {
+    await query(
+      `INSERT INTO ai_jobs (location_block, category, triggered_by)
+       VALUES ($1, $2, $3)`,
+      [locationBlock, category, inspectionId]
+    );
+    return true;
+  }
+  return false;
+}
+
 // Privacy-safe estate-wide feed for the resident status board. The column list
 // is a deliberate allow-list — NEVER add resident_id, location_unit, title,
 // description, photo/audio URLs, GPS, or any identifying field here.
@@ -287,10 +371,12 @@ module.exports = {
   create,
   createLiftInspection,
   findById,
+  closeInspection,
   findAllForManager,
   findByOriginator,
   findByResident,
   findDetailById,
   findForStatusBoard,
+  queueRecurrenceJob,
   updateByManager,
 };

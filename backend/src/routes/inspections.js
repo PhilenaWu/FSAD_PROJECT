@@ -80,4 +80,18 @@ router.patch(
   inspectionController.updateInspection
 );
 
+// POST /api/inspections/:id/close — manager closes a record (UC-004) with a
+// remark + dual e-signature (manager_signature & endorser_signature PNGs) and
+// optional actual_cost. Separate from PATCH /:id, which excludes 'Closed'.
+router.post(
+  '/:id/close',
+  requireAuth,
+  requireRole('manager'),
+  upload.fields([
+    { name: 'manager_signature', maxCount: 1 },
+    { name: 'endorser_signature', maxCount: 1 },
+  ]),
+  inspectionController.closeInspection
+);
+
 module.exports = router;

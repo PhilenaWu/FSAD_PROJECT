@@ -322,7 +322,134 @@ async function updateInspection(req, res, next) {
   }
 }
 
+// POST /api/inspections/:id/close — manager closes a record (UC-004) with a
+// mandatory remark, dual e-signature (manager + endorser), and optional cost.
+// Multipart: closing_remark, actual_cost?, endorser_role, endorser_id text
+// fields + manager_signature & endorser_signature PNG parts. This is separate
+// from PATCH /:id (which deliberately excludes 'Closed') because closing has its
+// own validation, signature capture, and archival (is_deleted = TRUE).
+async function closeInspection(req, res, next) {
+  try {
+    const { closing_remark, actual_cost, endorser_role, endorser_id } = req.body;
+
+    // Remark: mandatory, at least 10 characters (trimmed).
+    if (!closing_remark || closing_remark.trim().length < 10) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'Closing remark must be at least 10 characters.',
+      });
+    }
+
+    // actual_cost: optional, but if present must be a non-negative number.
+    let cost = null;
+    if (actual_cost !== undefined && actual_cost !== '') {
+      cost = Number(actual_cost);
+      if (Number.isNaN(cost) || cost < 0) {
+        return res.status(400).json({
+          code: 'VALIDATION_ERROR',
+          message: 'actual_cost must be a non-negative number.',
+        });
+      }
+    }
+
+    // Endorser: the second signature is attributed to a real user.
+    if (!['inspector', 'contractor'].includes(endorser_role)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'endorser_role must be inspector or contractor.',
+      });
+    }
+    if (!endorser_id) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'endorser_id is required.',
+      });
+    }
+
+    // Both signature images are required (dual endorsement).
+    const managerFile = req.files?.manager_signature?.[0];
+    const endorserFile = req.files?.endorser_signature?.[0];
+    if (!managerFile || !endorserFile) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'Both manager_signature and endorser_signature images are required.',
+      });
+    }
+
+    // The record must be a live, un-closed inspection.
+    const existing = await inspectionModel.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({
+        code: 'NOT_FOUND',
+        message: 'Inspection not found or already closed.',
+      });
+    }
+
+    // The endorser must be a real user (signatures.signer_id FK).
+    const endorser = await query('SELECT id FROM users WHERE id = $1', [endorser_id]);
+    if (endorser.rows.length === 0) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Endorser user not found.' });
+    }
+
+    // Store both signatures in Cloudinary (/signatures folder).
+    const [managerUrl, endorserUrl] = await Promise.all([
+      cloudinaryService.uploadImage(managerFile.buffer, 'signatures'),
+      cloudinaryService.uploadImage(endorserFile.buffer, 'signatures'),
+    ]);
+
+    const inspection = await inspectionModel.closeInspection(
+      req.params.id,
+      {
+        closing_remark: closing_remark.trim(),
+        actual_cost: cost,
+        signatures: [
+          { signer_role: 'manager', signer_id: req.user.id, image_url: managerUrl },
+          { signer_role: endorser_role, signer_id: endorser_id, image_url: endorserUrl },
+        ],
+      },
+      req.user.id
+    );
+    if (!inspection) {
+      return res.status(404).json({
+        code: 'NOT_FOUND',
+        message: 'Inspection not found or already closed.',
+      });
+    }
+
+    // Recurrence queue + live push — both best-effort, never fail the close.
+    try {
+      await inspectionModel.queueRecurrenceJob(
+        inspection.id,
+        inspection.location_block,
+        inspection.category
+      );
+    } catch {
+      // Analytics queue is non-critical to the close.
+    }
+    try {
+      socketService.emitToRooms(
+        ['manager-room', `block-${inspection.location_block}`],
+        'status_update',
+        { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
+      );
+    } catch {
+      // Socket not initialised (e.g. tests) — ignore.
+    }
+
+    res.json({
+      id: inspection.id,
+      status: inspection.status,
+      is_deleted: inspection.is_deleted,
+      resolution_time_hours: inspection.resolution_time_hours,
+      closed_at: inspection.closed_at,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
+  closeInspection,
   create,
   createLiftInspection,
   getDetail,
