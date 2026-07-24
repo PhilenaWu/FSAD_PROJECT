@@ -38,10 +38,43 @@ function uploadRaw(buffer, folder, filename) {
 }
 
 // Upload a generated report PDF buffer into the `reports` folder (UC-009).
-// Thin wrapper over uploadRaw: PDFs are stored verbatim as raw bytes with the
-// given file name as the public_id. Resolves with the hosted https URL.
+//
+// PDFs are uploaded through Cloudinary's IMAGE pipeline (resource_type 'image',
+// format 'pdf') — not 'raw'. Raw delivery serves a generic content type, so the
+// browser renders the bytes inline as text (the "gibberish" symptom); the image
+// pipeline delivers the correct application/pdf type.
+//
+// The returned URL uses fl_attachment so clicking it downloads a proper
+// `<name>.pdf` file instead of trying to render it inline. Resolves with that
+// https URL.
 function uploadReport(pdfBuffer, fileName) {
-  return uploadRaw(pdfBuffer, 'reports', fileName);
+  // public_id without extension — Cloudinary appends the format.
+  const publicId = fileName.replace(/\.pdf$/i, '');
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: 'reports',
+        public_id: publicId,
+        resource_type: 'image',
+        format: 'pdf',
+        overwrite: true,
+      },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
+        // Force an attachment download with the correct content type/filename.
+        const url = cloudinary.url(result.public_id, {
+          resource_type: 'image',
+          format: 'pdf',
+          secure: true,
+          flags: 'attachment',
+        });
+        resolve(url);
+      }
+    );
+    stream.end(pdfBuffer);
+  });
 }
 
 module.exports = { uploadImage, uploadRaw, uploadReport };
