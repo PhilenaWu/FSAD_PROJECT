@@ -128,4 +128,97 @@ async function generateRiskAlert(block, category, velocity_pct, estimated_cost) 
   }
 }
 
-module.exports = { categoriseIncident, generateRiskAlert };
+/**
+ * Deterministic, professional fallback executive summary for the monthly report
+ * (UC-009). Used when OPENAI_API_KEY is unset or the API errors, so a report can
+ * always be generated. Data-driven: states the volume, SLA compliance, the top
+ * defect category, and a single concrete recommendation.
+ *
+ * @param {import('../models/reportModel').ReportData} reportData
+ * @returns {string} a summary paragraph (<=80 words).
+ */
+function fallbackSummary(reportData) {
+  const total = reportData.totalDefects;
+  const slaPct = reportData.sla.compliancePct;
+  const topCategory = reportData.byCategory[0]?.category || 'general';
+  const avgDays = reportData.avgRectification.days;
+  const avgPart =
+    avgDays == null
+      ? 'No defects were rectified in this period.'
+      : `Average rectification took ${avgDays} day(s).`;
+  // Recommendation keys off SLA health, then the leading defect category.
+  const recommendation =
+    slaPct < 80
+      ? `Recommendation: prioritise ${topCategory} defects and tighten contractor turnaround to lift SLA compliance above 80%.`
+      : `Recommendation: sustain current turnaround and monitor recurring ${topCategory} defects for early intervention.`;
+  return (
+    `Monthly maintenance summary: ${total} defect(s) processed with ` +
+    `${slaPct}% SLA compliance. The leading category was ${topCategory}. ` +
+    `${avgPart} ${recommendation}`
+  );
+}
+
+/**
+ * Generate a concise executive summary (<=80 words) plus one recommendation for
+ * the monthly estate report. Sends the aggregated {@link ReportData} to OpenAI
+ * when OPENAI_API_KEY is configured; otherwise (or on any API error) returns the
+ * deterministic {@link fallbackSummary}. Never throws.
+ *
+ * @param {import('../models/reportModel').ReportData} reportData - aggregated metrics.
+ * @returns {Promise<string>} the executive summary text.
+ */
+async function generateExecutiveSummary(reportData) {
+  const fallback = fallbackSummary(reportData);
+  if (!config.OPENAI_API_KEY) {
+    return fallback;
+  }
+
+  try {
+    // Lazy require so the no-key path stays dependency-free (see generateRiskAlert).
+    const OpenAI = require('openai');
+    const client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+
+    const facts =
+      `- Reporting period: ${reportData.period.startDate} to ${reportData.period.endDate}\n` +
+      `- Total defects: ${reportData.totalDefects}\n` +
+      `- SLA compliance: ${reportData.sla.compliancePct}% ` +
+      `(${reportData.sla.compliant}/${reportData.sla.eligible} within deadline)\n` +
+      `- Average rectification: ${reportData.avgRectification.days ?? 'n/a'} day(s)\n` +
+      `- Defects by category: ${
+        reportData.byCategory.map((c) => `${c.category} (${c.count})`).join(', ') || 'none'
+      }\n` +
+      `- Top recurring defects: ${
+        reportData.topRecurringDefects
+          .map((r) => `${r.category} in Block ${r.block} (${r.count})`)
+          .join(', ') || 'none'
+      }\n` +
+      `- Costs: actual $${reportData.costs.actual}, projected open $${reportData.costs.estimated}`;
+
+    const prompt =
+      `You are writing the executive summary of a monthly estate maintenance ` +
+      `report for a property manager. Using only these facts:\n${facts}\n\n` +
+      `Write ONE professional paragraph of 80 words or fewer that summarises the ` +
+      `findings and ends with exactly one clear, actionable recommendation. ` +
+      `Plain language, no markdown, no preamble, no bullet points.`;
+
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 200,
+      temperature: 0.4,
+    });
+
+    const text = resp?.choices?.[0]?.message?.content?.trim();
+    return text || fallback;
+  } catch {
+    // Graceful degradation: a report must always have a summary.
+    return fallback;
+  }
+}
+
+module.exports = {
+  categoriseIncident,
+  generateRiskAlert,
+  generateExecutiveSummary,
+  fallbackSummary,
+};
