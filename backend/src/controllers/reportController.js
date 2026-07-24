@@ -83,4 +83,67 @@ async function generateReportInternal(startDate, endDate, triggerSource) {
   return report;
 }
 
-module.exports = { generateReportInternal };
+// Half-open [start, end) window for the calendar month before `now` (UTC).
+function previousMonthRange(now = new Date()) {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+// Half-open [firstOfThisMonth, now) window — the current month to date (UTC).
+function monthToDateRange(now = new Date()) {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return { start: start.toISOString(), end: now.toISOString() };
+}
+
+/**
+ * GET /api/reports/generate — scheduled run (GitHub Actions cron), gated by
+ * cronGuard. Generates the report for the previous calendar month.
+ * @returns {void} responds 200 with { data: <reports row> }.
+ */
+async function generateScheduled(req, res, next) {
+  try {
+    const { start, end } = previousMonthRange();
+    const report = await generateReportInternal(start, end, 'github_actions');
+    res.json({ data: report });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /api/reports/generate-manual — manager-triggered run. Uses the supplied
+ * { startDate, endDate } body, or the current month to date when omitted.
+ * @returns {void} responds 201 with { data: <reports row> }.
+ */
+async function generateManual(req, res, next) {
+  try {
+    const { startDate, endDate } = req.body || {};
+    const range =
+      startDate && endDate ? { start: startDate, end: endDate } : monthToDateRange();
+    const report = await generateReportInternal(range.start, range.end, 'manual');
+    res.status(201).json({ data: report });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/reports — list past generated reports (archive).
+ * @returns {void} responds 200 with { data: [...], total }.
+ */
+async function listReports(req, res, next) {
+  try {
+    const rows = await reportModel.listReports();
+    res.json({ data: rows, total: rows.length });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  generateReportInternal,
+  generateScheduled,
+  generateManual,
+  listReports,
+};

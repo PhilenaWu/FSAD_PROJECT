@@ -227,4 +227,23 @@ async function getReportRecipients() {
   return rows.map((r) => r.email);
 }
 
-module.exports = { getReportData, createReport, updateEmailDelivered, getReportRecipients };
+/**
+ * List past generated reports, newest first (UC-009 archive).
+ *
+ * @returns {Promise<Object[]>} the reports rows.
+ * @throws {Error} if the query fails (propagated from pg).
+ */
+async function listReports() {
+  const { rows } = await query(
+    `SELECT ${REPORT_COLUMNS} FROM reports ORDER BY generated_at DESC`
+  );
+  return rows;
+}
+
+module.exports = {
+  getReportData,
+  createReport,
+  updateEmailDelivered,
+  getReportRecipients,
+  listReports,
+};
