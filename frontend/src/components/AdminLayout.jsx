@@ -31,6 +31,7 @@ import ApartmentIcon from '@mui/icons-material/Apartment';
 import MenuIcon from '@mui/icons-material/Menu';
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
 import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -40,6 +41,7 @@ import { useAuth } from '../context/AuthContext';
 const NAV_ITEMS = [
   { label: 'Cost Analytics', to: '/admin/costs', icon: PaymentsOutlinedIcon },
   { label: 'Vendors', to: '/admin/vendors', icon: HandshakeOutlinedIcon },
+  { label: 'Reports', to: '/reports', icon: DescriptionOutlinedIcon },
 ];
 
 // "Priya Lim" -> "PL". Falls back to the email's first letter.
