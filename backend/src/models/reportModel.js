@@ -157,4 +157,74 @@ async function getReportData(startDate, endDate) {
   };
 }
 
-module.exports = { getReportData };
+// Columns returned when reading back a reports row.
+const REPORT_COLUMNS =
+  'id, report_url, period_start, period_end, generated_at, ' +
+  'triggered_by, report_status, email_delivered';
+
+/**
+ * Insert an audit row for a generated report.
+ *
+ * @param {Object} reportData
+ * @param {string|null} reportData.report_url - Cloudinary URL, or null if upload failed.
+ * @param {string|Date} reportData.period_start - inclusive start of the period.
+ * @param {string|Date} reportData.period_end - exclusive end of the period.
+ * @param {'github_actions'|'manual'} reportData.triggered_by - what triggered the run.
+ * @param {'Ready'|'Upload failed'} [reportData.report_status='Ready'] - outcome.
+ * @param {boolean} [reportData.email_delivered=false] - whether the email was sent.
+ * @returns {Promise<Object>} the created reports row.
+ * @throws {Error} if the insert fails (propagated from pg).
+ */
+async function createReport(reportData) {
+  const {
+    report_url,
+    period_start,
+    period_end,
+    triggered_by,
+    report_status = 'Ready',
+    email_delivered = false,
+  } = reportData;
+
+  const { rows } = await query(
+    `INSERT INTO reports
+       (report_url, period_start, period_end, triggered_by, report_status, email_delivered)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING ${REPORT_COLUMNS}`,
+    [report_url, period_start, period_end, triggered_by, report_status, email_delivered]
+  );
+  return rows[0];
+}
+
+/**
+ * Flag whether a report's email was delivered (set after a successful send).
+ *
+ * @param {string} id - reports row id.
+ * @param {boolean} delivered - new email_delivered value.
+ * @returns {Promise<Object|undefined>} the updated row, or undefined if no match.
+ * @throws {Error} if the update fails (propagated from pg).
+ */
+async function updateEmailDelivered(id, delivered) {
+  const { rows } = await query(
+    `UPDATE reports SET email_delivered = $2 WHERE id = $1
+     RETURNING ${REPORT_COLUMNS}`,
+    [id, delivered]
+  );
+  return rows[0];
+}
+
+/**
+ * Email addresses of the active managers/admins who should receive the report.
+ *
+ * @returns {Promise<string[]>} recipient email addresses (may be empty).
+ * @throws {Error} if the query fails (propagated from pg).
+ */
+async function getReportRecipients() {
+  const { rows } = await query(
+    `SELECT email FROM users
+      WHERE role IN ('manager', 'admin') AND status = 'active'
+      ORDER BY role`
+  );
+  return rows.map((r) => r.email);
+}
+
+module.exports = { getReportData, createReport, updateEmailDelivered, getReportRecipients };

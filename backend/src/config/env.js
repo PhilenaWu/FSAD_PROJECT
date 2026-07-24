@@ -44,6 +44,12 @@ const config = Object.freeze({
   // unset). Both are documented in .env.example.
   CRON_SECRET: process.env.CRON_SECRET,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  // SMTP (UC-009 report email delivery). Optional until the reports feature is
+  // enabled; a missing/failed transport only fails the email, not the report.
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined,
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS: process.env.SMTP_PASS,
 });
 
 module.exports = config;

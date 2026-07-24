@@ -37,4 +37,11 @@ function uploadRaw(buffer, folder, filename) {
   });
 }
 
-module.exports = { uploadImage, uploadRaw };
+// Upload a generated report PDF buffer into the `reports` folder (UC-009).
+// Thin wrapper over uploadRaw: PDFs are stored verbatim as raw bytes with the
+// given file name as the public_id. Resolves with the hosted https URL.
+function uploadReport(pdfBuffer, fileName) {
+  return uploadRaw(pdfBuffer, 'reports', fileName);
+}
+
+module.exports = { uploadImage, uploadRaw, uploadReport };
