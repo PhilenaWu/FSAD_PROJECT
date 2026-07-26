@@ -128,4 +128,117 @@ async function generateRiskAlert(block, category, velocity_pct, estimated_cost) 
   }
 }
 
-module.exports = { categoriseIncident, generateRiskAlert };
+/**
+ * Deterministic, professional fallback executive summary for the monthly report
+ * (UC-009). Used when OPENAI_API_KEY is unset or the API errors, so a report can
+ * always be generated. Data-driven and detailed: covers volume, the leading
+ * category/block, SLA compliance, average rectification, the cost outlook
+ * (actual + AI-projected), and one or two concrete recommendations.
+ *
+ * @param {import('../models/reportModel').ReportData} reportData
+ * @returns {string} a multi-sentence summary paragraph.
+ */
+function fallbackSummary(reportData) {
+  const total = reportData.totalDefects;
+  const slaPct = reportData.sla.compliancePct;
+  const topCategory = reportData.byCategory[0]?.category || 'general';
+  const topBlock = reportData.byBlock[0]?.block;
+  const avgDays = reportData.avgRectification.days;
+  const { actual, estimated, projected } = reportData.costs;
+  const money = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+
+  const avgPart =
+    avgDays == null
+      ? 'No defects were rectified in this period, so no rectification time is available.'
+      : `Closed defects were rectified in an average of ${avgDays} day(s).`;
+  const blockPart = topBlock ? `, most concentrated in Block ${topBlock}` : '';
+  const costPart =
+    `Recorded spend on closed work totalled ${money(actual)}, and AI risk alerts ` +
+    `project a further ${money(estimated)} in likely costs — a total exposure of ${money(projected)}.`;
+  // Recommendation keys off SLA health, then the leading defect category/block.
+  const recommendation =
+    slaPct < 80
+      ? `Recommendation: prioritise ${topCategory} defects${topBlock ? ` in Block ${topBlock}` : ''} and tighten contractor turnaround to lift SLA compliance above the 80% target.`
+      : `Recommendation: sustain the current turnaround while monitoring recurring ${topCategory} defects for early preventive action.`;
+
+  return (
+    `During this reporting period, ${total} defect(s) were logged across the estate, ` +
+    `achieving ${slaPct}% SLA compliance. ${avgPart} ` +
+    `The leading defect category was ${topCategory}${blockPart}. ` +
+    `${costPart} ${recommendation}`
+  );
+}
+
+/**
+ * Generate a detailed executive summary plus recommendation(s) for the monthly
+ * estate report. Sends the aggregated {@link ReportData} to OpenAI when
+ * OPENAI_API_KEY is configured; otherwise (or on any API error) returns the
+ * deterministic {@link fallbackSummary}. Never throws.
+ *
+ * @param {import('../models/reportModel').ReportData} reportData - aggregated metrics.
+ * @returns {Promise<string>} the executive summary text.
+ */
+async function generateExecutiveSummary(reportData) {
+  const fallback = fallbackSummary(reportData);
+  if (!config.OPENAI_API_KEY) {
+    return fallback;
+  }
+
+  try {
+    // Lazy require so the no-key path stays dependency-free (see generateRiskAlert).
+    const OpenAI = require('openai');
+    const client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+
+    const facts =
+      `- Reporting period: ${reportData.period.startDate} to ${reportData.period.endDate}\n` +
+      `- Total defects: ${reportData.totalDefects}\n` +
+      `- SLA compliance: ${reportData.sla.compliancePct}% ` +
+      `(${reportData.sla.compliant}/${reportData.sla.eligible} within deadline)\n` +
+      `- Average rectification: ${reportData.avgRectification.days ?? 'n/a'} day(s)\n` +
+      `- Defects by category: ${
+        reportData.byCategory.map((c) => `${c.category} (${c.count})`).join(', ') || 'none'
+      }\n` +
+      `- Top recurring defects: ${
+        reportData.topRecurringDefects
+          .map((r) => `${r.category} in Block ${r.block} (${r.count})`)
+          .join(', ') || 'none'
+      }\n` +
+      `- Defects by block: ${
+        reportData.byBlock.map((b) => `Block ${b.block} (${b.count})`).join(', ') || 'none'
+      }\n` +
+      `- Costs: actual spend on closed work $${reportData.costs.actual}, ` +
+      `AI-projected open costs $${reportData.costs.estimated}, ` +
+      `total exposure $${reportData.costs.projected}`;
+
+    const prompt =
+      `You are writing the executive summary of a monthly estate maintenance ` +
+      `report for a property manager. Using only these facts:\n${facts}\n\n` +
+      `Write a detailed yet readable executive summary of 130-170 words in ` +
+      `flowing prose (no bullet points, no markdown, no preamble). Cover: the ` +
+      `overall defect volume and how it breaks down by category and block; SLA ` +
+      `compliance and average rectification time, and what they say about ` +
+      `performance; the cost picture (actual spend plus AI-projected costs and ` +
+      `total exposure); and the most notable recurring risks. End with one or ` +
+      `two clear, actionable recommendations.`;
+
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 400,
+      temperature: 0.4,
+    });
+
+    const text = resp?.choices?.[0]?.message?.content?.trim();
+    return text || fallback;
+  } catch {
+    // Graceful degradation: a report must always have a summary.
+    return fallback;
+  }
+}
+
+module.exports = {
+  categoriseIncident,
+  generateRiskAlert,
+  generateExecutiveSummary,
+  fallbackSummary,
+};

@@ -19,6 +19,7 @@ const exportRoutes = require('./routes/export');
 const cvRoutes = require('./routes/cv');
 const notificationRoutes = require('./routes/notifications');
 const vendorRoutes = require('./routes/vendors');
+const reportRoutes = require('./routes/reports');
 
 const app = express();
 
@@ -55,6 +56,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/cv', cvRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin/vendors', vendorRoutes);
+app.use('/api/reports', reportRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);

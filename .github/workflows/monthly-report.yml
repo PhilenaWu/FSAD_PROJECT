@@ -1,0 +1,14 @@
+name: Monthly Estate Report
+on:
+  schedule:
+    - cron: '0 0 1 * *'      # 00:00 UTC on the 1st of every month
+  workflow_dispatch:
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call monthly report generate endpoint
+        run: |
+          curl -X GET "${{ secrets.RENDER_BACKEND_URL }}/api/reports/generate" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --fail --max-time 120
