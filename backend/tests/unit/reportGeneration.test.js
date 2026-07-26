@@ -11,6 +11,7 @@ const mockQuery = jest.fn(async (sql) => {
   if (/ai_predictions/.test(sql)) return { rows: [responses.prediction] };
   if (/HAVING COUNT/.test(sql)) return { rows: responses.recurring };
   if (/AVG\(EXTRACT/.test(sql)) return { rows: [responses.scalar] };
+  if (/SUM\(actual_cost\)/.test(sql)) return { rows: [responses.cost] };
   if (/GROUP BY status/.test(sql)) return { rows: responses.status };
   if (/GROUP BY location_block/.test(sql)) return { rows: responses.block };
   if (/GROUP BY category/.test(sql)) return { rows: responses.category };
@@ -30,8 +31,8 @@ function populated() {
       avg_rectification_hours: 48, // 2 days
       sla_compliant: 7,
       sla_eligible: 10,
-      actual_cost_total: 5000,
     },
+    cost: { actual_cost_total: 5000 },
     status: [
       { status: 'Closed', count: 6 },
       { status: 'Open', count: 4 },
@@ -62,8 +63,8 @@ function empty() {
       avg_rectification_hours: null,
       sla_compliant: 0,
       sla_eligible: 0,
-      actual_cost_total: 0,
     },
+    cost: { actual_cost_total: 0 },
     status: [],
     category: [],
     block: [],
@@ -119,7 +120,9 @@ describe('reportModel.getReportData — aggregation', () => {
     for (const [sql, params] of mockQuery.mock.calls) {
       if (/FROM inspections/.test(sql)) {
         expect(sql).toMatch(/is_deleted = FALSE/);
-        expect(sql).toMatch(/created_at >= \$1 AND created_at < \$2/);
+        // Window is bound to $1/$2 on either created_at (most queries) or
+        // closed_at (the actual-cost query).
+        expect(sql).toMatch(/(created_at|closed_at) >= \$1 AND (created_at|closed_at) < \$2/);
         expect(params).toEqual([START, END]);
         expect(sql).not.toContain(START);
       }
@@ -133,11 +136,20 @@ describe('reportModel.getReportData — aggregation', () => {
     expect(scalarCall[0]).toMatch(/rectified_at <= target_deadline/);
   });
 
-  test('costs sum actual_cost (closed) and estimated_cost (active predictions)', async () => {
+  test('actual cost sums closed work by closed_at within the period', async () => {
     responses = populated();
     await reportModel.getReportData(START, END);
-    const scalarCall = mockQuery.mock.calls.find(([sql]) => /AVG\(EXTRACT/.test(sql));
-    expect(scalarCall[0]).toMatch(/SUM\(actual_cost\) FILTER \(WHERE status = 'Closed'\)/);
+    const costCall = mockQuery.mock.calls.find(([sql]) => /SUM\(actual_cost\)/.test(sql));
+    expect(costCall[0]).toMatch(/status = 'Closed'/);
+    expect(costCall[0]).toMatch(/actual_cost IS NOT NULL/);
+    // keyed on closed_at (cost realized at closure), not created_at
+    expect(costCall[0]).toMatch(/closed_at >= \$1 AND closed_at < \$2/);
+    expect(costCall[0]).not.toMatch(/created_at/);
+  });
+
+  test('estimated cost sums estimated_cost of active predictions', async () => {
+    responses = populated();
+    await reportModel.getReportData(START, END);
     const predCall = mockQuery.mock.calls.find(([sql]) => /ai_predictions/.test(sql));
     expect(predCall[0]).toMatch(/SUM\(estimated_cost\)/);
     expect(predCall[0]).toMatch(/status = 'Active'/);
@@ -185,8 +197,10 @@ describe('openaiService.generateExecutiveSummary — fallback (no API key)', () 
     expect(summary).toMatch(/10 defect/);
     expect(summary).toMatch(/70% SLA compliance/);
     expect(summary).toMatch(/Recommendation:/);
-    // <= 80 words as required
-    expect(summary.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(80);
+    // detailed but bounded — cost outlook is included
+    expect(summary).toMatch(/\$5,000/); // actual spend
+    expect(summary).toMatch(/total exposure/i);
+    expect(summary.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(200);
   });
 
   test('handles an empty period without throwing', async () => {

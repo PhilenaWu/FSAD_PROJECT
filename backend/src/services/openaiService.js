@@ -131,37 +131,48 @@ async function generateRiskAlert(block, category, velocity_pct, estimated_cost) 
 /**
  * Deterministic, professional fallback executive summary for the monthly report
  * (UC-009). Used when OPENAI_API_KEY is unset or the API errors, so a report can
- * always be generated. Data-driven: states the volume, SLA compliance, the top
- * defect category, and a single concrete recommendation.
+ * always be generated. Data-driven and detailed: covers volume, the leading
+ * category/block, SLA compliance, average rectification, the cost outlook
+ * (actual + AI-projected), and one or two concrete recommendations.
  *
  * @param {import('../models/reportModel').ReportData} reportData
- * @returns {string} a summary paragraph (<=80 words).
+ * @returns {string} a multi-sentence summary paragraph.
  */
 function fallbackSummary(reportData) {
   const total = reportData.totalDefects;
   const slaPct = reportData.sla.compliancePct;
   const topCategory = reportData.byCategory[0]?.category || 'general';
+  const topBlock = reportData.byBlock[0]?.block;
   const avgDays = reportData.avgRectification.days;
+  const { actual, estimated, projected } = reportData.costs;
+  const money = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+
   const avgPart =
     avgDays == null
-      ? 'No defects were rectified in this period.'
-      : `Average rectification took ${avgDays} day(s).`;
-  // Recommendation keys off SLA health, then the leading defect category.
+      ? 'No defects were rectified in this period, so no rectification time is available.'
+      : `Closed defects were rectified in an average of ${avgDays} day(s).`;
+  const blockPart = topBlock ? `, most concentrated in Block ${topBlock}` : '';
+  const costPart =
+    `Recorded spend on closed work totalled ${money(actual)}, and AI risk alerts ` +
+    `project a further ${money(estimated)} in likely costs — a total exposure of ${money(projected)}.`;
+  // Recommendation keys off SLA health, then the leading defect category/block.
   const recommendation =
     slaPct < 80
-      ? `Recommendation: prioritise ${topCategory} defects and tighten contractor turnaround to lift SLA compliance above 80%.`
-      : `Recommendation: sustain current turnaround and monitor recurring ${topCategory} defects for early intervention.`;
+      ? `Recommendation: prioritise ${topCategory} defects${topBlock ? ` in Block ${topBlock}` : ''} and tighten contractor turnaround to lift SLA compliance above the 80% target.`
+      : `Recommendation: sustain the current turnaround while monitoring recurring ${topCategory} defects for early preventive action.`;
+
   return (
-    `Monthly maintenance summary: ${total} defect(s) processed with ` +
-    `${slaPct}% SLA compliance. The leading category was ${topCategory}. ` +
-    `${avgPart} ${recommendation}`
+    `During this reporting period, ${total} defect(s) were logged across the estate, ` +
+    `achieving ${slaPct}% SLA compliance. ${avgPart} ` +
+    `The leading defect category was ${topCategory}${blockPart}. ` +
+    `${costPart} ${recommendation}`
   );
 }
 
 /**
- * Generate a concise executive summary (<=80 words) plus one recommendation for
- * the monthly estate report. Sends the aggregated {@link ReportData} to OpenAI
- * when OPENAI_API_KEY is configured; otherwise (or on any API error) returns the
+ * Generate a detailed executive summary plus recommendation(s) for the monthly
+ * estate report. Sends the aggregated {@link ReportData} to OpenAI when
+ * OPENAI_API_KEY is configured; otherwise (or on any API error) returns the
  * deterministic {@link fallbackSummary}. Never throws.
  *
  * @param {import('../models/reportModel').ReportData} reportData - aggregated metrics.
@@ -192,19 +203,28 @@ async function generateExecutiveSummary(reportData) {
           .map((r) => `${r.category} in Block ${r.block} (${r.count})`)
           .join(', ') || 'none'
       }\n` +
-      `- Costs: actual $${reportData.costs.actual}, projected open $${reportData.costs.estimated}`;
+      `- Defects by block: ${
+        reportData.byBlock.map((b) => `Block ${b.block} (${b.count})`).join(', ') || 'none'
+      }\n` +
+      `- Costs: actual spend on closed work $${reportData.costs.actual}, ` +
+      `AI-projected open costs $${reportData.costs.estimated}, ` +
+      `total exposure $${reportData.costs.projected}`;
 
     const prompt =
       `You are writing the executive summary of a monthly estate maintenance ` +
       `report for a property manager. Using only these facts:\n${facts}\n\n` +
-      `Write ONE professional paragraph of 80 words or fewer that summarises the ` +
-      `findings and ends with exactly one clear, actionable recommendation. ` +
-      `Plain language, no markdown, no preamble, no bullet points.`;
+      `Write a detailed yet readable executive summary of 130-170 words in ` +
+      `flowing prose (no bullet points, no markdown, no preamble). Cover: the ` +
+      `overall defect volume and how it breaks down by category and block; SLA ` +
+      `compliance and average rectification time, and what they say about ` +
+      `performance; the cost picture (actual spend plus AI-projected costs and ` +
+      `total exposure); and the most notable recurring risks. End with one or ` +
+      `two clear, actionable recommendations.`;
 
     const resp = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
+      max_tokens: 400,
       temperature: 0.4,
     });
 

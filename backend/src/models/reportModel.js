@@ -56,7 +56,7 @@ async function getReportData(startDate, endDate) {
   // Shared period predicate for every inspections query.
   const inPeriod = 'is_deleted = FALSE AND created_at >= $1 AND created_at < $2';
 
-  const [statusRes, categoryRes, blockRes, scalarRes, recurringRes, predictionRes] =
+  const [statusRes, categoryRes, blockRes, scalarRes, costRes, recurringRes, predictionRes] =
     await Promise.all([
       query(
         `SELECT status, COUNT(*)::int AS count
@@ -102,11 +102,21 @@ async function getReportData(startDate, endDate) {
            COUNT(*) FILTER (
              WHERE rectified_at IS NOT NULL
                AND target_deadline IS NOT NULL
-           )::int AS sla_eligible,
-           COALESCE(SUM(actual_cost) FILTER (WHERE status = 'Closed'), 0)::float
-             AS actual_cost_total
+           )::int AS sla_eligible
          FROM inspections
          WHERE ${inPeriod}`,
+        params
+      ),
+      // Actual cost = spend on work CLOSED within the period. Keyed on closed_at
+      // (when the cost is incurred), not created_at — a defect closed this month
+      // counts even if it was reported earlier.
+      query(
+        `SELECT COALESCE(SUM(actual_cost), 0)::float AS actual_cost_total
+           FROM inspections
+          WHERE is_deleted = FALSE
+            AND status = 'Closed'
+            AND actual_cost IS NOT NULL
+            AND closed_at >= $1 AND closed_at < $2`,
         params
       ),
       query(
@@ -134,7 +144,7 @@ async function getReportData(startDate, endDate) {
     eligible > 0 ? Math.round((s.sla_compliant / eligible) * 1000) / 10 : 0;
 
   const hours = s.avg_rectification_hours; // null when nothing rectified
-  const actual = s.actual_cost_total;
+  const actual = costRes.rows[0].actual_cost_total;
   const estimated = predictionRes.rows[0].estimated_cost_total;
 
   return {
