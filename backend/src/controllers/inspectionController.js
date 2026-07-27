@@ -427,8 +427,10 @@ async function closeInspection(req, res, next) {
       // Analytics queue is non-critical to the close.
     }
     try {
+      // admin-room included: a close carries actual_cost, which the UC-011
+      // cost dashboard watches for its live-update prompt.
       socketService.emitToRooms(
-        ['manager-room', `block-${inspection.location_block}`],
+        ['manager-room', 'admin-room', `block-${inspection.location_block}`],
         'status_update',
         { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
       );

@@ -1,3 +1,17 @@
 /* Global resets and typography are owned by MUI's <CssBaseline /> and our theme
    (src/theme.js), applied in main.jsx. Intentionally left without rules so nothing
    here overrides the theme. Add global CSS only if MUI can't express it. */
+
+/* Print snapshot (UC-011 "Print / PDF"): keep each dashboard card whole on a
+   page instead of splitting a panel's title from its chart, and let Chart.js
+   canvases shrink to the paper width instead of overflowing at screen size.
+   MUI's sx has no break-inside shorthand, hence global CSS. */
+@media print {
+  .MuiPaper-root {
+    break-inside: avoid;
+  }
+  canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+}

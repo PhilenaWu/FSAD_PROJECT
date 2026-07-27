@@ -1,0 +1,15 @@
+# Dependencies (frontend/backend have their own installs; a root node_modules
+# is an accident and must never be committed)
+node_modules/
+
+# Environment secrets — never commit; names are documented in .env.example
+.env
+.env.local
+.env.*.local
+
+# Build output
+frontend/dist/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
