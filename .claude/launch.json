@@ -8,6 +8,12 @@
       "port": 5199
     },
     {
+      "name": "frontend-alt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--port", "5198"],
+      "port": 5198
+    },
+    {
       "name": "backend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start", "--prefix", "backend"],
