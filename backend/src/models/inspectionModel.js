@@ -23,7 +23,7 @@ async function create(data) {
     location_block,
     location_unit,
     photo_url,
-    category,
+    category = 'Uncategorised',
     ai_priority_score,
     source_flag = 'Resident',
     cv_detection_id,

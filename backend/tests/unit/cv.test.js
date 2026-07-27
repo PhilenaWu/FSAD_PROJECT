@@ -226,6 +226,10 @@ describe('cvController.detect', () => {
     expect(inspectionParams).toContain('cv_auto_detected');
     expect(inspectionParams).toContain('cv-1'); // cv_detection_id links back to the detection
     expect(inspectionParams).toContain('44A');
+    // Regression: category must default to 'Uncategorised', not null/undefined
+    // — inspections.category is NOT NULL with no way for the DB's own DEFAULT
+    // to kick in once a column is explicitly listed in the INSERT.
+    expect(inspectionParams).toContain('Uncategorised');
 
     // CV-T01: manager alert pushed on ticket creation (same rooms/pattern as
     // inspectionController's status_update emit).
