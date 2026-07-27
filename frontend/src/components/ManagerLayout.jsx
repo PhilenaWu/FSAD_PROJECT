@@ -33,7 +33,6 @@ import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
-import ImageSearchOutlinedIcon from '@mui/icons-material/ImageSearchOutlined';
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -42,7 +41,6 @@ import NotificationBell from './notifications/NotificationBell';
 
 const NAV_ITEMS = [
   { label: 'Dashboard', to: '/dashboard', icon: GridViewOutlinedIcon },
-  { label: 'CV Review', to: '/cv-review', icon: ImageSearchOutlinedIcon },
   { label: 'Inspections', to: '/inspections', icon: WarningAmberOutlinedIcon },
   { label: 'Reports', to: '/reports', icon: DescriptionOutlinedIcon },
   { label: 'Notifications', to: '/notifications', icon: CampaignOutlinedIcon },

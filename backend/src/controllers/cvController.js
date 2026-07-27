@@ -8,10 +8,7 @@ const roboflowService = require('../services/roboflowService');
 const cvDetectionModel = require('../models/cvDetectionModel');
 const inspectionModel = require('../models/inspectionModel');
 const retryQueueModel = require('../models/retryQueueModel');
-
-// TODO: emit a Socket.IO alert to the manager room once Socket.IO is attached
-// to the HTTP server (server.js still has that as an open TODO) — CV-T01
-// expects this, but the real-time infrastructure doesn't exist yet.
+const socketService = require('../services/socketService');
 
 // Persists a cv_detections row for a raw Roboflow result, and — once
 // confidence clears the threshold — a separate cv_auto_detected inspections
@@ -48,6 +45,21 @@ async function recordDetection({
     source_flag: 'Auto-Detected',
     cv_detection_id: cvDetection.id,
   });
+
+  // Real-time push; a socket hiccup must never fail the CV pipeline (mirrors
+  // inspectionController's status_update emit — same try/catch, same rooms).
+  try {
+    socketService.emitToRooms(['manager-room', `block-${location_block}`], 'cv_alert', {
+      id: inspection.id,
+      defect_class,
+      confidence,
+      location_block,
+      photo_url: imageUrl,
+      created_at: inspection.created_at,
+    });
+  } catch {
+    // Socket not initialised (e.g. tests) or emit failed — ignore.
+  }
 
   return { cvDetection, inspection };
 }

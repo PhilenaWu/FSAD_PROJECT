@@ -11,13 +11,22 @@ jest.mock('../../src/config/db', () => ({
   query: (...args) => mockQuery(...args),
 }));
 
+// --- Mock: Socket.IO emit seam (no server in tests) — same convention as
+// inspections.integration.test.js's status_update assertions.
+jest.mock('../../src/services/socketService', () => ({
+  emitToRoom: jest.fn(),
+  emitToRooms: jest.fn(),
+}));
+
 const cvDetectionModel = require('../../src/models/cvDetectionModel');
 const retryQueueModel = require('../../src/models/retryQueueModel');
 const roboflowService = require('../../src/services/roboflowService');
+const socketService = require('../../src/services/socketService');
 const cvController = require('../../src/controllers/cvController');
 
 beforeEach(() => {
   mockQuery.mockReset();
+  socketService.emitToRooms.mockClear();
 });
 
 describe('cvDetectionModel.create', () => {
@@ -217,6 +226,14 @@ describe('cvController.detect', () => {
     expect(inspectionParams).toContain('cv_auto_detected');
     expect(inspectionParams).toContain('cv-1'); // cv_detection_id links back to the detection
     expect(inspectionParams).toContain('44A');
+
+    // CV-T01: manager alert pushed on ticket creation (same rooms/pattern as
+    // inspectionController's status_update emit).
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'block-44A'],
+      'cv_alert',
+      expect.objectContaining({ id: 'insp-auto-1', defect_class: 'scratch', confidence: 0.8 })
+    );
   });
 
   test('CV-T02: confidence misses the threshold — cv_detections row only, no ticket created', async () => {
@@ -235,6 +252,7 @@ describe('cvController.detect', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1); // only the cv_detections insert — no inspections insert
     const [, params] = mockQuery.mock.calls[0];
     expect(params[5]).toBe('low_confidence');
+    expect(socketService.emitToRooms).not.toHaveBeenCalled();
   });
 
   test('CV-T03: Roboflow returns 429 — image queued to retry_queue, no ticket, manager not notified', async () => {
@@ -253,6 +271,7 @@ describe('cvController.detect', () => {
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO retry_queue/i);
     expect(params).toEqual(['https://example.com/photo.jpg', 'insp-1']);
+    expect(socketService.emitToRooms).not.toHaveBeenCalled();
   });
 
   test('a non-429 failure propagates (caller logs and continues, per inspectionController)', async () => {

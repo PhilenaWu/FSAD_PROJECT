@@ -4,6 +4,7 @@
 
 const { pool, query } = require('../config/db');
 const signatureModel = require('./signatureModel');
+const cvDetectionModel = require('./cvDetectionModel');
 
 // Insert a new inspection record. UC-001 uses source_type 'resident_complaint';
 // the caller supplies the resident + report fields plus the AI-derived
@@ -190,7 +191,10 @@ async function findAllForManager({ status, category, block } = {}) {
 }
 
 // Full detail for the manager view: the row plus its audit history (actor names
-// joined from users). Returns undefined when the id doesn't match a live record.
+// joined from users) and, for a CV-linked record (UC-007), the underlying
+// cv_detections row (bounding_box/defect_class/confidence) so the frontend can
+// draw the overlay — null when this record has no cv_detection_id.
+// Returns undefined when the id doesn't match a live record.
 // Note: the reporter is identified by block/unit only — no resident-name join.
 async function findDetailById(id) {
   const inspection = await findById(id);
@@ -205,7 +209,12 @@ async function findDetailById(id) {
      ORDER BY h.created_at DESC`,
     [id]
   );
-  return { ...inspection, history: history.rows };
+
+  const cv_detection = inspection.cv_detection_id
+    ? await cvDetectionModel.findById(inspection.cv_detection_id)
+    : null;
+
+  return { ...inspection, history: history.rows, cv_detection };
 }
 
 // Manager triage update (UC-002): apply the provided changes and write an

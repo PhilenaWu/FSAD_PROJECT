@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { Box, Chip } from '@mui/material';
 
-export default function BoundingBoxOverlay({ imageUrl, boundingBox, alt = 'Defect photo', label }) {
+export default function BoundingBoxOverlay({ imageUrl, boundingBox, alt = 'Defect photo', label, sx }) {
   const [scale, setScale] = useState(null);
 
   function handleLoad(e) {
@@ -36,7 +36,7 @@ export default function BoundingBoxOverlay({ imageUrl, boundingBox, alt = 'Defec
         src={imageUrl}
         alt={alt}
         onLoad={handleLoad}
-        sx={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 1 }}
+        sx={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 1, ...sx }}
       />
       {box && (
         <Box

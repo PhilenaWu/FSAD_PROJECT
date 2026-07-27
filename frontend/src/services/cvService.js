@@ -4,7 +4,7 @@
 import api from './api';
 import { MOCK_LOW_CONFIDENCE_DETECTIONS } from '../mocks/cvMocks';
 
-const USE_MOCK = false;
+const USE_MOCK = true; // TEMP: verifying the InspectionListPage tab, revert after
 
 const delay = (data) => new Promise((resolve) => setTimeout(() => resolve(data), 300));
 

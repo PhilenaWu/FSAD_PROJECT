@@ -25,7 +25,9 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import ImageNotSupportedOutlinedIcon from '@mui/icons-material/ImageNotSupportedOutlined';
+import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import SignaturePad from '../components/SignaturePad';
+import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
@@ -295,13 +297,36 @@ export default function InspectionDetailPage() {
                 )}
 
                 {inspection.photo_url ? (
-                  // CV bounding-box overlay (Mahdiya) can mount around this image.
-                  <Box
-                    component="img"
-                    src={inspection.photo_url}
-                    alt="Report photo"
-                    sx={{ maxWidth: '100%', maxHeight: 360, borderRadius: 2, mb: 2 }}
-                  />
+                  // CV bounding-box overlay (UC-007): draws the detected defect
+                  // region when this record has a linked cv_detection (e.g. an
+                  // auto-detected ticket); otherwise renders as a plain photo.
+                  <Box sx={{ mb: 2 }}>
+                    <BoundingBoxOverlay
+                      imageUrl={inspection.photo_url}
+                      boundingBox={inspection.cv_detection?.bounding_box}
+                      label={inspection.cv_detection?.defect_class}
+                      alt="Report photo"
+                      sx={{ maxHeight: 360, borderRadius: 2 }}
+                    />
+                    {inspection.cv_detection && (
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={inspection.cv_detection.status === 'low_confidence' ? 'warning' : 'default'}
+                          icon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+                          label={`CV: ${inspection.cv_detection.defect_class ?? 'unclassified'} · ${Math.round(
+                            Number(inspection.cv_detection.confidence) * 100
+                          )}% confidence`}
+                        />
+                        {inspection.cv_detection.status === 'low_confidence' && (
+                          <Typography variant="caption" color="warning.main">
+                            Needs manual review
+                          </Typography>
+                        )}
+                      </Stack>
+                    )}
+                  </Box>
                 ) : (
                   // Placeholder fills the space so the card stays balanced next
                   // to the triage panel when there's no photo.

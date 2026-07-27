@@ -13,7 +13,6 @@ import StatusBoardPage from './pages/StatusBoardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
 import ProfilePage from './pages/ProfilePage'
-import CvReviewPage from './pages/CvReviewPage'
 import AdminVendorPage from './pages/AdminVendorPage'
 
 function App() {
@@ -32,7 +31,6 @@ function App() {
           <Route path="/my-reports" element={<MyReportsPage />} />
           <Route path="/status-board" element={<StatusBoardPage />} />
           <Route path="/inspections/new" element={<NewInspectionPage />} />
-          <Route path="/cv-review" element={<CvReviewPage />} />
           <Route path="/inspections" element={<InspectionListPage />} />
           <Route path="/inspections/:id" element={<InspectionDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />

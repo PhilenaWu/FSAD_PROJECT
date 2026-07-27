@@ -75,7 +75,7 @@ const checklistItems = [
   { id: 'item-1', section: 'Structural', item_text: 'Shaft walls free of cracks', display_order: 1, active: true },
 ];
 const store = {
-  inspections: [], checklist_results: [], history: [], signatures: [], ai_jobs: [],
+  inspections: [], checklist_results: [], history: [], signatures: [], ai_jobs: [], cv_detections: [],
 };
 
 const mockQuery = jest.fn(async (sql, params = []) => {
@@ -193,6 +193,11 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   // contractor dropdown: SELECT * FROM contractors ORDER BY name
   if (/SELECT \* FROM contractors/i.test(sql)) {
     return { rows: [{ id: 'con-1', name: 'Otis Service SG', brands_serviced: 'Otis' }] };
+  }
+  // cvDetectionModel.findById, joined into findDetailById for the CV overlay.
+  if (/SELECT \* FROM cv_detections WHERE id/i.test(sql)) {
+    const row = store.cv_detections.find((d) => d.id === params[0]);
+    return { rows: row ? [row] : [] };
   }
   // updateByManager row lock: SELECT * FROM inspections WHERE id = $1 ... FOR UPDATE
   // Return a copy — Postgres returns a snapshot, and the UPDATE branch below
@@ -314,6 +319,7 @@ beforeEach(() => {
   store.history.length = 0;
   store.signatures.length = 0;
   store.ai_jobs.length = 0;
+  store.cv_detections.length = 0;
   jest.clearAllMocks();
 });
 
@@ -712,6 +718,42 @@ describe('GET /api/inspections/:id (manager detail)', () => {
       actor_name: 'Mdm Tan',
       note: 'Escalating',
     });
+  });
+
+  test('200 includes the linked cv_detection (bounding box etc.) when cv_detection_id is set', async () => {
+    const id = await seedComplaint('Auto-detected: scratch');
+    store.inspections.find((i) => i.id === id).cv_detection_id = 'cv-1';
+    store.cv_detections.push({
+      id: 'cv-1',
+      image_url: 'https://example.com/photo.jpg',
+      defect_class: 'scratch',
+      confidence: '0.8047',
+      bounding_box: { x: 860, y: 329.5, width: 164, height: 67 },
+      source: 'resident_upload',
+      status: 'processed',
+    });
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.cv_detection).toMatchObject({
+      id: 'cv-1',
+      defect_class: 'scratch',
+      bounding_box: { x: 860, y: 329.5, width: 164, height: 67 },
+    });
+  });
+
+  test('200 cv_detection is null when the record has no cv_detection_id', async () => {
+    const id = await seedComplaint('Plain complaint, no CV');
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.cv_detection).toBeNull();
   });
 
   test('404 for an unknown id', async () => {
