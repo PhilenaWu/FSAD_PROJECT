@@ -56,6 +56,9 @@ const profiles = {
   'res-1': { role: 'resident', status: 'active' },
   'mgr-1': { role: 'manager', status: 'active' },
   'ins-1': { role: 'inspector', status: 'active' },
+  // Endorser-only fixture: never logs in, but must resolve as a real
+  // contractor-role user for the close endpoint's role cross-check.
+  'con-user-1': { role: 'contractor', status: 'active' },
 };
 const lifts = {
   'lift-1': {
@@ -817,14 +820,30 @@ describe('GET /api/contractors', () => {
 describe('POST /api/inspections/:id/close', () => {
   const REMARK = 'Technician replaced the faulty button; verified working on site.';
 
+  // Move a record to 'Rectified' — the close endpoint's state precondition.
+  // Uses the real manager PATCH path rather than poking the store directly.
+  async function rectify(id) {
+    await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Rectified' });
+  }
+
+  // Seed a complaint and advance it to 'Rectified', ready to close.
+  async function seedRectified(title) {
+    const id = await seedComplaint(title);
+    await rectify(id);
+    return id;
+  }
+
   // Close a record with the two required signature parts + a valid endorser.
   function closeRecord(id, extra = {}) {
     const req = request(app)
       .post(`/api/inspections/${id}/close`)
       .set('Authorization', 'Bearer manager-token')
       .field('closing_remark', extra.remark ?? REMARK)
-      .field('endorser_role', 'inspector')
-      .field('endorser_id', 'ins-1');
+      .field('endorser_role', extra.endorser_role ?? 'inspector')
+      .field('endorser_id', extra.endorser_id ?? 'ins-1');
     if (extra.actual_cost !== undefined) req.field('actual_cost', extra.actual_cost);
     if (!extra.omitManagerSig) req.attach('manager_signature', PNG, 'mgr.png');
     if (!extra.omitEndorserSig) req.attach('endorser_signature', PNG, 'insp.png');
@@ -832,7 +851,7 @@ describe('POST /api/inspections/:id/close', () => {
   }
 
   test('200 closes with remark + dual signatures, computes fields, archives', async () => {
-    const id = await seedComplaint('Lift button stuck at L3');
+    const id = await seedRectified('Lift button stuck at L3');
 
     const res = await closeRecord(id, { actual_cost: '250.50' });
 
@@ -895,18 +914,46 @@ describe('POST /api/inspections/:id/close', () => {
   });
 
   test('404 when the endorser is not a real user', async () => {
-    const id = await seedComplaint('Bad endorser case');
-    const res = await request(app)
-      .post(`/api/inspections/${id}/close`)
-      .set('Authorization', 'Bearer manager-token')
-      .field('closing_remark', REMARK)
-      .field('endorser_role', 'inspector')
-      .field('endorser_id', 'ghost-user')
-      .attach('manager_signature', PNG, 'm.png')
-      .attach('endorser_signature', PNG, 'e.png');
+    const id = await seedRectified('Bad endorser case');
+    const res = await closeRecord(id, { endorser_id: 'ghost-user' });
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  // The signature must not claim a role its signer doesn't actually hold —
+  // otherwise the audit trail records a false attestation.
+  test('400 ENDORSER_ROLE_MISMATCH when the endorser\'s real role differs', async () => {
+    const id = await seedRectified('Role mismatch case');
+    // res-1 is a resident being passed off as the inspector endorser.
+    const res = await closeRecord(id, { endorser_id: 'res-1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('ENDORSER_ROLE_MISMATCH');
+
+    // Rejected before any upload — no orphaned signature images in Cloudinary.
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    expect(cloudinaryService.uploadImage).not.toHaveBeenCalled();
+    expect(store.signatures).toHaveLength(0);
+  });
+
+  test('200 when a genuine contractor endorses (non-inspector roles still allowed)', async () => {
+    const id = await seedRectified('Contractor endorsement case');
+    const res = await closeRecord(id, {
+      endorser_role: 'contractor',
+      endorser_id: 'con-user-1',
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.signatures.map((s) => s.signer_role).sort()).toEqual(['contractor', 'manager']);
+  });
+
+  test('409 INVALID_STATE when the record has not been rectified yet', async () => {
+    const id = await seedComplaint('Still open case'); // stays 'Open'
+    const res = await closeRecord(id);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('INVALID_STATE');
   });
 
   test('queues an ai_jobs row on the 3rd close of a block+category in 30 days', async () => {
@@ -914,7 +961,7 @@ describe('POST /api/inspections/:id/close', () => {
     const ids = [];
     for (let i = 0; i < 3; i += 1) {
       // eslint-disable-next-line no-await-in-loop
-      ids.push(await seedComplaint(`Recurring defect ${i}`));
+      ids.push(await seedRectified(`Recurring defect ${i}`));
     }
     // eslint-disable-next-line no-await-in-loop
     for (const id of ids) await closeRecord(id);

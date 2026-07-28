@@ -1,6 +1,7 @@
 // UC-012 Vendor Accounts page (admin). Onboard external vendors, list them by
 // soonest-expiring contract, and renew or suspend with confirmation dialogs.
 import { useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -37,6 +38,7 @@ import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 import { downloadCsv } from '../utils/csvDownload';
+import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
   listVendors,
@@ -100,6 +102,7 @@ function expiryChip(days) {
 }
 
 export default function AdminVendorPage() {
+  const { profile } = useAuth();
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -325,6 +328,11 @@ export default function AdminVendorPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // UI-level convenience guard — the backend enforces the admin role anyway.
+  if (profile && profile.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (

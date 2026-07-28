@@ -423,13 +423,31 @@ async function closeInspection(req, res, next) {
       });
     }
 
-    // The endorser must be a real user (signatures.signer_id FK).
-    const endorser = await query('SELECT id FROM users WHERE id = $1', [endorser_id]);
+    // UC-004 precondition: the work must be done before it can be endorsed.
+    // 'Resolved' is accepted alongside 'Rectified' — both are post-work states.
+    if (!['Rectified', 'Resolved'].includes(existing.status)) {
+      return res.status(409).json({
+        code: 'INVALID_STATE',
+        message: `Only a Rectified or Resolved inspection can be closed (this one is ${existing.status}).`,
+      });
+    }
+
+    // The endorser must be a real user (signatures.signer_id FK) whose stored
+    // role actually matches the role being attributed to their signature —
+    // without this, a signature could record a role the signer doesn't hold.
+    const endorser = await query('SELECT id, role FROM users WHERE id = $1', [endorser_id]);
     if (endorser.rows.length === 0) {
       return res.status(404).json({ code: 'NOT_FOUND', message: 'Endorser user not found.' });
     }
+    if (endorser.rows[0].role !== endorser_role) {
+      return res.status(400).json({
+        code: 'ENDORSER_ROLE_MISMATCH',
+        message: `Endorser is not a ${endorser_role}.`,
+      });
+    }
 
-    // Store both signatures in Cloudinary (/signatures folder).
+    // Store both signatures in Cloudinary (/signatures folder). Every rejection
+    // above happens first, so a failed close never leaves orphaned uploads.
     const [managerUrl, endorserUrl] = await Promise.all([
       cloudinaryService.uploadImage(managerFile.buffer, 'signatures'),
       cloudinaryService.uploadImage(endorserFile.buffer, 'signatures'),
