@@ -70,6 +70,12 @@ function resetDbRows() {
       { name: 'Otis Service SG', total: 2000, count: 3 },
       { name: 'Schindler', total: 1000, count: 1 },
     ],
+    // What Postgres returns once a filter narrows the same query — fewer rows,
+    // smaller sums, lower counts. Used to prove filtered numbers reach the
+    // response rather than the unfiltered set being served regardless.
+    summaryActualFiltered: [{ total_actual: 1200 }],
+    summaryProjectedFiltered: [{ total_projected: 900 }],
+    byContractorFiltered: [{ name: 'Otis Service SG', total: 1200, count: 2 }],
     // Six months as Postgres would return them: the series is gap-filled in
     // SQL, so 2026-04 is a real 0 row rather than a missing month.
     trends: [
@@ -90,12 +96,15 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const p = profiles[params[0]];
     return { rows: p ? [p] : [] };
   }
-  // summary — two separate single-row aggregates
+  // summary — two separate single-row aggregates. Unfiltered calls bind no
+  // params, so a non-empty params array means a filter was applied.
   if (/SUM\(actual_cost\)::float AS total_actual/i.test(sql)) {
-    return { rows: dbRows.summaryActual };
+    return { rows: params.length ? dbRows.summaryActualFiltered : dbRows.summaryActual };
   }
   if (/SUM\(estimated_cost\)::float AS total_projected/i.test(sql)) {
-    return { rows: dbRows.summaryProjected };
+    // A FALSE clause means the filter is unattributable to a prediction.
+    if (/\bFALSE\b/.test(sql)) return { rows: [{ total_projected: null }] };
+    return { rows: params.length ? dbRows.summaryProjectedFiltered : dbRows.summaryProjected };
   }
   // trends — matched before the breakdown shapes; its CTEs also contain GROUP BY
   if (/generate_series/i.test(sql)) {
@@ -103,7 +112,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   }
   // breakdown — the contractor join is checked before the generic UNION shape
   if (/JOIN contractors c/i.test(sql)) {
-    return { rows: dbRows.byContractor };
+    return { rows: params.length ? dbRows.byContractorFiltered : dbRows.byContractor };
   }
   if (/GROUP BY category/i.test(sql)) {
     return { rows: dbRows.byCategory };
@@ -432,20 +441,22 @@ describe('GET /api/admin/costs/trends', () => {
     expect(sql).toMatch(/ORDER BY m\.month_start/i);
   });
 
+  // Params are [endDate, startDate, months, ...filter values] — the bounds CTEs
+  // come first in the statement, so their placeholders are allocated first.
   test('defaults to a 12-month window', async () => {
     await get();
     const [, params] = trendSql();
 
-    expect(params).toEqual([12]);
+    expect(params).toEqual([null, null, 12]);
   });
 
   test('?months=6 narrows the window and is passed as a bound parameter', async () => {
     await get('?months=6');
     const [sql, params] = trendSql();
 
-    expect(params).toEqual([6]);
+    expect(params).toEqual([null, null, 6]);
     // bound, not interpolated — no raw value in the SQL text
-    expect(sql).toMatch(/\$1::int/);
+    expect(sql).toMatch(/\$3::int/);
     expect(sql).not.toMatch(/make_interval\(months => 6/);
   });
 
@@ -453,7 +464,7 @@ describe('GET /api/admin/costs/trends', () => {
     const res = await get(`?months=${months}`);
 
     expect(res.status).toBe(200);
-    expect(trendSql()[1]).toEqual([months]);
+    expect(trendSql()[1]).toEqual([null, null, months]);
   });
 
   test.each([
@@ -477,7 +488,7 @@ describe('GET /api/admin/costs/trends', () => {
     const res = await get('?months=');
 
     expect(res.status).toBe(200);
-    expect(trendSql()[1]).toEqual([12]);
+    expect(trendSql()[1]).toEqual([null, null, 12]);
   });
 
   test('pulls actual only from closed, non-deleted inspections', async () => {
@@ -604,6 +615,304 @@ describe('cost values are never null or NaN', () => {
       expect(sql).toMatch(/COALESCE\(SUM\(actual\), 0\)/i);
       expect(sql).toMatch(/COALESCE\(SUM\(projected\), 0\)/i);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — filtering engine
+// ---------------------------------------------------------------------------
+
+const LIFT_ID = '11111111-2222-3333-4444-555555555555';
+const CONTRACTOR_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+const admin = (path) => request(app).get(path).set('Authorization', 'Bearer admin-token');
+
+// The SQL each endpoint issues against inspections / ai_predictions.
+const actualSql = () => mockQuery.mock.calls.find(([s]) => /AS total_actual/i.test(s));
+const projectedSql = () => mockQuery.mock.calls.find(([s]) => /AS total_projected/i.test(s));
+const contractorSql = () => mockQuery.mock.calls.find(([s]) => /JOIN contractors c/i.test(s));
+const unionSql = () => mockQuery.mock.calls.filter(([s]) => /UNION ALL/i.test(s));
+const trendsSql = () => mockQuery.mock.calls.find(([s]) => /generate_series/i.test(s));
+
+describe('filters — validation', () => {
+  // Every endpoint shares parseFilters, so the matrix runs against all three.
+  const PATHS = [
+    '/api/admin/costs/summary',
+    '/api/admin/costs/breakdown',
+    '/api/admin/costs/trends',
+  ];
+
+  const BAD = [
+    ['startDate=2026-1-1', /startDate must be a real calendar date/],
+    ['startDate=01-01-2026', /startDate must be a real calendar date/],
+    ['startDate=2026-02-30', /startDate must be a real calendar date/],   // impossible day
+    ['startDate=2026-13-01', /startDate must be a real calendar date/],   // impossible month
+    ['startDate=yesterday', /startDate must be a real calendar date/],
+    ['endDate=2026-06-31', /endDate must be a real calendar date/],       // June has 30 days
+    ['liftId=not-a-uuid', /liftId must be a valid UUID/],
+    ['liftId=123', /liftId must be a valid UUID/],
+    ['contractorId=aaaaaaaa-bbbb-cccc-dddd', /contractorId must be a valid UUID/],
+    ['startDate=2026-06-01&endDate=2026-05-01', /startDate must not be after endDate/],
+    ['block=44A&block=44B', /block must be provided at most once/],
+    [`block=${'x'.repeat(21)}`, /block must be at most 20 characters/],
+  ];
+
+  describe.each(PATHS)('%s', (path) => {
+    test.each(BAD)('400 VALIDATION_ERROR for ?%s', async (qs, messageRe) => {
+      const res = await admin(`${path}?${qs}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+      expect(res.body.message).toMatch(messageRe);
+    });
+
+    test('rejects before touching the database', async () => {
+      await admin(`${path}?liftId=nope`);
+      const costQueries = mockQuery.mock.calls.filter(
+        ([sql]) => !/SELECT role, status FROM users/i.test(sql)
+      );
+      expect(costQueries).toHaveLength(0);
+    });
+
+    test('accepts an equal startDate and endDate (single-day window)', async () => {
+      const res = await admin(`${path}?startDate=2026-06-01&endDate=2026-06-01`);
+      expect(res.status).toBe(200);
+    });
+
+    test('blank filter values are ignored, not treated as errors', async () => {
+      const res = await admin(`${path}?startDate=&block=&liftId=&contractorId=`);
+      expect(res.status).toBe(200);
+    });
+
+    test('unknown query params are ignored', async () => {
+      const res = await admin(`${path}?bogus=1&category=Doors`);
+      expect(res.status).toBe(200);
+    });
+  });
+
+  test('a lowercase and an uppercase UUID are both accepted', async () => {
+    const upper = await admin(`/api/admin/costs/summary?liftId=${LIFT_ID.toUpperCase()}`);
+    const lower = await admin(`/api/admin/costs/summary?liftId=${LIFT_ID}`);
+
+    expect(upper.status).toBe(200);
+    expect(lower.status).toBe(200);
+  });
+});
+
+describe('filters — applied individually', () => {
+  test('block only: bound on both cost sources', async () => {
+    await admin('/api/admin/costs/summary?block=44A');
+
+    expect(actualSql()[0]).toMatch(/location_block = \$1/);
+    expect(actualSql()[1]).toEqual(['44A']);
+    expect(projectedSql()[0]).toMatch(/location_block = \$1/);
+    expect(projectedSql()[1]).toEqual(['44A']);
+  });
+
+  test('startDate only: closed_at for actual, created_at for projected', async () => {
+    await admin('/api/admin/costs/summary?startDate=2026-03-01');
+
+    expect(actualSql()[0]).toMatch(/closed_at >= \$1::date/);
+    expect(actualSql()[1]).toEqual(['2026-03-01']);
+    expect(projectedSql()[0]).toMatch(/created_at >= \$1::date/);
+    expect(projectedSql()[1]).toEqual(['2026-03-01']);
+  });
+
+  test('endDate only: inclusive, via < endDate + 1 day', async () => {
+    await admin('/api/admin/costs/summary?endDate=2026-06-30');
+
+    expect(actualSql()[0]).toMatch(/closed_at < \$1::date \+ INTERVAL '1 day'/);
+    expect(projectedSql()[0]).toMatch(/created_at < \$1::date \+ INTERVAL '1 day'/);
+    expect(actualSql()[1]).toEqual(['2026-06-30']);
+  });
+
+  test('liftId only: bound on inspections, projections suppressed', async () => {
+    await admin(`/api/admin/costs/summary?liftId=${LIFT_ID}`);
+
+    expect(actualSql()[0]).toMatch(/lift_id = \$1::uuid/);
+    expect(actualSql()[1]).toEqual([LIFT_ID]);
+    // ai_predictions has no lift_id — the series is zeroed, not left unfiltered
+    expect(projectedSql()[0]).toMatch(/\bFALSE\b/);
+    expect(projectedSql()[0]).not.toMatch(/lift_id/);
+  });
+
+  test('contractorId only: bound on inspections, projections suppressed', async () => {
+    await admin(`/api/admin/costs/summary?contractorId=${CONTRACTOR_ID}`);
+
+    expect(actualSql()[0]).toMatch(/contractor_id = \$1::uuid/);
+    expect(actualSql()[1]).toEqual([CONTRACTOR_ID]);
+    expect(projectedSql()[0]).toMatch(/\bFALSE\b/);
+    expect(projectedSql()[0]).not.toMatch(/contractor_id/);
+  });
+
+  test('the base data-consistency clauses survive every filter', async () => {
+    await admin(`/api/admin/costs/summary?block=44A&startDate=2026-01-01&liftId=${LIFT_ID}`);
+
+    expect(actualSql()[0]).toMatch(/status = 'Closed'/);
+    expect(actualSql()[0]).toMatch(/is_deleted = FALSE/);
+    expect(actualSql()[0]).toMatch(/actual_cost IS NOT NULL/);
+    expect(projectedSql()[0]).toMatch(/status = 'Active'/);
+  });
+
+  test('filter values are bound, never interpolated into the SQL text', async () => {
+    // A quote-injection attempt must travel as a value, not as SQL.
+    const res = await admin("/api/admin/costs/summary?block=44A' OR '1'='1");
+
+    expect(res.status).toBe(200);
+    expect(actualSql()[0]).not.toMatch(/OR '1'='1/);
+    expect(actualSql()[1]).toEqual(["44A' OR '1'='1"]);
+  });
+});
+
+describe('filters — combined', () => {
+  test('block AND date range: all three bound in statement order', async () => {
+    await admin('/api/admin/costs/summary?startDate=2026-01-01&endDate=2026-03-31&block=44A');
+
+    const [sql, params] = actualSql();
+    expect(sql).toMatch(/closed_at >= \$1::date/);
+    expect(sql).toMatch(/closed_at < \$2::date \+ INTERVAL '1 day'/);
+    expect(sql).toMatch(/location_block = \$3/);
+    expect(params).toEqual(['2026-01-01', '2026-03-31', '44A']);
+  });
+
+  test('block AND contractorId: both on inspections, projections zeroed', async () => {
+    await admin(`/api/admin/costs/summary?block=44A&contractorId=${CONTRACTOR_ID}`);
+
+    expect(actualSql()[1]).toEqual(['44A', CONTRACTOR_ID]);
+    // the block filter still binds on the prediction side, then FALSE wins
+    expect(projectedSql()[1]).toEqual(['44A']);
+    expect(projectedSql()[0]).toMatch(/\bFALSE\b/);
+  });
+
+  test('every filter at once', async () => {
+    await admin(
+      `/api/admin/costs/summary?startDate=2026-01-01&endDate=2026-06-30&block=44A` +
+        `&liftId=${LIFT_ID}&contractorId=${CONTRACTOR_ID}`
+    );
+
+    expect(actualSql()[1]).toEqual([
+      '2026-01-01',
+      '2026-06-30',
+      '44A',
+      LIFT_ID,
+      CONTRACTOR_ID,
+    ]);
+  });
+
+  test('breakdown numbers its UNION params across both halves without collision', async () => {
+    await admin('/api/admin/costs/breakdown?startDate=2026-01-01&block=44A');
+
+    const unions = unionSql();
+    expect(unions).toHaveLength(2); // byCategory + byBlock
+    unions.forEach(([sql, params]) => {
+      // inspections half uses $1/$2, ai_predictions half uses $3/$4
+      expect(sql).toMatch(/closed_at >= \$1::date/);
+      expect(sql).toMatch(/location_block = \$2/);
+      expect(sql).toMatch(/created_at >= \$3::date/);
+      expect(sql).toMatch(/location_block = \$4/);
+      expect(params).toEqual(['2026-01-01', '44A', '2026-01-01', '44A']);
+    });
+  });
+
+  test('byContractor applies the filters with an i. prefix', async () => {
+    await admin(`/api/admin/costs/breakdown?block=44A&liftId=${LIFT_ID}`);
+
+    const [sql, params] = contractorSql();
+    expect(sql).toMatch(/i\.location_block = \$1/);
+    expect(sql).toMatch(/i\.lift_id = \$2::uuid/);
+    expect(params).toEqual(['44A', LIFT_ID]);
+  });
+
+  test('trends binds filters after the three window params', async () => {
+    await admin('/api/admin/costs/trends?block=44A&startDate=2026-01-01&endDate=2026-06-30');
+
+    const [sql, params] = trendsSql();
+    // $1 endDate, $2 startDate, $3 months, then the filter values
+    expect(params).toEqual([
+      '2026-06-30', '2026-01-01', 12,
+      '2026-01-01', '2026-06-30', '44A',   // inspections half
+      '2026-01-01', '2026-06-30', '44A',   // ai_predictions half
+    ]);
+    expect(sql).toMatch(/i\.location_block = \$6/);
+    expect(sql).toMatch(/p\.location_block = \$9/);
+  });
+
+  test('a date range retargets the trend window instead of the months fallback', async () => {
+    await admin('/api/admin/costs/trends?startDate=2026-01-01&endDate=2026-03-31');
+
+    const [sql] = trendsSql();
+    // the series starts at the startDate month, not months-ago
+    expect(sql).toMatch(/date_trunc\('month', \$2::date\)/);
+    expect(sql).toMatch(/COALESCE\(\s*date_trunc\('month', \$2::date\)/);
+    // and ends at the endDate month rather than today
+    expect(sql).toMatch(/date_trunc\('month', COALESCE\(\$1::date, CURRENT_DATE\)\)/);
+  });
+
+  test('with no dates the window still falls back to the months interval', async () => {
+    await admin('/api/admin/costs/trends?block=44A');
+
+    const [, params] = trendsSql();
+    expect(params.slice(0, 3)).toEqual([null, null, 12]);
+  });
+});
+
+describe('filters — sums and counts change with the filter', () => {
+  test('summary totals reflect the filtered query, not the unfiltered one', async () => {
+    const all = await admin('/api/admin/costs/summary');
+    const filtered = await admin('/api/admin/costs/summary?block=44A');
+
+    expect(all.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    // 1200 actual vs 900 projected -> (900-1200)/1200 = -25.0%
+    expect(filtered.body).toEqual({
+      total_actual: 1200,
+      total_projected: 900,
+      variance_pct: -25,
+    });
+  });
+
+  test('variance_pct is recomputed from the filtered totals', async () => {
+    const res = await admin('/api/admin/costs/summary?block=44A');
+    const { total_actual, total_projected, variance_pct } = res.body;
+
+    expect(variance_pct).toBeCloseTo(((total_projected - total_actual) / total_actual) * 100, 5);
+  });
+
+  test('a liftId filter zeroes total_projected and nulls variance safely', async () => {
+    const res = await admin(`/api/admin/costs/summary?liftId=${LIFT_ID}`);
+
+    expect(res.body.total_actual).toBe(1200);
+    expect(res.body.total_projected).toBe(0);          // suppressed, not null/NaN
+    // (0 - 1200) / 1200 = -100%
+    expect(res.body.variance_pct).toBe(-100);
+  });
+
+  test('contractor totals and counts both drop when filtered', async () => {
+    const all = await admin('/api/admin/costs/breakdown');
+    const filtered = await admin(`/api/admin/costs/breakdown?contractorId=${CONTRACTOR_ID}`);
+
+    expect(all.body.byContractor).toEqual([
+      { name: 'Otis Service SG', total: 2000, count: 3 },
+      { name: 'Schindler', total: 1000, count: 1 },
+    ]);
+    expect(filtered.body.byContractor).toEqual([
+      { name: 'Otis Service SG', total: 1200, count: 2 },
+    ]);
+  });
+
+  test('a filter matching nothing yields zeros, not nulls', async () => {
+    dbRows.summaryActualFiltered = [{ total_actual: null }];
+    dbRows.summaryProjectedFiltered = [{ total_projected: null }];
+
+    const res = await admin('/api/admin/costs/summary?block=NOPE');
+
+    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null });
+  });
+
+  test('the unfiltered response is unchanged from Phase 2 (no regression)', async () => {
+    const res = await admin('/api/admin/costs/summary');
+
+    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    expect(actualSql()[1]).toEqual([]); // no params bound when nothing is filtered
   });
 });
 
