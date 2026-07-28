@@ -133,8 +133,12 @@ export default function InspectionDetailPage() {
     const currentDeadline = inspection.target_deadline
       ? inspection.target_deadline.slice(0, 10)
       : '';
-    if (form.target_deadline && form.target_deadline !== currentDeadline) {
-      body.target_deadline = new Date(form.target_deadline).toISOString();
+    if (form.target_deadline !== currentDeadline) {
+      // Blank goes to the backend as '' so it applies the 14-day default
+      // instead of the field simply being ignored.
+      body.target_deadline = form.target_deadline
+        ? new Date(form.target_deadline).toISOString()
+        : '';
     }
     if (Object.keys(body).length === 0) {
       setFeedback({ severity: 'info', message: 'Nothing changed.' });
@@ -425,6 +429,7 @@ export default function InspectionDetailPage() {
                     value={form.target_deadline}
                     onChange={(e) => setForm({ ...form, target_deadline: e.target.value })}
                     InputLabelProps={{ shrink: true }}
+                    helperText="Leave blank for the default 14-day deadline"
                     sx={controlSx}
                   />
 

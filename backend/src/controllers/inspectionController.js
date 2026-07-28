@@ -18,6 +18,13 @@ const STATUSES = [
 ];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 
+// HLD 14-day rectification rule, used whenever a deadline is left unset.
+// New records get the same window from the `inspections` column default
+// (migration 025).
+function deadlineIn14Days() {
+  return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+}
+
 // Optional GPS fields captured client-side on explicit tap. Supplementary
 // metadata only — they never override or populate block/lift selection.
 // Multipart fields arrive as strings; absent/empty ones become NULL.
@@ -285,9 +292,13 @@ async function updateInspection(req, res, next) {
         return res.status(404).json({ code: 'NOT_FOUND', message: 'Contractor not found.' });
       }
       if (changes.status === undefined) changes.status = 'Assigned';
-      if (changes.target_deadline === undefined) {
-        changes.target_deadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-      }
+      if (changes.target_deadline === undefined) changes.target_deadline = deadlineIn14Days();
+    }
+
+    // A deadline field submitted blank falls back to the same 14-day rule
+    // rather than clearing the date.
+    if (changes.target_deadline === '' || changes.target_deadline === null) {
+      changes.target_deadline = deadlineIn14Days();
     }
 
     const inspection = await inspectionModel.updateByManager(

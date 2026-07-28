@@ -33,8 +33,13 @@ export default function ContractorScorecard({ rows }) {
                 </Typography>
               </TableCell>
               <TableCell align="right">{r.jobs}</TableCell>
-              <TableCell align="right">{r.avg_rectification_days.toFixed(1)}</TableCell>
-              <TableCell align="right">{r.repeat_defect_rate.toFixed(1)}%</TableCell>
+              {/* Avg is NULL until a job has been acknowledged and rectified. */}
+              <TableCell align="right">
+                {r.avg_rectification_days == null ? '—' : r.avg_rectification_days.toFixed(1)}
+              </TableCell>
+              <TableCell align="right">
+                {r.repeat_defect_rate == null ? '—' : `${r.repeat_defect_rate.toFixed(1)}%`}
+              </TableCell>
               <TableCell align="right">
                 <Chip
                   label={r.overdue_count}

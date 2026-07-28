@@ -607,6 +607,19 @@ describe('PATCH /api/inspections/:id', () => {
     );
   });
 
+  test('200 blank target_deadline falls back to the 14-day rule', async () => {
+    const id = await seedComplaint('Flickering lobby light');
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ target_deadline: '' });
+
+    expect(res.status).toBe(200);
+    const days = (new Date(res.body.target_deadline) - Date.now()) / 86400000;
+    expect(Math.round(days)).toBe(14);
+  });
+
   test('200 priority-only change writes a Priority Escalated history row', async () => {
     const id = await seedComplaint('Loose railing');
 
