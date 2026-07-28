@@ -223,12 +223,20 @@ async function findByResident(residentId) {
   return result.rows;
 }
 
-// List all non-deleted inspections the user originated — resident complaints
-// they filed or lift inspections they performed — newest first (HLD §6.2 /my).
+// Every inspection the user originated — resident complaints they filed or lift
+// inspections they performed — newest first (HLD §6.2 /my).
+//
+// Deliberately NOT filtered on is_deleted. That flag is only ever set by a
+// close (manual, or the G6 zero-defect auto-file), so it means "archived out of
+// the active queues", not "deleted". Filtering it here hid a resident's own
+// resolved complaints and — once G6 landed — made a clean spot-check vanish the
+// instant the inspector filed it, leaving them no proof the check was recorded.
+// The active-queue views (findAllForManager, findForStatusBoard) still exclude
+// archived records; this is a person's own history, so it shows everything.
 async function findByOriginator(userId) {
   const result = await query(
     `SELECT * FROM inspections
-     WHERE (resident_id = $1 OR inspector_id = $1) AND is_deleted = FALSE
+     WHERE resident_id = $1 OR inspector_id = $1
      ORDER BY created_at DESC`,
     [userId]
   );

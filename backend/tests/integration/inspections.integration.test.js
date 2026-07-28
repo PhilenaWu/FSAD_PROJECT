@@ -352,11 +352,12 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       }));
     return { rows };
   }
-  // listMine: SELECT * FROM inspections WHERE (resident_id = $1 OR inspector_id = $1) ...
+  // listMine: SELECT * FROM inspections WHERE resident_id = $1 OR inspector_id = $1
+  // No is_deleted filter — a person's own history includes archived records.
   if (/SELECT \* FROM inspections/i.test(sql) && /inspector_id = \$1/i.test(sql)) {
     const [userId] = params;
     const rows = store.inspections.filter(
-      (i) => (i.resident_id === userId || i.inspector_id === userId) && !i.is_deleted
+      (i) => i.resident_id === userId || i.inspector_id === userId
     );
     return { rows };
   }
@@ -742,6 +743,25 @@ describe('GET /api/inspections/my', () => {
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].title).toBe('Cracked tile at void deck');
     expect(res.body.data[0].resident_id).toBe('res-1');
+  });
+
+  // A person's own history must survive archival. Before this, a G6 zero-defect
+  // spot-check vanished from the inspector's list the moment they filed it.
+  test('200 still lists a zero-defect spot-check after it auto-files as Closed', async () => {
+    const allPass = [
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Pass' },
+    ];
+    const created = await submitLift(allPass);
+    expect(created.body.status).toBe('Closed');
+    expect(created.body.is_deleted).toBe(true);
+
+    const res = await request(app)
+      .get('/api/inspections/my')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r) => r.id)).toContain(created.body.id);
   });
 
   test('403 for a manager (originators only)', async () => {

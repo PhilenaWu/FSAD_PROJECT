@@ -20,10 +20,10 @@ import api from '../services/api';
 import { statusDisplay } from '../utils/statusDisplay';
 
 // Ratable once the work is done; rating submission is a later task.
-// 'Closed' is deliberately absent: closing archives the record (is_deleted =
-// TRUE), and /api/inspections/my filters those out, so a closed report never
-// reaches this page.
-const RATABLE_STATUSES = ['Resolved'];
+// Closed records do reach this page — /api/inspections/my returns the caller's
+// full history including archived ones, so their own record of a report never
+// disappears.
+const RATABLE_STATUSES = ['Resolved', 'Closed'];
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, {
