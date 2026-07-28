@@ -258,9 +258,13 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.history.push({ inspection_id, actor_id, action, previous_status, new_status, note });
     return { rows: [] };
   }
-  // contractor existence check: SELECT id FROM contractors WHERE id = $1
-  if (/SELECT id FROM contractors/i.test(sql)) {
-    return { rows: params[0] === 'con-1' ? [{ id: 'con-1' }] : [] };
+  // contractor existence check: SELECT id, contact_email FROM contractors WHERE id = $1
+  if (/SELECT id.* FROM contractors/i.test(sql)) {
+    return {
+      rows: params[0] === 'con-1'
+        ? [{ id: 'con-1', contact_email: 'lc@example.com' }]
+        : [],
+    };
   }
   // status board: SELECT id, location_block, ... WHERE source_type = 'resident_complaint'
   if (/SELECT id, location_block/i.test(sql)) {

@@ -8,8 +8,10 @@ const inspectionModel = require('../models/inspectionModel');
 const liftModel = require('../models/liftModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
+const emailService = require('../services/emailService');
 const cvController = require('./cvController');
 const socketService = require('../services/socketService');
+const config = require('../config/env');
 
 // Schema enums (migration 004 CHECKs) for PATCH validation.
 const STATUSES = [
@@ -279,11 +281,16 @@ async function updateInspection(req, res, next) {
 
     // Assigning a contractor: verify it exists, and apply the UC-002 defaults —
     // status moves to Assigned and the 14-day rectification deadline starts.
+    let assignedContractorEmail = null;
     if (contractor_id !== undefined) {
-      const { rows } = await query('SELECT id FROM contractors WHERE id = $1', [contractor_id]);
+      const { rows } = await query(
+        'SELECT id, contact_email FROM contractors WHERE id = $1',
+        [contractor_id]
+      );
       if (rows.length === 0) {
         return res.status(404).json({ code: 'NOT_FOUND', message: 'Contractor not found.' });
       }
+      assignedContractorEmail = rows[0].contact_email;
       if (changes.status === undefined) changes.status = 'Assigned';
       if (changes.target_deadline === undefined) {
         changes.target_deadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
@@ -314,6 +321,21 @@ async function updateInspection(req, res, next) {
       );
     } catch {
       // Socket not initialised (e.g. tests) or emit failed — ignore.
+    }
+
+    // Defect-assignment alert: email the assigned contractor (LC), plus the
+    // demo broadcast list (DEFECT_ALERT_RECIPIENTS) so the whole team sees it.
+    // A mail failure must never fail the assignment (same policy as the socket).
+    if (assignedContractorEmail !== null) {
+      const recipients = [assignedContractorEmail];
+      if (config.DEFECT_ALERT_RECIPIENTS) {
+        recipients.push(config.DEFECT_ALERT_RECIPIENTS);
+      }
+      try {
+        await emailService.sendDefectAlert(inspection, recipients.filter(Boolean).join(','));
+      } catch (err) {
+        console.error('[inspectionController] Defect alert email failed:', err.message);
+      }
     }
 
     res.json(inspection);
@@ -448,10 +470,43 @@ async function closeInspection(req, res, next) {
   }
 }
 
+// GET /api/inspections/defect-alert-demo — cron-guarded trigger used by the
+// GitHub Actions demo workflow. Sends a fixed sample defect-assignment alert to
+// everyone on DEFECT_ALERT_RECIPIENTS so the whole team receives the email live
+// during the presentation. Not tied to a real record (no DB dependency).
+async function defectAlertDemo(req, res, next) {
+  try {
+    const recipients = config.DEFECT_ALERT_RECIPIENTS;
+    if (!recipients) {
+      return res.status(400).json({
+        code: 'NO_RECIPIENTS',
+        message: 'Set DEFECT_ALERT_RECIPIENTS (comma-separated) before running the demo alert.',
+      });
+    }
+
+    const sample = {
+      title: 'Lift cabin door fault',
+      category: 'Lift',
+      priority: 'High',
+      location_block: '44A',
+      location_unit: null,
+      description:
+        'Cabin door on Lift 1 is stalling on close — flagged for urgent rectification (demo alert).',
+      target_deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+
+    await emailService.sendDefectAlert(sample, recipients);
+    res.json({ sent: true, recipients });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   closeInspection,
   create,
   createLiftInspection,
+  defectAlertDemo,
   getDetail,
   listForManager,
   listMine,

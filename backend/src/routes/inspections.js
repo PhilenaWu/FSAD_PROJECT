@@ -6,6 +6,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { cronGuard } = require('../middleware/cronGuard');
 const inspectionController = require('../controllers/inspectionController');
 
 const router = express.Router();
@@ -19,6 +20,11 @@ const upload = multer({
     cb(null, file.mimetype.startsWith('image/'));
   },
 });
+
+// GET /api/inspections/defect-alert-demo — cron-guarded demo trigger (GitHub
+// Actions). Emails a sample defect alert to DEFECT_ALERT_RECIPIENTS. Keep above
+// '/:id' so 'defect-alert-demo' isn't captured as an id.
+router.get('/defect-alert-demo', cronGuard, inspectionController.defectAlertDemo);
 
 // GET /api/inspections/status-board — privacy-safe estate-wide feed; any
 // authenticated user. Keep above any future '/:id' route.
