@@ -16,3 +16,28 @@ export async function getManualReviewQueue() {
   const res = await api.get('/api/cv/detections', { params: { status: 'low_confidence' } });
   return res.data;
 }
+
+// POST /api/cv/detections/:id/create-ticket → the created inspection.
+// location_block/location_unit are optional overrides — the backend falls
+// back to whatever was captured with the detection when omitted.
+export async function createTicketFromDetection(id, { category, priority, location_block, location_unit }) {
+  if (USE_MOCK) {
+    return delay({ id: `insp-mock-${id}`, source_type: 'cv_auto_detected', category, priority });
+  }
+  const res = await api.post(`/api/cv/detections/${id}/create-ticket`, {
+    category,
+    priority,
+    location_block,
+    location_unit,
+  });
+  return res.data;
+}
+
+// POST /api/cv/detections/:id/dismiss → the updated (dismissed) detection.
+export async function dismissDetection(id) {
+  if (USE_MOCK) {
+    return delay({ id, status: 'dismissed' });
+  }
+  const res = await api.post(`/api/cv/detections/${id}/dismiss`);
+  return res.data;
+}

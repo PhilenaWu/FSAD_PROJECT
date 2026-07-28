@@ -43,6 +43,8 @@ jest.mock('../../src/controllers/cvController', () => ({
   detect: jest.fn(async () => ({ cvDetection: { id: 'cv-mock-1', status: 'low_confidence' }, inspection: null })),
   batchScan: jest.fn(async () => ({ processed: 0, failed: 0, remaining: 0 })),
   listDetections: jest.fn((req, res) => res.json({ data: [], total: 0 })),
+  createTicketFromDetection: jest.fn((req, res) => res.status(201).json({})),
+  dismissDetection: jest.fn((req, res) => res.json({})),
 }));
 
 // --- Mock: Socket.IO emit seam (no server in tests). ---
@@ -99,7 +101,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/INSERT INTO inspections/i.test(sql) && /resident_id/i.test(sql)) {
     const [
       source_type, resident_id, title, description, location_block,
-      location_unit, photo_url, category, ai_priority_score, source_flag,
+      location_unit, photo_url, category, priority, ai_priority_score, source_flag,
       cv_detection_id, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
     ] = params;
     const now = new Date().toISOString();
@@ -117,7 +119,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       photo_pending: false,
       status: 'Open',
       category,
-      priority: 'Medium',
+      priority,
       ai_priority_score,
       is_deleted: false,
       source_flag: source_flag ?? 'Resident',

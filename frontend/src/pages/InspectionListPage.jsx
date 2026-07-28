@@ -28,6 +28,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
+import { CATEGORIES } from '../utils/inspectionOptions';
 import ManualReviewQueue from '../components/cv/ManualReviewQueue';
 
 // Filterable statuses (migration 004 CHECK, minus 'Closed' — closed records are
@@ -35,10 +36,6 @@ import ManualReviewQueue from '../components/cv/ManualReviewQueue';
 const STATUSES = [
   'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
   'On Hold', 'Rectified', 'Resolved',
-];
-const CATEGORIES = [
-  'Structural', 'Electrical', 'Plumbing', 'Cleanliness', 'Lift', 'Doors',
-  'Cabin', 'Safety', 'Landscaping', 'Pest', 'Other', 'Uncategorised',
 ];
 
 export default function InspectionListPage() {

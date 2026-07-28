@@ -8,12 +8,15 @@ const cvDetectionModel = require('./cvDetectionModel');
 
 // Insert a new inspection record. UC-001 uses source_type 'resident_complaint';
 // the caller supplies the resident + report fields plus the AI-derived
-// category/score. Everything else (status 'Open', priority 'Medium',
-// photo_pending, is_deleted, timestamps) uses the schema defaults, and all
-// inspector/lift/contractor/cost columns are left NULL. photo_url,
-// location_unit and cv_detection_id are optional (pass undefined → NULL);
-// cv_detection_id links back to a confirmed CV detection on the same photo.
-// Returns the created row.
+// category/score. Everything else (status 'Open', photo_pending, is_deleted,
+// timestamps) uses the schema defaults, and all inspector/lift/contractor/cost
+// columns are left NULL. photo_url, location_unit and cv_detection_id are
+// optional (pass undefined → NULL); cv_detection_id links back to a confirmed
+// CV detection on the same photo. category/priority default to the schema's
+// own defaults in JS (not just SQL) because both columns are explicitly
+// listed in the INSERT below — an omitted value would otherwise bind as an
+// explicit NULL and violate the NOT NULL constraint instead of falling back
+// to the column's DEFAULT. Returns the created row.
 async function create(data) {
   const {
     source_type = 'resident_complaint',
@@ -24,6 +27,7 @@ async function create(data) {
     location_unit,
     photo_url,
     category = 'Uncategorised',
+    priority = 'Medium',
     ai_priority_score,
     source_flag = 'Resident',
     cv_detection_id,
@@ -36,10 +40,10 @@ async function create(data) {
   const result = await query(
     `INSERT INTO inspections (
        source_type, resident_id, title, description, location_block,
-       location_unit, photo_url, category, ai_priority_score, source_flag,
-       cv_detection_id, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at
+       location_unit, photo_url, category, priority, ai_priority_score,
+       source_flag, cv_detection_id, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      RETURNING *`,
     [
       source_type,
@@ -50,6 +54,7 @@ async function create(data) {
       location_unit,
       photo_url,
       category,
+      priority,
       ai_priority_score,
       source_flag,
       cv_detection_id,
@@ -58,6 +63,25 @@ async function create(data) {
       gps_accuracy_m,
       gps_captured_at,
     ]
+  );
+  return result.rows[0];
+}
+
+// System-driven priority update (UC-007 CV/human-complaint blend). Also links
+// cv_detection_id (when supplied) so the frontend's BoundingBoxOverlay has
+// something to fetch — without this, a blended report has no way to surface
+// the detection that influenced its priority. No inspection_history row is
+// written — history.actor_id is NOT NULL and this isn't a manager action, so
+// there's no valid actor to attribute it to (same reasoning as cv_auto_detected
+// ticket creation, which also skips history).
+// Returns the updated row, or undefined if the id doesn't match a live record.
+async function updatePriority(id, { priority, ai_priority_score, cv_detection_id }) {
+  const result = await query(
+    `UPDATE inspections SET priority = $2, ai_priority_score = $3,
+       cv_detection_id = COALESCE($4, cv_detection_id), updated_at = NOW()
+     WHERE id = $1 AND is_deleted = FALSE
+     RETURNING *`,
+    [id, priority, ai_priority_score, cv_detection_id]
   );
   return result.rows[0];
 }
@@ -794,4 +818,5 @@ module.exports = {
   rejectRectification,
   queueRecurrenceJob,
   updateByManager,
+  updatePriority,
 };

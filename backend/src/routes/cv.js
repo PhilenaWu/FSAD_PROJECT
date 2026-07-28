@@ -23,4 +23,16 @@ router.get('/batch-scan', cronGuard, async (req, res, next) => {
 // GET /api/cv/detections?status=low_confidence — manager's manual review queue.
 router.get('/detections', requireAuth, requireRole('manager'), cvController.listDetections);
 
+// POST /api/cv/detections/:id/create-ticket — manager confirms a low-confidence
+// detection as real, choosing category/priority; creates a ticket.
+router.post(
+  '/detections/:id/create-ticket',
+  requireAuth,
+  requireRole('manager'),
+  cvController.createTicketFromDetection
+);
+
+// POST /api/cv/detections/:id/dismiss — manager decides it's not a real defect.
+router.post('/detections/:id/dismiss', requireAuth, requireRole('manager'), cvController.dismissDetection);
+
 module.exports = router;
