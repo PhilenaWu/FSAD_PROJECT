@@ -417,7 +417,9 @@ CREATE INDEX idx_defect_email_log_inspection ON defect_email_log(inspection_id);
 | `GET /api/inspections` | manager | Triage queue |
 | `GET /api/inspections/:id` | any (scoped) | Full detail + checklist + history + signatures |
 | `PATCH /api/inspections/:id` | manager | UC-002 triage: priority, contractor, deadline, status, hold |
-| `POST /api/inspections/:id/close` | manager | UC-004 close: `manager_signature` + `endorser_signature` + cost |
+| `POST /api/inspections/:id/close` | manager | UC-004 close: `manager_signature` + `endorser_signature` + cost, plus `waiver_note` when overriding G8 |
+| `POST /api/inspections/:id/reject` | manager | UC-004 Alt 4: `{ reason }` (≥10 chars) → back to `Assigned`, `reopen_count++`, fresh 14-day deadline |
+| `GET /api/users/inspectors` | manager | Active inspectors, for the close panel's G7 endorser picker |
 | `GET /api/contractor/assigned` | contractor | UC-010 inbox with days-remaining |
 | `POST /api/contractor/:id/acknowledge` | contractor | UC-010 step 5 start |
 | `POST /api/contractor/:id/rectify` | contractor | UC-010 completion photos + e-sign (`upload.any()`) |
@@ -663,7 +665,7 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 | **G5** | The inspector must e-sign before submit ("Checked by / Signature") | 400 `SIGNATURE_REQUIRED` — ✅ **enforced**: the pad's PNG is stored as an `inspector` `signatures` row inside the same transaction as the record and its results |
 | **G6** | 0 defects → auto-file to `Closed`, no contractor assignment, **no email** | Controller branch + audit `Filed — no defects` — ✅ **enforced**: `contractor_id` stays NULL, the record is closed and archived (`is_deleted = TRUE`, matching a manual close) with `target_deadline` cleared, inside the same transaction |
 | **G7** | At close, the endorser signature **must belong to a user whose role is `inspector`** — the client's "digital sign-off from the EM Services inspector" | 400 `ENDORSER_MUST_BE_INSPECTOR` — ✅ **enforced** on both the claimed role and the nominated user's stored `users.role` |
-| **G8** | Close is blocked unless **every** `Defect` row has `rectified = TRUE` and a `completion_photo_url` (or an explicit manager waiver note) | 409 `UNRECTIFIED_DEFECTS` listing item numbers — ❌ **not built** |
+| **G8** | Close is blocked unless **every** `Defect` row has `rectified = TRUE` and a `completion_photo_url` (or an explicit manager waiver note) | 409 `UNRECTIFIED_DEFECTS` listing item numbers — ✅ **enforced**; a `waiver_note` of ≥10 chars overrides and is appended to the closing remark so the exception stays in the record |
 | **G9** | Contractor endpoints only ever touch records whose `contractor_id` maps to the caller's own `users.contractor_id` | 403 `FORBIDDEN` |
 | **G10** | Acknowledge/rectify/hold are rejected from a wrong state (e.g. acknowledging a `Closed` record) | 409 `INVALID_STATE` |
 | **G11** | `On Hold` pauses the deadline; resuming extends `target_deadline` by the held duration | Computed on resume, audit-logged |

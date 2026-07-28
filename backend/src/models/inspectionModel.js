@@ -263,7 +263,9 @@ async function findAllForManager({ status, category, block } = {}) {
 }
 
 // Full detail for the manager view: the row plus its audit history (actor names
-// joined from users) and, for a CV-linked record (UC-007), the underlying
+// joined from users), its checklist results (with the template's section/text
+// and both the defect and completion photos, for the UC-004 joint endorsement),
+// its signatures, and, for a CV-linked record (UC-007), the underlying
 // cv_detections row (bounding_box/defect_class/confidence) so the frontend can
 // draw the overlay — null when this record has no cv_detection_id.
 // Returns undefined when the id doesn't match a live record.
@@ -286,7 +288,110 @@ async function findDetailById(id) {
     ? await cvDetectionModel.findById(inspection.cv_detection_id)
     : null;
 
-  return { ...inspection, history: history.rows, cv_detection };
+  // Checklist results with their template text, so the manager can see what was
+  // inspected — and, for defects, the original photo against the contractor's
+  // completion photo. Ordered by the paper form's own numbering.
+  const checklist_results = await query(
+    `SELECT r.*, c.section, c.item_text, c.display_order
+     FROM checklist_results r
+     JOIN checklist_items c ON c.id = r.checklist_item_id
+     WHERE r.inspection_id = $1
+     ORDER BY c.display_order`,
+    [id]
+  );
+
+  // Who signed and when (UC-015: signatures are retained for the audit trail).
+  const signatures = await signatureModel.findByInspection(id);
+
+  return {
+    ...inspection,
+    history: history.rows,
+    cv_detection,
+    checklist_results: checklist_results.rows,
+    signatures,
+  };
+}
+
+// Reject a contractor's rectification (UC-004 Alt 4): send the record back to
+// the contractor with a fresh 14-day clock and a reason, atomically. Prior
+// signatures are untouched — the signatures table is append-only, so the
+// contractor's original sign-off is retained alongside the rejection (G20).
+// The per-item completion proof is cleared so the contractor must resubmit it,
+// which is also what makes G8 bite again on the next close attempt.
+// Returns the updated row, or undefined when the id doesn't match a live
+// record, or the string 'INVALID_STATE' when it isn't awaiting endorsement.
+async function rejectRectification(id, reason, actorId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(
+      'SELECT * FROM inspections WHERE id = $1 AND is_deleted = FALSE FOR UPDATE',
+      [id]
+    );
+    const before = existing.rows[0];
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+    if (before.status !== 'Rectified') {
+      await client.query('ROLLBACK');
+      return 'INVALID_STATE';
+    }
+
+    const updated = await client.query(
+      `UPDATE inspections
+          SET status = 'Assigned',
+              reopen_count = reopen_count + 1,
+              rectified_at = NULL,
+              target_deadline = NOW() + INTERVAL '14 days',
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [id]
+    );
+
+    // The work is not accepted, so the proof of completion goes with it.
+    await client.query(
+      `UPDATE checklist_results
+          SET rectified = FALSE, completion_photo_url = NULL
+        WHERE inspection_id = $1 AND result = 'Defect'`,
+      [id]
+    );
+
+    await client.query(
+      `INSERT INTO inspection_history (
+         inspection_id, actor_id, action, previous_status, new_status, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, actorId, 'Rectification Rejected', before.status, 'Assigned', reason]
+    );
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Defect rows on a record that are not yet signed off (G8): either not marked
+// rectified, or rectified without the contractor's proof photo. Returns the
+// paper form's item numbers so the caller can name them in the error.
+async function findUnrectifiedDefects(inspectionId) {
+  const result = await query(
+    `SELECT c.display_order, c.item_text
+     FROM checklist_results r
+     JOIN checklist_items c ON c.id = r.checklist_item_id
+     WHERE r.inspection_id = $1
+       AND r.result = 'Defect'
+       AND (r.rectified = FALSE OR r.completion_photo_url IS NULL)
+     ORDER BY c.display_order`,
+    [inspectionId]
+  );
+  return result.rows;
 }
 
 // Manager triage update (UC-002): apply the provided changes and write an
@@ -677,6 +782,8 @@ module.exports = {
   findByResident,
   findDetailById,
   findForStatusBoard,
+  findUnrectifiedDefects,
+  rejectRectification,
   queueRecurrenceJob,
   updateByManager,
 };

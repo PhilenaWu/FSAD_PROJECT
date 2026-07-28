@@ -198,6 +198,48 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/SELECT \* FROM contractors/i.test(sql)) {
     return { rows: [{ id: 'con-1', name: 'Otis Service SG', brands_serviced: 'Otis' }] };
   }
+  // G8 gate: unrectified defects joined to the template for their item numbers.
+  // Must precede the generic checklist_results branch below.
+  if (/FROM checklist_results/i.test(sql) && /rectified = FALSE/i.test(sql)) {
+    const rows = store.checklist_results
+      .filter(
+        (r) =>
+          r.inspection_id === params[0] &&
+          r.result === 'Defect' &&
+          (!r.rectified || !r.completion_photo_url)
+      )
+      .map((r) => {
+        const tpl = checklistItems.find((i) => i.id === r.checklist_item_id);
+        return { display_order: tpl?.display_order, item_text: tpl?.item_text };
+      })
+      .sort((a, b) => a.display_order - b.display_order);
+    return { rows };
+  }
+  // detail view: checklist_results joined to their template rows.
+  if (/FROM checklist_results/i.test(sql) && /JOIN checklist_items/i.test(sql)) {
+    const rows = store.checklist_results
+      .filter((r) => r.inspection_id === params[0])
+      .map((r) => {
+        const tpl = checklistItems.find((i) => i.id === r.checklist_item_id);
+        return { ...r, section: tpl?.section, item_text: tpl?.item_text, display_order: tpl?.display_order };
+      })
+      .sort((a, b) => a.display_order - b.display_order);
+    return { rows };
+  }
+  // reject (UC-004 Alt 4): clear the contractor's completion proof.
+  if (/UPDATE checklist_results/i.test(sql)) {
+    for (const r of store.checklist_results) {
+      if (r.inspection_id === params[0] && r.result === 'Defect') {
+        r.rectified = false;
+        r.completion_photo_url = null;
+      }
+    }
+    return { rows: [] };
+  }
+  // signatures on the detail view: SELECT * FROM signatures WHERE inspection_id
+  if (/SELECT \* FROM signatures/i.test(sql)) {
+    return { rows: store.signatures.filter((s) => s.inspection_id === params[0]) };
+  }
   // cvDetectionModel.findById, joined into findDetailById for the CV overlay.
   if (/SELECT \* FROM cv_detections WHERE id/i.test(sql)) {
     const row = store.cv_detections.find((d) => d.id === params[0]);
@@ -264,6 +306,18 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const [location_block, category, triggered_by] = params;
     store.ai_jobs.push({ location_block, category, triggered_by });
     return { rows: [] };
+  }
+  // reject (UC-004 Alt 4): status/deadline/reopen_count are SQL expressions,
+  // not $-params, so the generic branch below can't apply them.
+  if (/UPDATE inspections[\s\S]*reopen_count = reopen_count \+ 1/i.test(sql)) {
+    const row = store.inspections.find((i) => i.id === params[0]);
+    if (!row) return { rows: [] };
+    row.status = 'Assigned';
+    row.reopen_count = (row.reopen_count ?? 0) + 1;
+    row.rectified_at = null;
+    row.target_deadline = new Date(Date.now() + 14 * 86400000).toISOString();
+    row.updated_at = new Date().toISOString();
+    return { rows: [{ ...row }] };
   }
   // updateByManager: UPDATE inspections SET <dynamic fields> WHERE id = $N
   if (/UPDATE inspections SET/i.test(sql)) {
@@ -437,40 +491,41 @@ describe('POST /api/inspections', () => {
   });
 });
 
+// Multipart: lift_id + serviced_at + checklist (JSON string) fields, photos as
+// photo_<checklist_item_id> file parts. Shared with the close suite, which needs
+// a real lift inspection carrying a defect to exercise G8.
+//
+// G1 requires every *active* template item to be answered — the fixture's
+// active set is item-1 and item-2 (item-3 is inactive), so a complete checklist
+// is exactly these two. The defect is Minor so this baseline needs no photo
+// (G3); tests that exercise photos use majorChecklist.
+const validChecklist = [
+  { checklist_item_id: 'item-1', result: 'Pass' },
+  { checklist_item_id: 'item-2', result: 'Defect', severity: 'Minor', remark: 'Door sensor slow' },
+];
+const majorChecklist = [
+  { checklist_item_id: 'item-1', result: 'Pass' },
+  { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
+];
+
+// Submit a spot-check with the standard valid header fields. The inspector's
+// "Checked by" signature is attached by default (G5); pass omitSignature to
+// exercise the rejection.
+function submitLift(
+  checklist,
+  { serviced_at = '2026-03-22', lift_id = 'lift-1', omitSignature = false } = {}
+) {
+  const req = request(app)
+    .post('/api/inspections/lift')
+    .set('Authorization', 'Bearer inspector-token')
+    .field('lift_id', lift_id)
+    .field('serviced_at', serviced_at)
+    .field('checklist', JSON.stringify(checklist));
+  if (!omitSignature) req.attach('inspector_signature', PNG, 'inspector.png');
+  return req;
+}
+
 describe('POST /api/inspections/lift', () => {
-  // Multipart: lift_id + serviced_at + checklist (JSON string) fields, photos as
-  // photo_<checklist_item_id> file parts.
-  //
-  // G1 requires every *active* template item to be answered — the fixture's
-  // active set is item-1 and item-2 (item-3 is inactive), so a complete
-  // checklist is exactly these two. The defect is Minor so this baseline needs
-  // no photo (G3); tests that exercise photos use majorChecklist below.
-  const validChecklist = [
-    { checklist_item_id: 'item-1', result: 'Pass' },
-    { checklist_item_id: 'item-2', result: 'Defect', severity: 'Minor', remark: 'Door sensor slow' },
-  ];
-  const majorChecklist = [
-    { checklist_item_id: 'item-1', result: 'Pass' },
-    { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
-  ];
-
-  // Submit a spot-check with the standard valid header fields. The inspector's
-  // "Checked by" signature is attached by default (G5); pass omitSignature to
-  // exercise the rejection.
-  function submitLift(
-    checklist,
-    { serviced_at = '2026-03-22', lift_id = 'lift-1', omitSignature = false } = {}
-  ) {
-    const req = request(app)
-      .post('/api/inspections/lift')
-      .set('Authorization', 'Bearer inspector-token')
-      .field('lift_id', lift_id)
-      .field('serviced_at', serviced_at)
-      .field('checklist', JSON.stringify(checklist));
-    if (!omitSignature) req.attach('inspector_signature', PNG, 'inspector.png');
-    return req;
-  }
-
   test('201 inspector creates a lift inspection with checklist results and a defect photo', async () => {
     const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
 
@@ -909,6 +964,43 @@ describe('GET /api/inspections/:id (manager detail)', () => {
     });
   });
 
+  // P.13: the manager must see what they are endorsing, not just the row.
+  test('200 includes checklist results with template text and both photos', async () => {
+    const create = await submitLift(majorChecklist).attach(
+      'photo_item-2',
+      PNG,
+      'defect.png'
+    );
+    // Stand in for the contractor's UC-010 completion submission.
+    for (const r of store.checklist_results) {
+      if (r.result === 'Defect') {
+        r.rectified = true;
+        r.completion_photo_url = 'https://cloudinary.test/defects/done.png';
+        r.completion_remark = 'Sensor replaced.';
+      }
+    }
+
+    const res = await request(app)
+      .get(`/api/inspections/${create.body.id}`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.checklist_results).toHaveLength(2);
+    // Ordered by the paper form's numbering, with the template text joined in.
+    expect(res.body.checklist_results.map((r) => r.display_order)).toEqual([1, 2]);
+    expect(res.body.checklist_results[0].item_text).toBe('Shaft walls free of cracks');
+
+    const defect = res.body.checklist_results[1];
+    expect(defect.result).toBe('Defect');
+    expect(defect.photo_url).toBeTruthy();          // before
+    expect(defect.completion_photo_url).toBeTruthy(); // after
+    expect(defect.completion_remark).toBe('Sensor replaced.');
+
+    // The inspector's G5 signature travels with the record for the audit trail.
+    expect(res.body.signatures).toHaveLength(1);
+    expect(res.body.signatures[0].signer_role).toBe('inspector');
+  });
+
   test('200 includes the linked cv_detection (bounding box etc.) when cv_detection_id is set', async () => {
     const id = await seedComplaint('Auto-detected: scratch');
     store.inspections.find((i) => i.id === id).cv_detection_id = 'cv-1';
@@ -998,6 +1090,7 @@ describe('POST /api/inspections/:id/close', () => {
       .field('endorser_role', extra.endorser_role ?? 'inspector')
       .field('endorser_id', extra.endorser_id ?? 'ins-1');
     if (extra.actual_cost !== undefined) req.field('actual_cost', extra.actual_cost);
+    if (extra.waiver_note !== undefined) req.field('waiver_note', extra.waiver_note);
     if (!extra.omitManagerSig) req.attach('manager_signature', PNG, 'mgr.png');
     if (!extra.omitEndorserSig) req.attach('endorser_signature', PNG, 'insp.png');
     return req;
@@ -1113,6 +1206,75 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.code).toBe('INVALID_STATE');
   });
 
+  // --- G8: close is gated on rectified defects ---------------------------
+  // Seed a lift inspection carrying one Major defect, then advance it to
+  // Rectified — the state a real close is reached from.
+  async function seedRectifiedWithDefect() {
+    const create = await submitLift(majorChecklist).attach(
+      'photo_item-2',
+      PNG,
+      'defect.png'
+    );
+    await rectify(create.body.id);
+    return create.body.id;
+  }
+
+  test('409 UNRECTIFIED_DEFECTS naming the item numbers still outstanding', async () => {
+    const id = await seedRectifiedWithDefect();
+    // Seeding uploaded the defect photo + inspector signature; measure only
+    // what the close attempt itself does.
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    cloudinaryService.uploadImage.mockClear();
+
+    const res = await closeRecord(id);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('UNRECTIFIED_DEFECTS');
+    // item-2 is display_order 2 — the inspector's own numbering.
+    expect(res.body.message).toContain('2');
+
+    // Blocked before the signature uploads.
+    expect(cloudinaryService.uploadImage).not.toHaveBeenCalled();
+  });
+
+  test('200 closes once the defect carries a completion photo', async () => {
+    const id = await seedRectifiedWithDefect();
+    // Stand in for the contractor's UC-010 submission.
+    for (const r of store.checklist_results) {
+      if (r.inspection_id === id && r.result === 'Defect') {
+        r.rectified = true;
+        r.completion_photo_url = 'https://cloudinary.test/defects/done.png';
+      }
+    }
+
+    const res = await closeRecord(id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Closed');
+  });
+
+  test('200 closes unrectified with a waiver note, recorded in the remark', async () => {
+    const id = await seedRectifiedWithDefect();
+
+    const res = await closeRecord(id, {
+      waiver_note: 'Lift decommissioned next month; rectification not economical.',
+    });
+
+    expect(res.status).toBe(200);
+    const closed = store.inspections.find((i) => i.id === id);
+    expect(closed.closing_remark).toContain('Waiver');
+    expect(closed.closing_remark).toContain('decommissioned');
+  });
+
+  test('409 when the waiver note is too short to count as a justification', async () => {
+    const id = await seedRectifiedWithDefect();
+
+    const res = await closeRecord(id, { waiver_note: 'too short' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('UNRECTIFIED_DEFECTS');
+  });
+
   test('queues an ai_jobs row on the 3rd close of a block+category in 30 days', async () => {
     // Three complaints in the same block+category (default 'Uncategorised').
     const ids = [];
@@ -1126,6 +1288,103 @@ describe('POST /api/inspections/:id/close', () => {
     // Only the 3rd close crosses the threshold → exactly one queued job.
     expect(store.ai_jobs).toHaveLength(1);
     expect(store.ai_jobs[0]).toMatchObject({ location_block: '44A', category: 'Uncategorised' });
+  });
+});
+
+// UC-004 Alt 4 (P.12): the manager refuses the contractor's rectification.
+describe('POST /api/inspections/:id/reject', () => {
+  const REASON = 'Completion photo shows the same defect — sensor still misaligned.';
+
+  // A lift inspection with a defect the contractor claims to have rectified.
+  async function seedAwaitingEndorsement() {
+    const create = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+    for (const r of store.checklist_results) {
+      if (r.inspection_id === create.body.id && r.result === 'Defect') {
+        r.rectified = true;
+        r.completion_photo_url = 'https://cloudinary.test/defects/done.png';
+      }
+    }
+    await request(app)
+      .patch(`/api/inspections/${create.body.id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Rectified' });
+    return create.body.id;
+  }
+
+  test('200 sends the record back to Assigned with a fresh deadline', async () => {
+    const id = await seedAwaitingEndorsement();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Assigned');
+    expect(res.body.reopen_count).toBe(1);
+    expect(new Date(res.body.target_deadline).getTime()).toBeGreaterThan(Date.now());
+
+    // The completion proof is withdrawn, so G8 blocks a close again.
+    const defect = store.checklist_results.find(
+      (r) => r.inspection_id === id && r.result === 'Defect'
+    );
+    expect(defect.rectified).toBe(false);
+    expect(defect.completion_photo_url).toBeNull();
+
+    // Audit trail records the rejection with its reason.
+    const rejected = store.history.find((h) => h.action === 'Rectification Rejected');
+    expect(rejected).toBeTruthy();
+    expect(rejected.note).toBe(REASON);
+    expect(rejected.new_status).toBe('Assigned');
+
+    // G20: the inspector's original signature is retained, not overwritten.
+    expect(store.signatures).toHaveLength(1);
+  });
+
+  test('400 when the reason is shorter than 10 characters', async () => {
+    const id = await seedAwaitingEndorsement();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: 'no' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('409 INVALID_STATE when the record is not awaiting endorsement', async () => {
+    const create = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+
+    const res = await request(app)
+      .post(`/api/inspections/${create.body.id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('INVALID_STATE');
+  });
+
+  test('403 when the caller is not a manager', async () => {
+    const id = await seedAwaitingEndorsement();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer inspector-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('404 for an unknown inspection id', async () => {
+    const res = await request(app)
+      .post('/api/inspections/insp-nope/reject')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
   });
 });
 

@@ -146,11 +146,11 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 | `INVALID_STATE` 409 | **Built.** Close requires status `Rectified` or `Resolved`. `Resolved` is accepted alongside `Rectified` because it is also a post-work state in the migration 004 enum. |
 | `VALIDATION_ERROR` 400 | **Built** (remark < 10 chars, and non-numeric/negative `actual_cost`). |
 | `SIGNATURE_REQUIRED` 400 | **Built.** A missing `manager_signature`/`endorser_signature` part returns this code — the same one UC-010's contractor rectify flow returns for the same condition. |
-| `UNRECTIFIED_DEFECTS` 409 | **Not built.** G8 is not enforced — a record can still be closed while `checklist_results` rows remain unrectified or lack a `completion_photo_url`. |
+| `UNRECTIFIED_DEFECTS` 409 | **Built.** Close is refused while any `Defect` row is unrectified or lacks a `completion_photo_url`, naming the outstanding item numbers. A manager may override with `waiver_note` (≥10 chars), which is appended to the closing remark. |
 
 ### Extension work
 
-~~Constrain the endorser to `inspector` (G7)~~ — done. Remaining: add the G8 completeness gate; build the reject endpoint, UI, and re-notify path.
+~~Constrain the endorser to `inspector` (G7)~~; ~~add the G8 completeness gate~~; ~~build the reject endpoint and UI~~ — done. Remaining: the re-notify path (UC-014 `email_type = 'rejection'`, Davian's D.4) — the reject endpoint is in place for it to hook into.
 
 ---
 
@@ -474,7 +474,7 @@ Every state transition appends an `inspection_history` row carrying actor, actio
 
 **Required actions (completeness check):** `Created` · `Defect Alert Sent` · `Filed — no defects` · `Assigned` · `Reassigned` · `Acknowledged` · `Work Progress Saved` · `On Hold — {reason}` · `Resumed` · `Rectified & Signed` · `Rectification Rejected` · `Overdue Reminder Sent` · `Priority Escalated` · `Jointly Endorsed & Closed`.
 
-**Status:** `Created` and `Filed — no defects` are now written for lift spot-checks, in the same transaction as the record (UC-001 steps 10–11). Still missing: `Created` on the resident-complaint path, `Reassigned` (a reassign logs as `Assigned`), `Resumed` (no resume path exists), and `Jointly Endorsed & Closed` (close logs `'Closed'`). `On Hold — {reason}` logs the action as `On Hold` with the reason in `note`.
+**Status:** `Created`, `Filed — no defects` and `Rectification Rejected` are now written. Still missing: `Created` on the resident-complaint path, `Reassigned` (a reassign logs as `Assigned`), `Resumed` (no resume path exists), and `Jointly Endorsed & Closed` (close logs `'Closed'`). `On Hold — {reason}` logs the action as `On Hold` with the reason in `note`.
 
 **Extension:** add the four new actions (`Defect Alert Sent`, `Filed — no defects`, `Rectification Rejected`, `Overdue Reminder Sent`) and assert the full set in tests.
 

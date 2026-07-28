@@ -101,6 +101,15 @@ router.patch(
   inspectionController.updateInspection
 );
 
+// POST /api/inspections/:id/reject — manager refuses a rectification (UC-004
+// Alt 4): back to 'Assigned' with a fresh deadline and a reason. JSON body.
+router.post(
+  '/:id/reject',
+  requireAuth,
+  requireRole('manager'),
+  inspectionController.rejectRectification
+);
+
 // POST /api/inspections/:id/close — manager closes a record (UC-004) with a
 // remark + dual e-signature (manager_signature & endorser_signature PNGs) and
 // optional actual_cost. Separate from PATCH /:id, which excludes 'Closed'.

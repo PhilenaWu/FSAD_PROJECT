@@ -25,6 +25,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import ImageNotSupportedOutlinedIcon from '@mui/icons-material/ImageNotSupportedOutlined';
+import ReplayOutlinedIcon from '@mui/icons-material/ReplayOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import SignaturePad from '../components/SignaturePad';
 import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
@@ -57,6 +58,49 @@ function formatDateTime(iso) {
   });
 }
 
+// One side of the before/after pair. Renders a labelled placeholder when the
+// photo is absent, so "no completion proof yet" is visible rather than implied
+// by a missing element.
+function PhotoSlot({ label, url }) {
+  return (
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+        {label}
+      </Typography>
+      {url ? (
+        <Box
+          component="img"
+          src={url}
+          alt={label}
+          sx={{
+            width: '100%',
+            maxHeight: 200,
+            objectFit: 'cover',
+            borderRadius: 2,
+            display: 'block',
+          }}
+        />
+      ) : (
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          spacing={0.5}
+          sx={{
+            height: 120,
+            border: '1px dashed',
+            borderColor: 'divider',
+            borderRadius: 2,
+            color: 'text.secondary',
+          }}
+        >
+          <ImageNotSupportedOutlinedIcon fontSize="small" />
+          <Typography variant="caption">Not submitted</Typography>
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
 export default function InspectionDetailPage() {
   const { id } = useParams();
   const { profile } = useAuth();
@@ -76,12 +120,35 @@ export default function InspectionDetailPage() {
 
   // Close panel state (UC-004). Separate from triage — closing is terminal.
   const navigate = useNavigate();
-  const [closeForm, setCloseForm] = useState({ closing_remark: '', actual_cost: '' });
+  const [closeForm, setCloseForm] = useState({
+    closing_remark: '',
+    actual_cost: '',
+    waiver_note: '', // G8: only sent when defects remain unrectified
+  });
   const [closing, setClosing] = useState(false);
   const [closed, setClosed] = useState(false); // freezes the panel post-success
   const [closeFeedback, setCloseFeedback] = useState(null);
   const managerPadRef = useRef(null);
   const endorserPadRef = useRef(null);
+
+  // Reject panel state (UC-004 Alt 4).
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectFeedback, setRejectFeedback] = useState(null);
+
+  // Defect rows drive the endorsement panel; `outstandingItems` mirrors the
+  // server's G8 gate so the manager sees what blocks the close before trying.
+  const defectResults = useMemo(
+    () => (inspection?.checklist_results ?? []).filter((r) => r.result === 'Defect'),
+    [inspection]
+  );
+  const outstandingItems = useMemo(
+    () =>
+      defectResults
+        .filter((r) => !r.rectified || !r.completion_photo_url)
+        .map((r) => r.display_order),
+    [defectResults]
+  );
 
   // Second endorser for the dual e-signature. G7/R9: the endorsing signature
   // must belong to an inspector — the client asked for sign-off from EM
@@ -211,6 +278,9 @@ export default function InspectionDetailPage() {
       const formData = new FormData();
       formData.append('closing_remark', closeForm.closing_remark.trim());
       if (cost !== undefined) formData.append('actual_cost', cost);
+      if (outstandingItems.length > 0) {
+        formData.append('waiver_note', closeForm.waiver_note.trim());
+      }
       formData.append('endorser_role', endorser.role);
       formData.append('endorser_id', endorser.id);
       formData.append('manager_signature', managerBlob, 'manager.png');
@@ -232,6 +302,36 @@ export default function InspectionDetailPage() {
       });
     } finally {
       setClosing(false);
+    }
+  }
+
+  // Send the record back to the contractor with a reason (UC-004 Alt 4).
+  async function handleReject() {
+    setRejectFeedback(null);
+    if (rejectReason.trim().length < 10) {
+      setRejectFeedback({
+        severity: 'error',
+        message: 'Rejection reason must be at least 10 characters.',
+      });
+      return;
+    }
+
+    setRejecting(true);
+    try {
+      await api.post(`/api/inspections/${id}/reject`, { reason: rejectReason.trim() });
+      setRejectReason('');
+      setRejectFeedback({
+        severity: 'success',
+        message: 'Sent back to the contractor with a fresh 14-day deadline.',
+      });
+      load(); // status, reopen_count and the cleared proofs all change
+    } catch (err) {
+      setRejectFeedback({
+        severity: 'error',
+        message: err.response?.data?.message ?? 'Could not reject. Please try again.',
+      });
+    } finally {
+      setRejecting(false);
     }
   }
 
@@ -459,6 +559,154 @@ export default function InspectionDetailPage() {
               </Paper>
             </Stack>
 
+            {/* Joint endorsement (UC-004 / P.13): the checklist as inspected,
+                with each defect's original photo beside the contractor's
+                completion proof, so the manager endorses what they can see. */}
+            {inspection.checklist_results?.length > 0 && (
+              <Paper elevation={1} sx={{ p: 3, borderRadius: 3 }}>
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  sx={{ mb: 0.5 }}
+                >
+                  <Typography variant="subtitle1" fontWeight={700}>
+                    Spot-check results
+                  </Typography>
+                  <Stack direction="row" spacing={1}>
+                    {inspection.reopen_count > 0 && (
+                      <Chip
+                        size="small"
+                        color="warning"
+                        label={`Re-opened ×${inspection.reopen_count}`}
+                      />
+                    )}
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={defectResults.length > 0 ? 'error' : 'success'}
+                      label={
+                        defectResults.length > 0
+                          ? `${defectResults.length} defect${defectResults.length > 1 ? 's' : ''}`
+                          : 'All items passed'
+                      }
+                    />
+                  </Stack>
+                </Stack>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', mb: 2 }}
+                >
+                  {outstandingItems.length > 0
+                    ? `Item(s) ${outstandingItems.join(', ')} still need a completion photo before this can be closed.`
+                    : 'Every defect has been rectified with a completion photo.'}
+                </Typography>
+
+                <Stack divider={<Divider />} spacing={2}>
+                  {defectResults.map((r) => (
+                    <Box key={r.id}>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        flexWrap="wrap"
+                        useFlexGap
+                        sx={{ mb: 1 }}
+                      >
+                        <Typography variant="body2" fontWeight={600}>
+                          {r.display_order}. {r.item_text}
+                        </Typography>
+                        {r.severity && (
+                          <Chip
+                            size="small"
+                            color={r.severity === 'Minor' ? 'default' : 'error'}
+                            label={r.severity}
+                          />
+                        )}
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={r.rectified && r.completion_photo_url ? 'success' : 'warning'}
+                          label={
+                            r.rectified && r.completion_photo_url
+                              ? 'Rectified'
+                              : 'Awaiting rectification'
+                          }
+                        />
+                      </Stack>
+
+                      {r.remark && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          Inspector: {r.remark}
+                        </Typography>
+                      )}
+                      {r.completion_remark && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          Contractor: {r.completion_remark}
+                        </Typography>
+                      )}
+
+                      {/* Before ⟷ after. Both sides always render so a missing
+                          completion photo reads as an absence, not an omission. */}
+                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                        <PhotoSlot label="Defect" url={r.photo_url} />
+                        <PhotoSlot label="Completion proof" url={r.completion_photo_url} />
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+
+                {/* Reject (UC-004 Alt 4) — only meaningful once the contractor
+                    has claimed the work is done. */}
+                {inspection.status === 'Rectified' && (
+                  <Box sx={{ mt: 3 }}>
+                    <Divider sx={{ mb: 2 }} />
+                    {rejectFeedback && (
+                      <Alert
+                        severity={rejectFeedback.severity}
+                        onClose={() => setRejectFeedback(null)}
+                        sx={{ mb: 2 }}
+                      >
+                        {rejectFeedback.message}
+                      </Alert>
+                    )}
+                    <Stack spacing={1.5}>
+                      <TextField
+                        label="Rejection reason"
+                        size="small"
+                        multiline
+                        minRows={2}
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        helperText="At least 10 characters — shown to the contractor and recorded in the audit trail"
+                      />
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        onClick={handleReject}
+                        disabled={rejecting}
+                        startIcon={
+                          rejecting ? (
+                            <CircularProgress size={16} color="inherit" />
+                          ) : (
+                            <ReplayOutlinedIcon />
+                          )
+                        }
+                        sx={{ alignSelf: 'flex-start' }}
+                      >
+                        {rejecting ? 'Sending back…' : 'Reject rectification'}
+                      </Button>
+                      <Typography variant="caption" color="text.secondary">
+                        Sends the record back to the contractor as Assigned with a
+                        fresh 14-day deadline. Signatures already collected are kept.
+                      </Typography>
+                    </Stack>
+                  </Box>
+                )}
+              </Paper>
+            )}
+
             {/* Close record (UC-004) — terminal action, visually distinct from
                 the triage card: outlined with the error accent, not elevated. */}
             <Paper
@@ -514,6 +762,30 @@ export default function InspectionDetailPage() {
                   sx={{ maxWidth: 220 }}
                   disabled={closed}
                 />
+
+                {/* G8: closing over unrectified defects is allowed, but only as
+                    an explicit, recorded exception. */}
+                {outstandingItems.length > 0 && (
+                  <>
+                    <Alert severity="warning">
+                      Item(s) {outstandingItems.join(', ')} have no completion photo.
+                      Closing now requires a waiver note explaining why.
+                    </Alert>
+                    <TextField
+                      label="Waiver note"
+                      size="small"
+                      multiline
+                      minRows={2}
+                      required
+                      value={closeForm.waiver_note}
+                      onChange={(e) =>
+                        setCloseForm({ ...closeForm, waiver_note: e.target.value })
+                      }
+                      helperText="At least 10 characters — appended to the closing remark for the audit trail"
+                      disabled={closed}
+                    />
+                  </>
+                )}
 
                 {/* G7: pick who endorses before signing, so the pad below is
                     labelled with the inspector actually signing off. */}

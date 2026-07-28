@@ -459,7 +459,7 @@ async function updateInspection(req, res, next) {
 // own validation, signature capture, and archival (is_deleted = TRUE).
 async function closeInspection(req, res, next) {
   try {
-    const { closing_remark, actual_cost, endorser_role, endorser_id } = req.body;
+    const { closing_remark, actual_cost, endorser_role, endorser_id, waiver_note } = req.body;
 
     // Remark: mandatory, at least 10 characters (trimmed).
     if (!closing_remark || closing_remark.trim().length < 10) {
@@ -539,6 +539,20 @@ async function closeInspection(req, res, next) {
       });
     }
 
+    // G8: every defect must be rectified with the contractor's proof photo
+    // before the record can be jointly endorsed. A manager who needs to close
+    // regardless supplies `waiver_note` (>= 10 chars), which is recorded in the
+    // closing remark so the exception is visible in the audit trail.
+    const outstanding = await inspectionModel.findUnrectifiedDefects(req.params.id);
+    const waiver = typeof waiver_note === 'string' ? waiver_note.trim() : '';
+    if (outstanding.length > 0 && waiver.length < 10) {
+      const items = outstanding.map((d) => d.display_order).join(', ');
+      return res.status(409).json({
+        code: 'UNRECTIFIED_DEFECTS',
+        message: `Item(s) ${items} are not rectified with a completion photo. Provide a waiver note of at least 10 characters to close anyway.`,
+      });
+    }
+
     // Store both signatures in Cloudinary (/signatures folder). Every rejection
     // above happens first, so a failed close never leaves orphaned uploads.
     const [managerUrl, endorserUrl] = await Promise.all([
@@ -549,7 +563,13 @@ async function closeInspection(req, res, next) {
     const inspection = await inspectionModel.closeInspection(
       req.params.id,
       {
-        closing_remark: closing_remark.trim(),
+        // A waived close records why, so the exception survives in the record.
+        closing_remark:
+          outstanding.length > 0
+            ? `${closing_remark.trim()}\n\n[Waiver — item(s) ${outstanding
+                .map((d) => d.display_order)
+                .join(', ')} closed unrectified] ${waiver}`
+            : closing_remark.trim(),
         actual_cost: cost,
         signatures: [
           { signer_role: 'manager', signer_id: req.user.id, image_url: managerUrl },
@@ -599,6 +619,54 @@ async function closeInspection(req, res, next) {
   }
 }
 
+// POST /api/inspections/:id/reject — the manager refuses a contractor's
+// rectification (UC-004 Alt 4). The record returns to 'Assigned' with a fresh
+// 14-day deadline and an incremented reopen_count; prior signatures are kept
+// (G20). Separate from PATCH /:id because it carries its own precondition and
+// side effects.
+async function rejectRectification(req, res, next) {
+  try {
+    const reason = (req.body.reason ?? '').trim();
+    if (reason.length < 10) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'Rejection reason must be at least 10 characters.',
+      });
+    }
+
+    const inspection = await inspectionModel.rejectRectification(
+      req.params.id,
+      reason,
+      req.user.id
+    );
+    if (!inspection) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
+    }
+    if (inspection === 'INVALID_STATE') {
+      return res.status(409).json({
+        code: 'INVALID_STATE',
+        message: 'Only a Rectified record can have its rectification rejected.',
+      });
+    }
+
+    // Live push — best-effort, never fails the rejection (G13). The contractor
+    // room is included so their inbox refreshes with the reason (Zoe's Z.3).
+    try {
+      socketService.emitToRooms(
+        ['manager-room', `block-${inspection.location_block}`],
+        'status_update',
+        { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
+      );
+    } catch {
+      // Socket not initialised (e.g. tests) — ignore.
+    }
+
+    res.json(inspection);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/inspections/defect-alert-demo — cron-guarded trigger used by the
 // GitHub Actions demo workflow. Sends a fixed sample defect-assignment alert to
 // everyone on DEFECT_ALERT_RECIPIENTS so the whole team receives the email live
@@ -640,5 +708,6 @@ module.exports = {
   listForManager,
   listMine,
   listStatusBoard,
+  rejectRectification,
   updateInspection,
 };
