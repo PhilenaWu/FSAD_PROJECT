@@ -260,6 +260,17 @@ GET   /api/admin/vendors/expiry-check       daily job (CRON_SECRET bearer, not J
   named account holders, all with working logins (password `TempPass123!`).
   One vendor (Schindler Care / Ahmad Faizal) is pre-suspended with an expired
   contract to demo the offboarding state.
+- Migration `029` seeds two EM Services inspector logins (same password,
+  `TempPass123!`): `inspector1@emservices.sg` (Wei Jie Tan) and
+  `inspector2@emservices.sg` (Nurul Aisyah). At least one **active** inspector
+  must exist or UC-004 close is blocked — the endorsing signature has to belong
+  to a user whose role is `inspector` (§11 G7), and the close panel populates
+  its picker from `GET /api/users/inspectors`. These accounts also file UC-001
+  spot-checks.
+- Migration `030` attributes the 12 `Demo:` lift spot-checks from `018` to those
+  inspectors (alternating), so the close panel pre-selects an endorser instead
+  of asking for one on every demo record. Scoped to `Demo:%` rows with a NULL
+  `inspector_id`, so real spot-checks are untouched.
 - The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
   repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
   backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.

@@ -25,4 +25,14 @@ async function getMe(req, res, next) {
   }
 }
 
-module.exports = { getMe };
+// GET /api/users/inspectors — active inspectors for the UC-004 close panel's
+// endorser picker. Manager-only (enforced at the route).
+async function listInspectors(req, res, next) {
+  try {
+    res.json(await userModel.findActiveInspectors());
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getMe, listInspectors };

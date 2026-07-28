@@ -63,6 +63,7 @@ export default function InspectionDetailPage() {
 
   const [inspection, setInspection] = useState(null);
   const [contractors, setContractors] = useState([]);
+  const [inspectors, setInspectors] = useState([]); // endorser candidates (G7)
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -82,28 +83,36 @@ export default function InspectionDetailPage() {
   const managerPadRef = useRef(null);
   const endorserPadRef = useRef(null);
 
-  // Second endorser for the dual e-signature, derived from the record:
-  // the inspector if there is one, else the assigned contractor's linked login.
-  // Null → close stays disabled with an explanatory note (never hidden).
+  // Second endorser for the dual e-signature. G7/R9: the endorsing signature
+  // must belong to an inspector — the client asked for sign-off from EM
+  // Services, so the contractor who did the work can't endorse it. Defaults to
+  // the record's own inspector where there is one (lift spot-checks); resident
+  // complaints have none, so the manager nominates any active inspector.
+  // Empty selection → close stays disabled with an explanatory note.
+  const [endorserId, setEndorserId] = useState('');
   const endorser = useMemo(() => {
-    if (!inspection) return null;
-    if (inspection.inspector_id) {
-      return { role: 'inspector', id: inspection.inspector_id, label: 'Inspector' };
-    }
-    const assigned = contractors.find((c) => c.id === inspection.contractor_id);
-    if (assigned?.user_id) {
-      return { role: 'contractor', id: assigned.user_id, label: assigned.name };
-    }
-    return null;
-  }, [inspection, contractors]);
+    const chosen = inspectors.find((i) => i.id === endorserId);
+    if (!chosen) return null;
+    return { role: 'inspector', id: chosen.id, label: chosen.full_name ?? chosen.email };
+  }, [inspectors, endorserId]);
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([api.get(`/api/inspections/${id}`), api.get('/api/contractors')])
-      .then(([insRes, conRes]) => {
+    Promise.all([
+      api.get(`/api/inspections/${id}`),
+      api.get('/api/contractors'),
+      api.get('/api/users/inspectors'),
+    ])
+      .then(([insRes, conRes, inspRes]) => {
         const ins = insRes.data;
         setInspection(ins);
         setContractors(conRes.data);
+        setInspectors(inspRes.data);
+        // Default the endorser to the record's own inspector when it has one
+        // (lift spot-checks); the manager can still nominate a different one.
+        if (ins.inspector_id && inspRes.data.some((i) => i.id === ins.inspector_id)) {
+          setEndorserId(ins.inspector_id);
+        }
         setForm({
           status: ins.status === 'Closed' ? '' : ins.status,
           priority: ins.priority,
@@ -506,6 +515,32 @@ export default function InspectionDetailPage() {
                   disabled={closed}
                 />
 
+                {/* G7: pick who endorses before signing, so the pad below is
+                    labelled with the inspector actually signing off. */}
+                {inspectors.length === 0 ? (
+                  <Alert severity="warning">
+                    No active inspector account exists — dual endorsement requires
+                    one (G7). Closing is disabled until an inspector is available.
+                  </Alert>
+                ) : (
+                  <TextField
+                    select
+                    required
+                    label="Endorsing inspector"
+                    size="small"
+                    value={endorserId}
+                    onChange={(e) => setEndorserId(e.target.value)}
+                    helperText="The EM Services inspector signing off on this closure"
+                    disabled={closed}
+                  >
+                    {inspectors.map((i) => (
+                      <MenuItem key={i.id} value={i.id}>
+                        {i.full_name ?? i.email}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
+
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                   <Box sx={{ flex: 1 }}>
                     <SignaturePad
@@ -520,15 +555,6 @@ export default function InspectionDetailPage() {
                     />
                   </Box>
                 </Stack>
-
-                {!endorser && (
-                  <Alert severity="warning">
-                    No valid endorser yet — dual endorsement needs this record's
-                    inspector, or an assigned contractor with a login (see
-                    backend/scripts/seed-demo-contractor.md). Closing is disabled
-                    until one is available.
-                  </Alert>
-                )}
 
                 <Button
                   type="submit"

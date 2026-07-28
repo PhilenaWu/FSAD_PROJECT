@@ -2,14 +2,18 @@
 // Targets <= 100 KB while preserving legibility — photos are defect evidence,
 // so we hold dimensions (long edge <= 1600px) and step JPEG quality down first,
 // shrinking dimensions only when quality alone can't hit the target.
-// Any failure returns the ORIGINAL file: compression must never block submit
-// (the backend's 5 MB multer cap remains the safety net).
+// Any failure returns the ORIGINAL file: compression must never block submit.
+// The backend enforces the same 100 KB ceiling (G4) and rejects anything over
+// it, so the ladder below runs far enough down that real photos always land
+// under the target rather than being bounced server-side.
 
 const DEFAULT_MAX_BYTES = 100 * 1024;
 const DEFAULT_MAX_EDGE = 1600;
 // Quality ladder tried at each dimension notch (first pass starts higher).
 const QUALITY_STEPS = [0.85, 0.75, 0.65, 0.55, 0.45];
-const EDGE_STEPS = [1600, 1280, 1024, 800];
+// Dimension notches, walked down until the target is met. The last two are the
+// aggressive fallbacks that keep dense/noisy images inside 100 KB.
+const EDGE_STEPS = [1600, 1280, 1024, 800, 640, 480];
 
 // Decode to something drawable. createImageBitmap is fastest; fall back to an
 // <img> + object URL for browsers without it.

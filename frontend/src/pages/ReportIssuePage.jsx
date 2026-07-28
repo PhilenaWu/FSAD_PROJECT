@@ -150,6 +150,12 @@ export default function ReportIssuePage() {
       const code = err.response?.data?.code;
       if (code === 'VALIDATION_ERROR') {
         setFeedback({ severity: 'error', message: err.response.data.message });
+      } else if (code === 'PHOTO_TOO_LARGE') {
+        setFeedback({
+          severity: 'error',
+          message:
+            'That photo is too large even after compression. Try a smaller or less detailed image.',
+        });
       } else if (code === 'DUPLICATE_SUBMISSION') {
         setFeedback({
           severity: 'warning',

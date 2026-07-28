@@ -21,6 +21,20 @@ const upload = multer({
   },
 });
 
+// G4 / R14 ("limit to 100k per photo"): photos are compressed to ≤100 KB
+// client-side (utils/imageCompress); the server enforces the same ceiling so a
+// client that skips compression can't fill storage. One photo per checklist
+// item, hence 25. Over-size parts surface as PHOTO_TOO_LARGE via the error
+// handler. Signatures keep the `upload` instance above — they are not photos,
+// and the 100 KB rule is about photo storage.
+const uploadPhoto = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024, files: 25 },
+  fileFilter: (req, file, cb) => {
+    cb(null, file.mimetype.startsWith('image/'));
+  },
+});
+
 // GET /api/inspections/defect-alert-demo — cron-guarded demo trigger (GitHub
 // Actions). Emails a sample defect alert to DEFECT_ALERT_RECIPIENTS. Keep above
 // '/:id' so 'defect-alert-demo' isn't captured as an id.
@@ -44,7 +58,7 @@ router.post(
   '/',
   requireAuth,
   requireRole('resident'),
-  upload.single('photo'),
+  uploadPhoto.single('photo'),
   inspectionController.create
 );
 
@@ -55,7 +69,7 @@ router.post(
   '/lift',
   requireAuth,
   requireRole('inspector'),
-  upload.any(),
+  uploadPhoto.any(),
   inspectionController.createLiftInspection
 );
 

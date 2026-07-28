@@ -105,6 +105,13 @@ export default function NewInspectionPage() {
     });
   }
 
+  // Severity drives the photo rule (G3): Minor defects must not carry one, so
+  // switching to Minor drops any photo already attached.
+  function setSeverity(itemId, severity) {
+    if (severity === 'Minor') setPhoto(itemId, null);
+    setAnswer(itemId, { severity });
+  }
+
   function resetForm() {
     for (const a of Object.values(answers)) {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
@@ -119,19 +126,27 @@ export default function NewInspectionPage() {
     e.preventDefault();
     setFeedback(null);
 
-    // Client guard: a lift, the servicing date, and every item answered. The
-    // paper form always carries a servicing date, so require it here even though
-    // the column is nullable for older records.
+    // Client guard mirroring the server's G1–G3 checks, so the inspector fixes
+    // the problem inline rather than losing a round trip to a 400.
     const unanswered = items.filter((i) => !answers[i.id]?.result);
-    if (!liftId || !servicedAt || unanswered.length > 0) {
-      setFeedback({
-        severity: 'error',
-        message: !liftId
-          ? 'Select a lift before submitting.'
-          : !servicedAt
-            ? 'Enter the servicing date before submitting.'
-            : `Answer all checklist items (${unanswered.length} remaining).`,
-      });
+    const defects = items.filter((i) => answers[i.id]?.result === 'Defect');
+    const noSeverity = defects.filter((i) => !answers[i.id].severity);
+    const noPhoto = defects.filter(
+      (i) => answers[i.id].severity && answers[i.id].severity !== 'Minor' && !answers[i.id].photo
+    );
+
+    let problem;
+    if (!liftId) problem = 'Select a lift before submitting.';
+    else if (!servicedAt) problem = 'Enter the servicing date before submitting.';
+    else if (unanswered.length > 0)
+      problem = `Answer all checklist items (${unanswered.length} remaining).`;
+    else if (noSeverity.length > 0)
+      problem = `Choose a severity for every defect (${noSeverity.length} still unset).`;
+    else if (noPhoto.length > 0)
+      problem = `Attach a photo to each Major or Critical defect (${noPhoto.length} missing).`;
+
+    if (problem) {
+      setFeedback({ severity: 'error', message: problem });
       return;
     }
 
@@ -331,7 +346,8 @@ export default function NewInspectionPage() {
                                 </RadioGroup>
                               </Stack>
 
-                              {/* Defect details: severity + remark + optional photo. */}
+                              {/* Defect details: severity (required) + remark, and
+                                  a photo for Major/Critical only. */}
                               {a.result === 'Defect' && (
                                 <Stack spacing={1.5} sx={{ mt: 1.5 }}>
                                   <Stack
@@ -340,12 +356,11 @@ export default function NewInspectionPage() {
                                   >
                                     <TextField
                                       select
+                                      required
                                       label="Severity"
                                       size="small"
                                       value={a.severity ?? ''}
-                                      onChange={(e) =>
-                                        setAnswer(item.id, { severity: e.target.value })
-                                      }
+                                      onChange={(e) => setSeverity(item.id, e.target.value)}
                                       sx={{ minWidth: 160 }}
                                     >
                                       {SEVERITIES.map((s) => (
@@ -365,9 +380,19 @@ export default function NewInspectionPage() {
                                     />
                                   </Stack>
 
+                                  {/* G3: Minor defects are remark-only — the
+                                      client's "no photos on minor issue" rule. */}
+                                  {a.severity === 'Minor' && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      Minor defects are recorded by remark only — no photo.
+                                    </Typography>
+                                  )}
+
                                   {/* Compact per-item photo picker (thumbnail +
-                                      remove, like ReportIssuePage's, scaled down). */}
-                                  {a.previewUrl ? (
+                                      remove, like ReportIssuePage's, scaled down).
+                                      Required once severity is Major/Critical. */}
+                                  {a.severity && a.severity !== 'Minor' && (
+                                    a.previewUrl ? (
                                     <Stack
                                       direction="row"
                                       spacing={1.5}
@@ -439,6 +464,7 @@ export default function NewInspectionPage() {
                                       <AddPhotoAlternateOutlinedIcon fontSize="small" />
                                       Add photo
                                     </Box>
+                                    )
                                   )}
                                 </Stack>
                               )}

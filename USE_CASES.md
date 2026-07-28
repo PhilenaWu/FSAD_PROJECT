@@ -136,9 +136,19 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 
 `ENDORSER_MUST_BE_INSPECTOR` 400 · `UNRECTIFIED_DEFECTS` 409 (lists item numbers) · `SIGNATURE_REQUIRED` 400 · `VALIDATION_ERROR` 400 (remark too short) · `INVALID_STATE` 409
 
+**Implementation status of the above** (as built in `inspectionController.closeInspection`):
+
+| Code | Status |
+|---|---|
+| `ENDORSER_MUST_BE_INSPECTOR` 400 | **Built.** Enforced twice: the submitted `endorser_role` must be `inspector`, *and* the nominated `endorser_id` is re-read from `users` and its stored `role` must match — so a signature can never record a role its signer doesn't hold. The endorser may be **any active inspector**, not only the record's own; resident complaints have no `inspector_id`, so the manager nominates one from `GET /api/users/inspectors`. |
+| `INVALID_STATE` 409 | **Built.** Close requires status `Rectified` or `Resolved`. `Resolved` is accepted alongside `Rectified` because it is also a post-work state in the migration 004 enum. |
+| `VALIDATION_ERROR` 400 | **Built** (remark < 10 chars, and non-numeric/negative `actual_cost`). |
+| `SIGNATURE_REQUIRED` 400 | **Built.** A missing `manager_signature`/`endorser_signature` part returns this code — the same one UC-010's contractor rectify flow returns for the same condition. |
+| `UNRECTIFIED_DEFECTS` 409 | **Not built.** G8 is not enforced — a record can still be closed while `checklist_results` rows remain unrectified or lack a `completion_photo_url`. |
+
 ### Extension work
 
-Constrain the endorser to `inspector` (G7); add the G8 completeness gate; build the reject endpoint, UI, and re-notify path.
+~~Constrain the endorser to `inspector` (G7)~~ — done. Remaining: add the G8 completeness gate; build the reject endpoint, UI, and re-notify path.
 
 ---
 

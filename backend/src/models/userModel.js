@@ -30,6 +30,19 @@ async function findById(id) {
   return result.rows[0];
 }
 
+// Active inspectors, for the UC-004 endorser picker (G7: the endorsing
+// signature must belong to an inspector). Minimal projection — the manager
+// only needs to name and identify them.
+async function findActiveInspectors() {
+  const result = await query(
+    `SELECT id, full_name, email
+     FROM users
+     WHERE role = 'inspector' AND status = 'active'
+     ORDER BY full_name`
+  );
+  return result.rows;
+}
+
 // Set a user's account status ('active' | 'suspended') — UC-012 suspend/renew.
 // Returns the updated row, or undefined if the id does not exist.
 async function setStatus(id, status) {
@@ -69,6 +82,7 @@ module.exports = {
   findByEmail,
   create,
   findById,
+  findActiveInspectors,
   setStatus,
   setContractorId,
   updateHolder,

@@ -6,6 +6,7 @@
 const { query } = require('../config/db');
 const inspectionModel = require('../models/inspectionModel');
 const liftModel = require('../models/liftModel');
+const checklistItemModel = require('../models/checklistItemModel');
 const cloudinaryService = require('../services/cloudinaryService');
 const openaiService = require('../services/openaiService');
 const emailService = require('../services/emailService');
@@ -120,10 +121,12 @@ async function create(req, res, next) {
 }
 
 // POST /api/inspections/lift — inspector submits a lift spot-check (multipart:
-// `lift_id`, optional `serviced_at`, and `checklist` [JSON string of
-// { checklist_item_id, result, severity?, remark? }] fields, plus optional
-// `photo_<checklist_item_id>` file parts for Defect rows). Note: HLD §6.2 folds
-// this into POST /api/inspections
+// `lift_id`, `serviced_at`, and `checklist` [JSON string of
+// { checklist_item_id, result, severity?, remark? }] fields, plus
+// `photo_<checklist_item_id>` file parts for Major/Critical defects). Enforces
+// HLD §11 guard rails G1–G4 server-side: complete checklist, severity on every
+// defect, photo rules by severity, and the 100 KB cap (multer, see routes).
+// Note: HLD §6.2 folds this into POST /api/inspections
 // via source_type; it lives on a sibling route here so the inspector role guard
 // stays route-level and the resident path stays untouched. No OpenAI
 // categorisation and no duplicate guard (that guard protects against resident
@@ -147,16 +150,15 @@ async function createLiftInspection(req, res, next) {
       });
     }
 
-    // Required fields: a lift and a non-empty checklist.
-    if (!lift_id || !Array.isArray(checklist) || checklist.length === 0) {
+    // G1: a lift, the servicing date, and a non-empty checklist are required.
+    if (!lift_id || !serviced_at || !Array.isArray(checklist) || checklist.length === 0) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
-        message: 'lift_id and a non-empty checklist array are required.',
+        message: 'lift_id, serviced_at and a non-empty checklist array are required.',
       });
     }
 
-    // Each result row must reference a template item and be Pass/Defect;
-    // severity is optional but constrained (mirrors the schema CHECKs).
+    // Each result row must reference a template item and be Pass/Defect.
     for (const item of checklist) {
       if (!item.checklist_item_id || !['Pass', 'Defect'].includes(item.result)) {
         return res.status(400).json({
@@ -173,6 +175,73 @@ async function createLiftInspection(req, res, next) {
       }
     }
 
+    const byItemId = new Map(checklist.map((item) => [item.checklist_item_id, item]));
+
+    // G1: every active template item must be answered. The paper form has no
+    // blank rows, so a partial submission is rejected listing the item numbers
+    // (display_order) still missing.
+    const activeItems = await checklistItemModel.findActive();
+    const missing = activeItems
+      .filter((tpl) => !byItemId.has(tpl.id))
+      .map((tpl) => tpl.display_order);
+    if (missing.length > 0) {
+      return res.status(400).json({
+        code: 'INCOMPLETE_CHECKLIST',
+        message: `Answer all ${activeItems.length} checklist items — missing item(s): ${missing.join(', ')}.`,
+      });
+    }
+
+    // Reject ids that aren't part of the active template, so a stale or forged
+    // client can't attach results to retired/unknown items.
+    const activeIds = new Set(activeItems.map((tpl) => tpl.id));
+    const unknown = checklist.filter((item) => !activeIds.has(item.checklist_item_id));
+    if (unknown.length > 0) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'checklist references items that are not on the active template.',
+      });
+    }
+
+    // Which items arrived with a photo part. Computed before any upload so a
+    // rejected submission never leaves orphaned images in Cloudinary.
+    const photoFiles = new Map();
+    for (const file of req.files ?? []) {
+      const match = /^photo_(.+)$/.exec(file.fieldname);
+      if (match && byItemId.has(match[1])) photoFiles.set(match[1], file);
+    }
+
+    // Item number for error messages — the inspector sees the same numbering
+    // as the paper form, not a UUID.
+    const orderOf = new Map(activeItems.map((tpl) => [tpl.id, tpl.display_order]));
+
+    // G2 + G3, per Defect row: severity is mandatory; Major/Critical must carry
+    // a photo and Minor must not (the client's "no photos on minor issue" rule,
+    // which keeps the platform fast and storage small).
+    for (const item of checklist) {
+      if (item.result !== 'Defect') continue;
+      const itemNo = orderOf.get(item.checklist_item_id);
+
+      if (!item.severity) {
+        return res.status(400).json({
+          code: 'SEVERITY_REQUIRED',
+          message: `Item ${itemNo}: a defect must have a severity.`,
+        });
+      }
+      const hasPhoto = photoFiles.has(item.checklist_item_id);
+      if (item.severity === 'Minor' && hasPhoto) {
+        return res.status(400).json({
+          code: 'PHOTO_NOT_ALLOWED_FOR_MINOR',
+          message: `Item ${itemNo}: minor defects must not carry a photo.`,
+        });
+      }
+      if (item.severity !== 'Minor' && !hasPhoto) {
+        return res.status(400).json({
+          code: 'PHOTO_REQUIRED_FOR_SEVERITY',
+          message: `Item ${itemNo}: a ${item.severity} defect requires a photo.`,
+        });
+      }
+    }
+
     const lift = await liftModel.findById(lift_id);
     if (!lift) {
       return res.status(404).json({
@@ -181,15 +250,11 @@ async function createLiftInspection(req, res, next) {
       });
     }
 
-    // Per-item photos: file parts named photo_<checklist_item_id>. Upload to
-    // Cloudinary (defects folder) and attach the URL to the matching Defect
-    // entry; files for Pass/unknown items are ignored.
-    const byItemId = new Map(checklist.map((item) => [item.checklist_item_id, item]));
-    for (const file of req.files ?? []) {
-      const match = /^photo_(.+)$/.exec(file.fieldname);
-      if (!match) continue;
-      const item = byItemId.get(match[1]);
-      if (item && item.result === 'Defect') {
+    // Validation passed — upload the per-item photos to Cloudinary (defects
+    // folder) and attach each URL to its Defect entry.
+    for (const [itemId, file] of photoFiles) {
+      const item = byItemId.get(itemId);
+      if (item.result === 'Defect') {
         item.photo_url = await cloudinaryService.uploadImage(file.buffer, 'defects');
       }
     }
@@ -390,11 +455,13 @@ async function closeInspection(req, res, next) {
       }
     }
 
-    // Endorser: the second signature is attributed to a real user.
-    if (!['inspector', 'contractor'].includes(endorser_role)) {
+    // G7 / R9 — the client asked for "a digital sign-off from the EM Services
+    // inspector", so the second signature must be an inspector's. Notably this
+    // stops the contractor who did the work from endorsing that it was done.
+    if (endorser_role !== 'inspector') {
       return res.status(400).json({
-        code: 'VALIDATION_ERROR',
-        message: 'endorser_role must be inspector or contractor.',
+        code: 'ENDORSER_MUST_BE_INSPECTOR',
+        message: 'The endorsing signature must belong to an inspector.',
       });
     }
     if (!endorser_id) {
@@ -409,7 +476,7 @@ async function closeInspection(req, res, next) {
     const endorserFile = req.files?.endorser_signature?.[0];
     if (!managerFile || !endorserFile) {
       return res.status(400).json({
-        code: 'VALIDATION_ERROR',
+        code: 'SIGNATURE_REQUIRED',
         message: 'Both manager_signature and endorser_signature images are required.',
       });
     }
@@ -441,8 +508,8 @@ async function closeInspection(req, res, next) {
     }
     if (endorser.rows[0].role !== endorser_role) {
       return res.status(400).json({
-        code: 'ENDORSER_ROLE_MISMATCH',
-        message: `Endorser is not a ${endorser_role}.`,
+        code: 'ENDORSER_MUST_BE_INSPECTOR',
+        message: 'The nominated endorser is not an inspector.',
       });
     }
 

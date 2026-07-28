@@ -424,21 +424,34 @@ describe('POST /api/inspections', () => {
 });
 
 describe('POST /api/inspections/lift', () => {
-  // Multipart: lift_id + checklist (JSON string) fields, photos as
+  // Multipart: lift_id + serviced_at + checklist (JSON string) fields, photos as
   // photo_<checklist_item_id> file parts.
+  //
+  // G1 requires every *active* template item to be answered — the fixture's
+  // active set is item-1 and item-2 (item-3 is inactive), so a complete
+  // checklist is exactly these two. The defect is Minor so this baseline needs
+  // no photo (G3); tests that exercise photos use majorChecklist below.
   const validChecklist = [
+    { checklist_item_id: 'item-1', result: 'Pass' },
+    { checklist_item_id: 'item-2', result: 'Defect', severity: 'Minor', remark: 'Door sensor slow' },
+  ];
+  const majorChecklist = [
     { checklist_item_id: 'item-1', result: 'Pass' },
     { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
   ];
 
-  test('201 inspector creates a lift inspection with checklist results and a defect photo', async () => {
-    const res = await request(app)
+  // Submit a spot-check with the standard valid header fields.
+  function submitLift(checklist, { serviced_at = '2026-03-22', lift_id = 'lift-1' } = {}) {
+    return request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
-      .field('lift_id', 'lift-1')
-      .field('serviced_at', '2026-03-22')
-      .field('checklist', JSON.stringify(validChecklist))
-      .attach('photo_item-2', PNG, 'defect.png');
+      .field('lift_id', lift_id)
+      .field('serviced_at', serviced_at)
+      .field('checklist', JSON.stringify(checklist));
+  }
+
+  test('201 inspector creates a lift inspection with checklist results and a defect photo', async () => {
+    const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
 
     expect(res.status).toBe(201);
     expect(res.body.source_type).toBe('lift_inspection');
@@ -460,16 +473,71 @@ describe('POST /api/inspections/lift', () => {
     expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(1);
   });
 
-  test('201 stores serviced_at as NULL when the field is blank or absent', async () => {
-    const res = await request(app)
-      .post('/api/inspections/lift')
-      .set('Authorization', 'Bearer inspector-token')
-      .field('lift_id', 'lift-1')
-      .field('serviced_at', '')
-      .field('checklist', JSON.stringify(validChecklist));
+  // G1: the paper form's Servicing Date is mandatory, not optional.
+  test('400 when serviced_at is blank', async () => {
+    const res = await submitLift(validChecklist, { serviced_at: '' });
 
-    expect(res.status).toBe(201);
-    expect(res.body.serviced_at).toBeNull();
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  // --- G1: complete checklist -------------------------------------------
+  test('400 INCOMPLETE_CHECKLIST naming the unanswered item numbers', async () => {
+    const res = await submitLift([{ checklist_item_id: 'item-1', result: 'Pass' }]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INCOMPLETE_CHECKLIST');
+    // item-2 has display_order 2 — the inspector sees the paper form's numbering.
+    expect(res.body.message).toContain('2');
+  });
+
+  test('400 when the checklist references an item outside the active template', async () => {
+    const res = await submitLift([
+      ...validChecklist,
+      { checklist_item_id: 'item-3', result: 'Pass' }, // inactive in the fixture
+    ]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  // --- G2: severity on every defect --------------------------------------
+  test('400 SEVERITY_REQUIRED when a Defect has no severity', async () => {
+    const res = await submitLift([
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Defect', remark: 'No severity given' },
+    ]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('SEVERITY_REQUIRED');
+  });
+
+  // --- G3: photo rules by severity ---------------------------------------
+  test('400 PHOTO_REQUIRED_FOR_SEVERITY when a Major defect has no photo', async () => {
+    const res = await submitLift(majorChecklist); // no attachment
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PHOTO_REQUIRED_FOR_SEVERITY');
+  });
+
+  test('400 PHOTO_NOT_ALLOWED_FOR_MINOR when a Minor defect carries a photo', async () => {
+    const res = await submitLift(validChecklist).attach('photo_item-2', PNG, 'minor.png');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PHOTO_NOT_ALLOWED_FOR_MINOR');
+
+    // Rejected before upload — no orphaned image in Cloudinary.
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    expect(cloudinaryService.uploadImage).not.toHaveBeenCalled();
+  });
+
+  // --- G4: 100 KB server-side cap ----------------------------------------
+  test('400 PHOTO_TOO_LARGE when a photo part exceeds the 100 KB cap', async () => {
+    const oversized = Buffer.alloc(150 * 1024, 1);
+    const res = await submitLift(majorChecklist).attach('photo_item-2', oversized, 'big.png');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PHOTO_TOO_LARGE');
   });
 
   test('403 when the user is not an inspector', async () => {
@@ -505,11 +573,7 @@ describe('POST /api/inspections/lift', () => {
   });
 
   test('404 when the lift does not exist', async () => {
-    const res = await request(app)
-      .post('/api/inspections/lift')
-      .set('Authorization', 'Bearer inspector-token')
-      .field('lift_id', 'lift-nope')
-      .field('checklist', JSON.stringify(validChecklist));
+    const res = await submitLift(validChecklist, { lift_id: 'lift-nope' });
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
@@ -884,12 +948,13 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.message).toBe('Closing remark must be at least 10 characters.');
   });
 
-  test('400 when a signature image is missing', async () => {
+  test('400 SIGNATURE_REQUIRED when a signature image is missing', async () => {
     const id = await seedComplaint('Missing signature case');
     const res = await closeRecord(id, { omitEndorserSig: true });
 
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
+    // Same code the UC-010 contractor rectify flow uses for the same condition.
+    expect(res.body.code).toBe('SIGNATURE_REQUIRED');
   });
 
   test('403 when the caller is not a manager', async () => {
@@ -921,15 +986,16 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.code).toBe('NOT_FOUND');
   });
 
-  // The signature must not claim a role its signer doesn't actually hold —
-  // otherwise the audit trail records a false attestation.
-  test('400 ENDORSER_ROLE_MISMATCH when the endorser\'s real role differs', async () => {
+  // G7 / R9: the endorsing signature must belong to a real inspector — both
+  // that the claimed role is 'inspector' and that the nominated user actually
+  // holds it, so the audit trail can't record a false attestation.
+  test('400 ENDORSER_MUST_BE_INSPECTOR when the nominated user is not an inspector', async () => {
     const id = await seedRectified('Role mismatch case');
     // res-1 is a resident being passed off as the inspector endorser.
     const res = await closeRecord(id, { endorser_id: 'res-1' });
 
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('ENDORSER_ROLE_MISMATCH');
+    expect(res.body.code).toBe('ENDORSER_MUST_BE_INSPECTOR');
 
     // Rejected before any upload — no orphaned signature images in Cloudinary.
     const cloudinaryService = require('../../src/services/cloudinaryService');
@@ -937,15 +1003,17 @@ describe('POST /api/inspections/:id/close', () => {
     expect(store.signatures).toHaveLength(0);
   });
 
-  test('200 when a genuine contractor endorses (non-inspector roles still allowed)', async () => {
+  // The contractor who did the work may not endorse that it was done.
+  test('400 ENDORSER_MUST_BE_INSPECTOR when a contractor is nominated', async () => {
     const id = await seedRectified('Contractor endorsement case');
     const res = await closeRecord(id, {
       endorser_role: 'contractor',
       endorser_id: 'con-user-1',
     });
 
-    expect(res.status).toBe(200);
-    expect(store.signatures.map((s) => s.signer_role).sort()).toEqual(['contractor', 'manager']);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('ENDORSER_MUST_BE_INSPECTOR');
+    expect(store.signatures).toHaveLength(0);
   });
 
   test('409 INVALID_STATE when the record has not been rectified yet', async () => {

@@ -34,18 +34,18 @@ Every sentence of the client brief mapped to a use case, an owner, and its curre
 |---|---|---|---|---|
 | R1 | "A digital version of the spot-check form that works on mobile" | UC-001 | Philena | **Built** — `NewInspectionPage.jsx`; responsive pass in Phase 4 |
 | R2 | "GPS auto-fill for location" | UC-001 | Philena | **Built** — `LocationCapture.jsx`, migration `017` |
-| R3 | "a structured checklist **matching the existing paper form**" | UC-001 | Philena | **Gap** — template must become the real 25 items in sections A/B/C (§7) |
-| R4 | "photo upload with automatic compression" | UC-001 | Philena | **Built** — `imageCompress.js`, ≤100 KB (client design note) |
+| R3 | "a structured checklist **matching the existing paper form**" | UC-001 | Philena | **Built** — migration `026` seeds the real 25 items as Motor Room / Lift Car / Hoistway & Lift Pit; the form renders by section |
+| R4 | "photo upload with automatic compression" | UC-001 | Philena | **Built** — `imageCompress.js` ≤100 KB client-side, **and** enforced server-side (`PHOTO_TOO_LARGE`, G4) |
 | R5 | "severity tagging for each defect" | UC-001 | Philena | **Built** — `checklist_results.severity` ∈ Minor/Major/Critical |
 | R6 | "**auto-email to the lift company when defects are flagged**" | UC-014 | Davian | **Gap** — `emailService` exists but is wired only to UC-009 reports |
 | R7 | "The lift company should be able to acknowledge the defect on the same platform" | UC-010 | Zoe | **Built** — `POST /api/contractor/:id/acknowledge` |
 | R8 | "submit completion photos" | UC-010 | Zoe | **Built** — `submitWork()`, `checklist_results.completion_photo_url` |
-| R9 | "get a **digital sign-off from the EM Services inspector**" | UC-004 | Philena | **Partial** — dual e-sign exists; endorser must be *constrained to an inspector* (§11 G7) |
+| R9 | "get a **digital sign-off from the EM Services inspector**" | UC-004 | Philena | **Built** — dual e-sign, endorser constrained to an inspector and verified against `users.role` (§11 G7); picker fed by `GET /api/users/inspectors` |
 | R10 | "The entire paper trail should be replaced with a timestamped digital audit log" | UC-015 | Philena | **Partial** — `inspection_history` exists; must cover every transition incl. email + reject (§11) |
 | R11 | Six-step workflow honoured end to end | §2 | All | **Partial** — steps 1 and 6-reject are the gaps |
 | R12 | "Lift technician rectify the defects **within 2 weeks**" (form note 2) | UC-010 / UC-014 | Davian | **Partial** — 14-day default in migration `025`; overdue chase is new |
-| R13 | "Spot-Checks shall be performed during contractor's **scheduled servicing date**" (form note 1) | UC-001 | Philena | **Gap** — `servicing_date` not captured |
-| R14 | "Option to attach photo (limit to 100k per photo)" + "No photos on minor issue" | UC-001 | Philena | **Partial** — compression built; Minor-severity photo suppression is new |
+| R13 | "Spot-Checks shall be performed during contractor's **scheduled servicing date**" (form note 1) | UC-001 | Philena | **Built** — `inspections.serviced_at` (migration `027`), mandatory at submit (G1). The A1 "more than one day before" warning is still outstanding |
+| R14 | "Option to attach photo (limit to 100k per photo)" + "No photos on minor issue" | UC-001 | Philena | **Built** — 100 KB enforced client- and server-side; Minor defects reject a photo (`PHOTO_NOT_ALLOWED_FOR_MINOR`), Major/Critical require one |
 | R15 | "Lesser travelling time · save time on paperwork · use less paper" | outcome | — | Emergent from R1–R10 |
 | R16 | "Proper record, audit" · "Download as file every year" | UC-009 | Davian | **Partial** — monthly PDF built; annual export is new |
 | R17 | "Statistic / report" | UC-005 / UC-011 | Hasini / Davian | **UC-005 built** · **UC-011 frontend only — no `/api/admin/costs/*` backend exists; the page runs on `mocks/costMocks.js`** |
@@ -656,14 +656,14 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 
 | # | Guard rail | Enforcement |
 |---|---|---|
-| **G1** | A spot-check cannot be submitted without `servicing_date`, `lift_id`, and a result for **all 25 active items** | 400 `INCOMPLETE_CHECKLIST` listing the missing `display_order` values |
-| **G2** | A `Defect` result must carry a `severity` | 400 `SEVERITY_REQUIRED` |
-| **G3** | `Major`/`Critical` defects require a photo; `Minor` defects **must not** carry one (client: "No photos on minor issue") | 400 `PHOTO_REQUIRED_FOR_SEVERITY` / `PHOTO_NOT_ALLOWED_FOR_MINOR` |
-| **G4** | Every photo is compressed to ≤100 KB client-side; the server rejects anything larger | 400 `PHOTO_TOO_LARGE` (multer limit) |
-| **G5** | The inspector must e-sign before submit ("Checked by / Signature") | 400 `SIGNATURE_REQUIRED` |
-| **G6** | 0 defects → auto-file to `Closed`, no contractor assignment, **no email** | Controller branch + audit `Filed — no defects` |
-| **G7** | At close, the endorser signature **must belong to a user whose role is `inspector`** — the client's "digital sign-off from the EM Services inspector" | 400 `ENDORSER_MUST_BE_INSPECTOR` |
-| **G8** | Close is blocked unless **every** `Defect` row has `rectified = TRUE` and a `completion_photo_url` (or an explicit manager waiver note) | 409 `UNRECTIFIED_DEFECTS` listing item numbers |
+| **G1** | A spot-check cannot be submitted without `servicing_date`, `lift_id`, and a result for **all 25 active items** | 400 `INCOMPLETE_CHECKLIST` listing the missing `display_order` values — ✅ **enforced**; also rejects ids outside the active template |
+| **G2** | A `Defect` result must carry a `severity` | 400 `SEVERITY_REQUIRED` — ✅ **enforced** |
+| **G3** | `Major`/`Critical` defects require a photo; `Minor` defects **must not** carry one (client: "No photos on minor issue") | 400 `PHOTO_REQUIRED_FOR_SEVERITY` / `PHOTO_NOT_ALLOWED_FOR_MINOR` — ✅ **enforced**, and mirrored in the form (the photo control only appears for Major/Critical) |
+| **G4** | Every photo is compressed to ≤100 KB client-side; the server rejects anything larger | 400 `PHOTO_TOO_LARGE` (multer limit) — ✅ **enforced** on both photo routes (spot-check + resident complaint); signature parts are exempt, they are not photos |
+| **G5** | The inspector must e-sign before submit ("Checked by / Signature") | 400 `SIGNATURE_REQUIRED` — ❌ **not built**: no signature is captured or stored on the submit path |
+| **G6** | 0 defects → auto-file to `Closed`, no contractor assignment, **no email** | Controller branch + audit `Filed — no defects` — ❌ **not built**: every spot-check is created `Open` with the lift's contractor attached |
+| **G7** | At close, the endorser signature **must belong to a user whose role is `inspector`** — the client's "digital sign-off from the EM Services inspector" | 400 `ENDORSER_MUST_BE_INSPECTOR` — ✅ **enforced** on both the claimed role and the nominated user's stored `users.role` |
+| **G8** | Close is blocked unless **every** `Defect` row has `rectified = TRUE` and a `completion_photo_url` (or an explicit manager waiver note) | 409 `UNRECTIFIED_DEFECTS` listing item numbers — ❌ **not built** |
 | **G9** | Contractor endpoints only ever touch records whose `contractor_id` maps to the caller's own `users.contractor_id` | 403 `FORBIDDEN` |
 | **G10** | Acknowledge/rectify/hold are rejected from a wrong state (e.g. acknowledging a `Closed` record) | 409 `INVALID_STATE` |
 | **G11** | `On Hold` pauses the deadline; resuming extends `target_deadline` by the held duration | Computed on resume, audit-logged |

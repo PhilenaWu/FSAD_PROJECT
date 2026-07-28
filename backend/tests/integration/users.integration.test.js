@@ -16,6 +16,9 @@ jest.mock('../../src/config/supabase', () => ({
       if (token === 'ghost-token') {
         return { data: { claims: { sub: 'no-profile', email: 'ghost@example.com' } }, error: null };
       }
+      if (token === 'manager-token') {
+        return { data: { claims: { sub: 'mgr-1', email: 'mgr@example.com' } }, error: null };
+      }
       return { data: null, error: { message: 'invalid token' } };
     }),
   },
@@ -32,12 +35,24 @@ const users = {
     unit_number: '12-05',
     status: 'active',
   },
+  'mgr-1': { id: 'mgr-1', email: 'mgr@example.com', full_name: 'Priya Nair', role: 'manager', status: 'active' },
+  // Endorser candidates for GET /api/users/inspectors (G7).
+  'ins-1': { id: 'ins-1', email: 'ins@example.com', full_name: 'Wei Lim', role: 'inspector', status: 'active' },
+  'ins-2': { id: 'ins-2', email: 'old@example.com', full_name: 'Retired Inspector', role: 'inspector', status: 'suspended' },
 };
 
 jest.mock('../../src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: jest.fn(async (sql, params = []) => {
+    // findActiveInspectors: SELECT ... WHERE role = 'inspector' AND status = 'active'
+    if (/FROM users/i.test(sql) && /role = 'inspector'/i.test(sql)) {
+      return {
+        rows: Object.values(users).filter(
+          (u) => u.role === 'inspector' && u.status === 'active'
+        ),
+      };
+    }
     // findById: SELECT * FROM users WHERE id = $1
     if (/FROM users/i.test(sql)) {
       const u = users[params[0]];
@@ -79,5 +94,28 @@ describe('GET /api/users/me', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+
+// Endorser candidates for the UC-004 close panel (G7).
+describe('GET /api/users/inspectors', () => {
+  test('200 returns active inspectors only', async () => {
+    const res = await request(app)
+      .get('/api/users/inspectors')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    // ins-2 is suspended and must not be offered as an endorser.
+    expect(res.body.map((u) => u.id)).toEqual(['ins-1']);
+    expect(res.body[0].full_name).toBe('Wei Lim');
+  });
+
+  test('403 for a non-manager', async () => {
+    const res = await request(app)
+      .get('/api/users/inspectors')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
   });
 });
