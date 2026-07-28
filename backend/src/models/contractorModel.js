@@ -17,6 +17,16 @@ async function findById(id) {
   return result.rows[0];
 }
 
+// Look up the contractor record linked to a login account (UC-010). The
+// contractor portal identifies the caller by their Supabase user id; the
+// contractors.user_id back-reference maps that to the contractor row whose
+// id the inspections.contractor_id foreign key uses. Returns the row, or
+// undefined when the account isn't linked to a contractor.
+async function findByUserId(userId) {
+  const result = await query('SELECT * FROM contractors WHERE user_id = $1', [userId]);
+  return result.rows[0];
+}
+
 // Insert a new vendor (UC-012 onboarding). user_id links the contractor login
 // account created via Supabase Auth. Returns the created row.
 async function createVendor(vendorData) {
@@ -105,6 +115,7 @@ async function findExpired() {
 module.exports = {
   findAll,
   findById,
+  findByUserId,
   createVendor,
   listByContractEnd,
   updateContract,

@@ -48,9 +48,17 @@ const NAV_BY_ROLE = {
   inspector: [
     { label: 'New inspection', to: '/inspections/new', icon: AssignmentOutlinedIcon },
   ],
+  contractor: [
+    { label: 'Assigned defects', to: '/contractor-inbox', icon: AssignmentOutlinedIcon },
+  ],
 };
 
-const ROLE_LABEL = { resident: 'Resident', inspector: 'Inspector', manager: 'Manager' };
+const ROLE_LABEL = {
+  resident: 'Resident',
+  inspector: 'Inspector',
+  manager: 'Manager',
+  contractor: 'Contractor',
+};
 
 // "Marcus Tan" -> "MT". Falls back to the email's first letter.
 function initialsFrom(fullName, email) {
