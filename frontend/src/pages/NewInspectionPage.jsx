@@ -68,6 +68,12 @@ export default function NewInspectionPage() {
     };
   }, []);
 
+  // The chosen lift's record, for the read-only header details below the picker.
+  const selectedLift = useMemo(
+    () => lifts.find((l) => l.id === liftId),
+    [lifts, liftId]
+  );
+
   // Group template items by section, preserving display_order within each.
   const sections = useMemo(() => {
     const bySection = new Map();
@@ -243,6 +249,31 @@ export default function NewInspectionPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+
+                {/* Town Council and Address from the paper form header. These
+                    belong to the lift record, not the inspection, so they are
+                    auto-filled from the picker and shown read-only. */}
+                {selectedLift && (
+                  <Stack
+                    spacing={1}
+                    sx={{ px: 2, py: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}
+                  >
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Town Council
+                      </Typography>
+                      <Typography variant="body2">
+                        {selectedLift.town_council || '—'}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Address
+                      </Typography>
+                      <Typography variant="body2">{selectedLift.address || '—'}</Typography>
+                    </Box>
+                  </Stack>
+                )}
 
                 {/* Servicing Date from the paper form header — the contractor
                     visit this spot-check audits, not today's check date. */}
