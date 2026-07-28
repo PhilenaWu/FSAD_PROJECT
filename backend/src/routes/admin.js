@@ -21,4 +21,7 @@ router.get('/costs/summary', adminController.getCostSummary);
 // GET /api/admin/costs/breakdown → { byCategory, byBlock, byContractor }
 router.get('/costs/breakdown', adminController.getCostBreakdown);
 
+// GET /api/admin/costs/trends?months=12 → { data: [{ month, actual, projected }] }
+router.get('/costs/trends', adminController.getCostTrends);
+
 module.exports = router;
