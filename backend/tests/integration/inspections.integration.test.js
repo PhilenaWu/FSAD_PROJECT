@@ -210,6 +210,20 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const row = store.inspections.find((i) => i.id === params[0] && !i.is_deleted);
     return { rows: row ? [{ ...row }] : [] };
   }
+  // G6 auto-file: UPDATE inspections SET status='Closed', ... target_deadline=NULL
+  // Must precede the close branch below — that one also matches is_deleted=TRUE
+  // but expects the close flow's (id, remark, cost) params.
+  if (/UPDATE inspections[\s\S]*target_deadline = NULL/i.test(sql)) {
+    const row = store.inspections.find((i) => i.id === params[0]);
+    if (!row) return { rows: [] };
+    row.status = 'Closed';
+    row.is_deleted = true;
+    row.closed_at = new Date().toISOString();
+    row.target_deadline = null;
+    row.closing_remark = 'Filed automatically — no defects found.';
+    row.updated_at = new Date().toISOString();
+    return { rows: [{ ...row }] };
+  }
   // close (UC-004): UPDATE inspections SET status='Closed', is_deleted=TRUE, ...
   // Intercept before the generic UPDATE branch (status/is_deleted/closed_at are
   // SQL literals/expressions, not $-params, so the generic parser can't set them).
@@ -490,6 +504,48 @@ describe('POST /api/inspections/lift', () => {
       signer_id: 'ins-1',
     });
     expect(store.history.some((h) => h.action === 'Created')).toBe(true);
+  });
+
+  // --- G6: zero defects auto-files as a compliant check -------------------
+  test('201 with no defects files straight to Closed, unassigned', async () => {
+    const allPass = [
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Pass' },
+    ];
+
+    const res = await submitLift(allPass);
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('Closed');
+    expect(res.body.is_deleted).toBe(true);
+    expect(res.body.closed_at).toBeTruthy();
+    // No contractor involvement, and nothing due for rectification.
+    expect(res.body.contractor_id).toBeNull();
+    expect(res.body.target_deadline).toBeNull();
+    // Turnaround is a defect metric — there was no defect to rectify.
+    expect(res.body.resolution_time_hours ?? null).toBeNull();
+
+    // Audit trail records both the filing and the auto-close.
+    expect(store.history.some((h) => h.action === 'Created')).toBe(true);
+    const filed = store.history.find((h) => h.action === 'Filed — no defects');
+    expect(filed).toBeTruthy();
+    expect(filed.previous_status).toBe('Open');
+    expect(filed.new_status).toBe('Closed');
+
+    // The signature is still captured — a clean check is still attested (G5).
+    expect(store.signatures).toHaveLength(1);
+    expect(store.signatures[0].signer_role).toBe('inspector');
+  });
+
+  test('201 with a defect keeps the contractor and stays open for triage', async () => {
+    const res = await submitLift(validChecklist);
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).not.toBe('Closed');
+    expect(res.body.is_deleted).toBe(false);
+    // Derived from the lift, since there is defect work to assign.
+    expect(res.body.contractor_id).toBe('con-1');
+    expect(store.history.some((h) => h.action === 'Filed — no defects')).toBe(false);
   });
 
   // --- G5: the "Checked by" signature ------------------------------------

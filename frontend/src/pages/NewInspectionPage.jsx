@@ -195,10 +195,15 @@ export default function NewInspectionPage() {
     setSubmitting(true);
     try {
       // Let the browser set the multipart boundary; the api interceptor adds auth.
-      await api.post('/api/inspections/lift', formData);
+      const { data } = await api.post('/api/inspections/lift', formData);
+      // G6: a clean check is filed closed with no contractor, so don't claim
+      // defects were assigned.
       setFeedback({
         severity: 'success',
-        message: 'Inspection submitted — defects were assigned to the lift’s contractor.',
+        message:
+          data.status === 'Closed'
+            ? 'Inspection submitted — no defects found, so it was filed as a compliant check.'
+            : 'Inspection submitted — defects were assigned to the lift’s contractor.',
       });
       resetForm();
     } catch (err) {

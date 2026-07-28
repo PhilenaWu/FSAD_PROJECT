@@ -82,6 +82,7 @@ async function createLiftInspection(data) {
     checklist,
     serviced_at,
     signature_url,
+    has_defects,
     gps_lat,
     gps_lng,
     gps_accuracy_m,
@@ -105,7 +106,7 @@ async function createLiftInspection(data) {
         serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
       ]
     );
-    const inspection = inspectionResult.rows[0];
+    let inspection = inspectionResult.rows[0];
 
     const checklist_results = [];
     for (const item of checklist) {
@@ -153,6 +154,44 @@ async function createLiftInspection(data) {
         `Spot-check filed for ${title}`,
       ]
     );
+
+    // G6: a clean spot-check needs no contractor action, so it files straight
+    // to Closed rather than sitting in the triage queue. is_deleted = TRUE
+    // matches the manual close — the codebase's invariant is that a Closed
+    // record is an archived one (the manager queue and status board both rely
+    // on it). target_deadline is cleared because nothing is due for
+    // rectification; resolution_time_hours stays NULL because it measures
+    // defect turnaround, and there was no defect.
+    if (!has_defects) {
+      const filed = await client.query(
+        `UPDATE inspections
+            SET status = 'Closed',
+                is_deleted = TRUE,
+                closed_at = NOW(),
+                target_deadline = NULL,
+                closing_remark = 'Filed automatically — no defects found.',
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [inspection.id]
+      );
+      inspection = filed.rows[0];
+
+      await client.query(
+        `INSERT INTO inspection_history (
+           inspection_id, actor_id, action, previous_status, new_status, note
+         )
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          inspection.id,
+          inspector_id,
+          'Filed — no defects',
+          'Open',
+          'Closed',
+          'All checklist items passed — no contractor assignment required.',
+        ]
+      );
+    }
 
     await client.query('COMMIT');
     return { ...inspection, checklist_results };

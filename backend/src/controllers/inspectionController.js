@@ -278,6 +278,11 @@ async function createLiftInspection(req, res, next) {
       'signatures'
     );
 
+    // G6: a spot-check with no defects involves no contractor at all — it is
+    // filed as a compliant check (see the model's auto-file branch) and no
+    // defect email is sent.
+    const has_defects = checklist.some((item) => item.result === 'Defect');
+
     // Derived server-side from the lift: block, responsible contractor, and a
     // title (inspections.title is NOT NULL; the HLD lift request has none).
     const inspection = await inspectionModel.createLiftInspection({
@@ -285,10 +290,11 @@ async function createLiftInspection(req, res, next) {
       lift_id,
       title: `Lift inspection — ${lift.lift_code}`,
       location_block: lift.block_number,
-      contractor_id: lift.contractor_id,
+      contractor_id: has_defects ? lift.contractor_id : null,
       checklist,
       serviced_at,
       signature_url,
+      has_defects,
       ...gpsFields(req.body),
     });
 
