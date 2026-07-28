@@ -1,0 +1,8 @@
+# Canonical author names. Several members have committed under more than one
+# git display name from different machines; without this file `git shortlog`
+# and `git log --author` split one person's history across two identities and
+# understate their contribution.
+#
+# Format: Canonical Name <canonical@email>  Other Name <same@email>
+
+hasini <hasinirg7@gmail.com> hashinn <hasinirg7@gmail.com>

@@ -46,7 +46,9 @@ export default function HeatmapChart({ data, importedMap = null }) {
     onClick: (_evt, elements) => {
       if (!elements.length) return;
       const { x: block, y: category } = chartData.datasets[0].data[elements[0].index];
-      navigate(`/incidents?block=${encodeURIComponent(block)}&category=${encodeURIComponent(category)}`);
+      // /inspections, not /incidents — the latter has never been a route, so
+      // every drill-through used to hit the catch-all and bounce back here.
+      navigate(`/inspections?block=${encodeURIComponent(block)}&category=${encodeURIComponent(category)}`);
     },
     onHover: (evt, elements) => {
       evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';

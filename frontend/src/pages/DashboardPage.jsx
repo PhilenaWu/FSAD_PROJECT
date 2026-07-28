@@ -34,6 +34,7 @@ import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import {
   parseInspectionsCsv,
   mergeHeatmap,
@@ -63,7 +64,10 @@ import {
   exportPptx,
 } from '../services/analyticsService';
 
-const FILTER_KEYS = ['block', 'category', 'from', 'to'];
+// `section` filters to inspections carrying a defect in that section of the
+// paper spot-check form (HLD §7.2) — the client's "which part of the lift
+// fails most" question.
+const FILTER_KEYS = ['block', 'category', 'section', 'from', 'to'];
 
 // CSV import guards — a mis-picked huge file must not freeze the tab.
 const MAX_IMPORT_BYTES = 1_000_000;
@@ -116,6 +120,7 @@ function ResidentPlaceholder() {
 
 export default function DashboardPage() {
   const { profile } = useAuth();
+  const { socket } = useSocket();
   const isManager = profile?.role === 'manager';
 
   // Filters are the URL query string (bookmarkable/shareable dashboard state).
@@ -132,7 +137,7 @@ export default function DashboardPage() {
 
   // Dropdown options come from the database (distinct blocks/categories with
   // records) — fetched once, nothing hardcoded.
-  const [filterOptions, setFilterOptions] = useState({ blocks: [], categories: [] });
+  const [filterOptions, setFilterOptions] = useState({ blocks: [], categories: [], sections: [] });
   const [summary, setSummary] = useState(null);
   const [heatmap, setHeatmap] = useState([]);
   const [trends, setTrends] = useState([]);
@@ -280,6 +285,25 @@ export default function DashboardPage() {
       .then(setFilterOptions)
       .catch(() => {});
   }, [isManager]);
+
+  // Live refresh. The backend pushes `status_update` to manager-room on every
+  // assign, rectify and close (HLD §10), so the dashboard must not sit stale
+  // while records move underneath it — every other role's landing page already
+  // updates live. Coalesced on a short timer because a burst of transitions
+  // would otherwise trigger a re-fetch per event.
+  useEffect(() => {
+    if (!isManager || !socket) return;
+    let timer;
+    const onStatusUpdate = () => {
+      clearTimeout(timer);
+      timer = setTimeout(fetchAll, 1500);
+    };
+    socket.on('status_update', onStatusUpdate);
+    return () => {
+      clearTimeout(timer);
+      socket.off('status_update', onStatusUpdate);
+    };
+  }, [socket, isManager, fetchAll]);
 
   // The queue re-fetches on its own filters too (priority/status), on top of
   // the shared dashboard filters.
@@ -488,7 +512,8 @@ export default function DashboardPage() {
 
       {/* Filter bar (5.9) — block / category / date range, persisted in the URL */}
       <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, mb: 3 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+        {/* wrap: five controls overflow a tablet-width row otherwise. */}
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} flexWrap="wrap" useFlexGap>
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Block</InputLabel>
             <Select
@@ -517,6 +542,24 @@ export default function DashboardPage() {
               ))}
             </Select>
           </FormControl>
+          {/* Paper-form section (A/B/C). Hidden until the checklist template
+              is seeded, so the bar never shows an empty control. */}
+          {filterOptions.sections.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 190 }}>
+              <InputLabel>Form section</InputLabel>
+              <Select
+                label="Form section"
+                value={filters.section}
+                onChange={setFilter('section')}
+                endAdornment={clearAdornment('section')}
+              >
+                <MenuItem value="">All sections</MenuItem>
+                {filterOptions.sections.map((s) => (
+                  <MenuItem key={s} value={s}>{s}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
           <TextField
             size="small"
             label="From"

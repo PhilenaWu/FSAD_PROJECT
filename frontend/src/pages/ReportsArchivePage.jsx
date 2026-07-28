@@ -10,8 +10,12 @@ import {
   Chip,
   CircularProgress,
   Container,
+  FormControl,
   InputAdornment,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Snackbar,
   Stack,
   Table,
@@ -26,8 +30,9 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
+import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
 import { useAuth } from '../context/AuthContext';
-import { getReports, generateManualReport } from '../services/reportService';
+import { getReports, generateManualReport, getAnnualReport } from '../services/reportService';
 
 // "2024-10-01" → "Oct 2024". Formatted in UTC so a date-only value never slips
 // to the previous month in a negative-offset timezone.
@@ -67,6 +72,11 @@ export default function ReportsArchivePage() {
   const [generating, setGenerating] = useState(false);
   const [toast, setToast] = useState(null); // { msg, severity } | null
 
+  // Annual archive (R16). The year list is derived from the reports already
+  // listed — no extra endpoint just to fill a dropdown.
+  const [year, setYear] = useState('');
+  const [downloadingYear, setDownloadingYear] = useState(false);
+
   async function reload() {
     try {
       const res = await getReports();
@@ -98,6 +108,44 @@ export default function ReportsArchivePage() {
       });
     } finally {
       setGenerating(false);
+    }
+  }
+
+  // Years that actually have reports, newest first. Always includes the
+  // current year so the archive can be pulled mid-year before the first
+  // monthly report for it exists.
+  const years = useMemo(() => {
+    const set = new Set(reports.map((r) => String(r.period_start).slice(0, 4)));
+    set.add(String(new Date().getFullYear()));
+    return [...set].filter(Boolean).sort().reverse();
+  }, [reports]);
+
+  // Default the picker to the newest year once the list arrives.
+  useEffect(() => {
+    if (!year && years.length) setYear(years[0]);
+  }, [years, year]);
+
+  async function handleAnnualDownload() {
+    if (!year) return;
+    setDownloadingYear(true);
+    try {
+      const res = await getAnnualReport(year);
+      if (res?.report_url) {
+        window.open(res.report_url, '_blank', 'noopener,noreferrer');
+        setToast({ msg: `Annual archive for ${year} ready.`, severity: 'success' });
+      } else {
+        setToast({ msg: `No archive was returned for ${year}.`, severity: 'warning' });
+      }
+    } catch (err) {
+      // 404 is the expected answer until the annual endpoint ships — say so
+      // plainly instead of showing a generic failure.
+      const msg =
+        err.response?.status === 404
+          ? 'Annual archive is not available yet — it ships with the reports backend.'
+          : err.response?.data?.message || 'Could not build the annual archive.';
+      setToast({ msg, severity: err.response?.status === 404 ? 'info' : 'error' });
+    } finally {
+      setDownloadingYear(false);
     }
   }
 
@@ -145,20 +193,52 @@ export default function ReportsArchivePage() {
 
         {error && <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>}
 
-        <TextField
-          size="small"
-          placeholder="Search by period or trigger"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          sx={{ my: 2, width: { xs: '100%', sm: 320 } }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
-              </InputAdornment>
-            ),
-          }}
-        />
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          flexWrap="wrap"
+          useFlexGap
+          sx={{ my: 2 }}
+        >
+          <TextField
+            size="small"
+            placeholder="Search by period or trigger"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ width: { xs: '100%', sm: 320 } }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+            }}
+          />
+
+          {/* Annual archive (R16 — "download as file every year"). */}
+          <Box sx={{ flexGrow: 1 }} />
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Year</InputLabel>
+            <Select label="Year" value={year} onChange={(e) => setYear(e.target.value)}>
+              {years.map((y) => (
+                <MenuItem key={y} value={y}>{y}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button
+            variant="outlined"
+            startIcon={
+              downloadingYear
+                ? <CircularProgress size={18} color="inherit" />
+                : <CalendarMonthOutlinedIcon />
+            }
+            onClick={handleAnnualDownload}
+            disabled={!year || downloadingYear}
+          >
+            {downloadingYear ? 'Building…' : 'Download annual archive'}
+          </Button>
+        </Stack>
 
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>

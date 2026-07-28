@@ -1,8 +1,9 @@
 // UC-002 manager triage queue. All inspections from GET /api/inspections,
-// most urgent first (AI priority score), with status/category/block filters.
-// Row click opens the detail/triage view. Manager-only (backend enforces too).
-import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+// most urgent first (AI priority score), with status/category/block filters
+// held in the URL so the dashboard heatmap can drill through to a pre-filtered
+// queue. Row click opens the detail/triage view. Manager-only (backend too).
+import { useEffect, useState } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Box,
@@ -25,6 +26,7 @@ import {
 } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
 import ManualReviewQueue from '../components/cv/ManualReviewQueue';
 
@@ -47,9 +49,26 @@ export default function InspectionListPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [status, setStatus] = useState('');
-  const [category, setCategory] = useState('');
-  const [block, setBlock] = useState('');
+
+  // Filters live in the URL, so the dashboard heatmap can drill through to a
+  // pre-filtered queue (/inspections?block=44A&category=Lift) and so a filtered
+  // view stays bookmarkable — same pattern as DashboardPage / AdminCostPage.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const status = searchParams.get('status') ?? '';
+  const category = searchParams.get('category') ?? '';
+  const block = searchParams.get('block') ?? '';
+
+  // Replace (not push) so back doesn't step through every dropdown change;
+  // empty values are dropped to keep the URL clean.
+  const setFilter = (key) => (e) => {
+    const next = new URLSearchParams(searchParams);
+    if (e.target.value) {
+      next.set(key, e.target.value);
+    } else {
+      next.delete(key);
+    }
+    setSearchParams(next, { replace: true });
+  };
 
   useEffect(() => {
     let active = true;
@@ -77,11 +96,16 @@ export default function InspectionListPage() {
     };
   }, [status, category, block]);
 
-  // Block filter options come from the data itself (no blocks endpoint yet).
-  const blockOptions = useMemo(
-    () => [...new Set(rows.map((r) => r.location_block))].sort(),
-    [rows]
-  );
+  // Block options come from the analytics filter-options endpoint (manager-only,
+  // same gate as this page). Deriving them from `rows` collapsed the dropdown to
+  // a single value the moment a block filter applied — so a manager who drilled
+  // in from the heatmap could not switch to another block without clearing first.
+  const [blockOptions, setBlockOptions] = useState([]);
+  useEffect(() => {
+    getFilterOptions()
+      .then((o) => setBlockOptions(o.blocks ?? []))
+      .catch(() => {}); // dropdown just stays empty; "All" still works
+  }, []);
 
   // UI-level guard — backend requireRole('manager') is the real enforcement.
   if (profile && profile.role !== 'manager') {
@@ -114,7 +138,7 @@ export default function InspectionListPage() {
             <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
               <TextField
                 select size="small" label="Status" value={status}
-                onChange={(e) => setStatus(e.target.value)} sx={{ minWidth: 150 }}
+                onChange={setFilter('status')} sx={{ minWidth: 150 }}
               >
                 <MenuItem value="">All</MenuItem>
                 {STATUSES.map((s) => (
@@ -123,7 +147,7 @@ export default function InspectionListPage() {
               </TextField>
               <TextField
                 select size="small" label="Category" value={category}
-                onChange={(e) => setCategory(e.target.value)} sx={{ minWidth: 150 }}
+                onChange={setFilter('category')} sx={{ minWidth: 150 }}
               >
                 <MenuItem value="">All</MenuItem>
                 {CATEGORIES.map((c) => (
@@ -132,7 +156,7 @@ export default function InspectionListPage() {
               </TextField>
               <TextField
                 select size="small" label="Block" value={block}
-                onChange={(e) => setBlock(e.target.value)} sx={{ minWidth: 110 }}
+                onChange={setFilter('block')} sx={{ minWidth: 110 }}
               >
                 <MenuItem value="">All</MenuItem>
                 {blockOptions.map((b) => (

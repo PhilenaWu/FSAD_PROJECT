@@ -7,8 +7,64 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Call monthly report generate endpoint
+      # Same guard as contract-expiry-check.yml — both workflows share these
+      # two secrets, so both fail the same way when either is missing.
+      - name: Check required secrets are set
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -X GET "${{ secrets.RENDER_BACKEND_URL }}/api/reports/generate" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            --fail --max-time 120
+          missing=0
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::error::Repository secret RENDER_BACKEND_URL is not set. Add it under Settings > Secrets and variables > Actions, e.g. https://your-app.onrender.com (no trailing slash)."
+            missing=1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is not set. It must be the same value as the CRON_SECRET environment variable on the Render service."
+            missing=1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Call monthly report generate endpoint
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          url="${BACKEND_URL%/}/api/reports/generate"
+          echo "Calling ${url}"
+
+          # Report generation runs OpenAI + pdfkit + Cloudinary + SMTP, so it
+          # needs a longer ceiling than the expiry check.
+          status=$(curl -sS -o response.json -w '%{http_code}' \
+            --max-time 180 --retry 2 --retry-delay 15 --retry-connrefused \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "$url") || {
+              echo "::error::Could not reach the backend at ${url}. Check the Render service is deployed and that RENDER_BACKEND_URL is correct."
+              exit 1
+            }
+
+          echo "HTTP ${status}"
+          cat response.json || true
+          echo
+
+          case "$status" in
+            200|201)
+              echo "Monthly report generated."
+              ;;
+            401)
+              echo "::error::401 UNAUTHORIZED — the CRON_SECRET repository secret does not match CRON_SECRET on the Render service."
+              exit 1
+              ;;
+            404)
+              echo "::error::404 NOT FOUND — route not mounted. Confirm the deployed build includes /api/reports and that RENDER_BACKEND_URL points at the backend, not the frontend."
+              exit 1
+              ;;
+            5*)
+              echo "::error::HTTP ${status} — report generation failed. See the response body above and the Render logs."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected HTTP ${status} from the report endpoint."
+              exit 1
+              ;;
+          esac

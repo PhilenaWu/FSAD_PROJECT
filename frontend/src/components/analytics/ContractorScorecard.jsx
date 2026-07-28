@@ -1,5 +1,6 @@
-// UC-005 contractor scorecard table (phase task 5.13a) — avg rectification
-// days, repeat-defect rate, overdue count per contractor.
+// UC-005 contractor scorecard table (phase task 5.13a / H.1) — avg
+// rectification days, repeat-defect rate, overdue count, and average re-opens
+// (UC-004 rejections) per contractor.
 import {
   Chip,
   Table,
@@ -8,6 +9,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -21,6 +23,11 @@ export default function ContractorScorecard({ rows }) {
             <TableCell align="right">Jobs</TableCell>
             <TableCell align="right">Avg rectification (days)</TableCell>
             <TableCell align="right">Repeat-defect rate</TableCell>
+            <TableCell align="right">
+              <Tooltip title="Average times a job was sent back after the inspector rejected the rectification (UC-004).">
+                <span>Avg re-opens</span>
+              </Tooltip>
+            </TableCell>
             <TableCell align="right">Overdue</TableCell>
           </TableRow>
         </TableHead>
@@ -39,6 +46,10 @@ export default function ContractorScorecard({ rows }) {
               </TableCell>
               <TableCell align="right">
                 {r.repeat_defect_rate == null ? '—' : `${r.repeat_defect_rate.toFixed(1)}%`}
+              </TableCell>
+              {/* NULL until migration 026 adds inspections.reopen_count. */}
+              <TableCell align="right">
+                {r.avg_reopens == null ? '—' : r.avg_reopens.toFixed(2)}
               </TableCell>
               <TableCell align="right">
                 <Chip
