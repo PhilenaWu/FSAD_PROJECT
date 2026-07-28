@@ -50,6 +50,9 @@ const config = Object.freeze({
   SMTP_PORT: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined,
   SMTP_USER: process.env.SMTP_USER,
   SMTP_PASS: process.env.SMTP_PASS,
+  // Extra recipients CC'd on every defect-assignment alert (comma-separated).
+  // For the demo, set this to the whole team so everyone receives the email.
+  DEFECT_ALERT_RECIPIENTS: process.env.DEFECT_ALERT_RECIPIENTS,
 });
 
 module.exports = config;
