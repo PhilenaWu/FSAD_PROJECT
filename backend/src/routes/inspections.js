@@ -24,12 +24,13 @@ const upload = multer({
 // G4 / R14 ("limit to 100k per photo"): photos are compressed to ≤100 KB
 // client-side (utils/imageCompress); the server enforces the same ceiling so a
 // client that skips compression can't fill storage. One photo per checklist
-// item, hence 25. Over-size parts surface as PHOTO_TOO_LARGE via the error
-// handler. Signatures keep the `upload` instance above — they are not photos,
-// and the 100 KB rule is about photo storage.
+// item (25) plus the inspector's G5 signature part, hence 26. Over-size parts
+// surface as PHOTO_TOO_LARGE via the error handler. The close route keeps the
+// `upload` instance above — its signatures are not photos, and the 100 KB rule
+// is about photo storage (the pad emits ~5-15 KB, well inside this cap).
 const uploadPhoto = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024, files: 25 },
+  limits: { fileSize: 100 * 1024, files: 26 },
   fileFilter: (req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },

@@ -67,8 +67,11 @@ async function create(data) {
 // inspector/lift/title/block/contractor and the checklist array; category and
 // resident columns stay at their defaults — no AI categorisation for lift
 // inspections. `serviced_at` is the paper form's Servicing Date (the contractor
-// visit being audited) and is optional. Rolls back on any failure. Returns the
-// inspection row with a checklist_results array attached.
+// visit being audited) and is optional. `signature_url` is the inspector's
+// "Checked by" e-signature (G5) — stored as a signatures row in the same
+// transaction, alongside the UC-015 `Created` audit row, so a spot-check is
+// never persisted without its attestation. Rolls back on any failure. Returns
+// the inspection row with a checklist_results array attached.
 async function createLiftInspection(data) {
   const {
     inspector_id,
@@ -78,6 +81,7 @@ async function createLiftInspection(data) {
     contractor_id,
     checklist,
     serviced_at,
+    signature_url,
     gps_lat,
     gps_lng,
     gps_accuracy_m,
@@ -122,6 +126,33 @@ async function createLiftInspection(data) {
       );
       checklist_results.push(resultRow.rows[0]);
     }
+
+    // G5: the inspector's "Checked by" signature from the paper form.
+    await signatureModel.create(
+      {
+        inspection_id: inspection.id,
+        signer_role: 'inspector',
+        signer_id: inspector_id,
+        image_url: signature_url,
+      },
+      client
+    );
+
+    // UC-015: the audit trail starts at creation, not at first triage.
+    await client.query(
+      `INSERT INTO inspection_history (
+         inspection_id, actor_id, action, previous_status, new_status, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        inspection.id,
+        inspector_id,
+        'Created',
+        null,
+        inspection.status,
+        `Spot-check filed for ${title}`,
+      ]
+    );
 
     await client.query('COMMIT');
     return { ...inspection, checklist_results };

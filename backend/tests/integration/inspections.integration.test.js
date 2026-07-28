@@ -440,14 +440,21 @@ describe('POST /api/inspections/lift', () => {
     { checklist_item_id: 'item-2', result: 'Defect', severity: 'Major', remark: 'Door sensor slow' },
   ];
 
-  // Submit a spot-check with the standard valid header fields.
-  function submitLift(checklist, { serviced_at = '2026-03-22', lift_id = 'lift-1' } = {}) {
-    return request(app)
+  // Submit a spot-check with the standard valid header fields. The inspector's
+  // "Checked by" signature is attached by default (G5); pass omitSignature to
+  // exercise the rejection.
+  function submitLift(
+    checklist,
+    { serviced_at = '2026-03-22', lift_id = 'lift-1', omitSignature = false } = {}
+  ) {
+    const req = request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
       .field('lift_id', lift_id)
       .field('serviced_at', serviced_at)
       .field('checklist', JSON.stringify(checklist));
+    if (!omitSignature) req.attach('inspector_signature', PNG, 'inspector.png');
+    return req;
   }
 
   test('201 inspector creates a lift inspection with checklist results and a defect photo', async () => {
@@ -470,7 +477,33 @@ describe('POST /api/inspections/lift', () => {
     expect(res.body.checklist_results[0].photo_url).toBeNull();
 
     const cloudinaryService = require('../../src/services/cloudinaryService');
-    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(1);
+    // One defect photo + the inspector's signature (G5).
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(2);
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledWith(expect.anything(), 'signatures');
+
+    // G5 + UC-015: the signature and the opening audit row land in the same
+    // transaction as the record itself.
+    expect(store.signatures).toHaveLength(1);
+    expect(store.signatures[0]).toMatchObject({
+      inspection_id: res.body.id,
+      signer_role: 'inspector',
+      signer_id: 'ins-1',
+    });
+    expect(store.history.some((h) => h.action === 'Created')).toBe(true);
+  });
+
+  // --- G5: the "Checked by" signature ------------------------------------
+  test('400 SIGNATURE_REQUIRED when the inspector signature is missing', async () => {
+    const res = await submitLift(validChecklist, { omitSignature: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('SIGNATURE_REQUIRED');
+
+    // Nothing persisted, and no orphaned upload.
+    const cloudinaryService = require('../../src/services/cloudinaryService');
+    expect(cloudinaryService.uploadImage).not.toHaveBeenCalled();
+    expect(store.signatures).toHaveLength(0);
+    expect(store.inspections).toHaveLength(0);
   });
 
   // G1: the paper form's Servicing Date is mandatory, not optional.

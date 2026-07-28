@@ -3,7 +3,7 @@
 // (severity + remark + optional photo on Defect), and POSTs multipart to
 // /api/inspections/lift: lift_id + checklist JSON fields, plus one
 // photo_<checklist_item_id> file part per photographed defect.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router';
 import {
   Alert,
@@ -26,6 +26,7 @@ import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternate
 import CloseIcon from '@mui/icons-material/Close';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import LocationCapture from '../components/LocationCapture';
+import SignaturePad from '../components/SignaturePad';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { compressImage } from '../utils/imageCompress';
@@ -45,6 +46,7 @@ export default function NewInspectionPage() {
   // answers[itemId] = { result: 'Pass'|'Defect', severity, remark }
   const [answers, setAnswers] = useState({});
   const [gps, setGps] = useState(null); // optional; never replaces lift choice
+  const signaturePadRef = useRef(null); // paper form's "Checked by" box (G5)
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
 
@@ -120,6 +122,7 @@ export default function NewInspectionPage() {
     setServicedAt('');
     setAnswers({});
     setGps(null);
+    signaturePadRef.current?.clear();
   }
 
   async function handleSubmit(e) {
@@ -144,6 +147,8 @@ export default function NewInspectionPage() {
       problem = `Choose a severity for every defect (${noSeverity.length} still unset).`;
     else if (noPhoto.length > 0)
       problem = `Attach a photo to each Major or Critical defect (${noPhoto.length} missing).`;
+    else if (signaturePadRef.current?.isEmpty())
+      problem = 'Sign the "Checked by" box before submitting.';
 
     if (problem) {
       setFeedback({ severity: 'error', message: problem });
@@ -179,6 +184,13 @@ export default function NewInspectionPage() {
         formData.append(`photo_${i.id}`, await compressImage(a.photo));
       }
     }
+    // The "Checked by" signature. Sent raw — the pad emits a few KB of line
+    // art, well under the 100 KB cap, and compressImage expects a File.
+    formData.append(
+      'inspector_signature',
+      await signaturePadRef.current.toBlob(),
+      'inspector.png'
+    );
 
     setSubmitting(true);
     try {
@@ -475,6 +487,15 @@ export default function NewInspectionPage() {
                     </Box>
                   ))}
 
+                {/* G5 — the paper form's "Checked by / Signature" box. Shown
+                    with the checklist, since it attests to those answers. */}
+                {liftId && (
+                  <SignaturePad
+                    ref={signaturePadRef}
+                    label={`Checked by — ${profile?.full_name ?? 'inspector'}`}
+                  />
+                )}
+
                 <Button
                   type="submit"
                   variant="contained"
@@ -494,8 +515,8 @@ export default function NewInspectionPage() {
                 </Button>
 
                 <Typography variant="caption" color="text.secondary">
-                  Select a lift, enter the servicing date, and mark every checklist
-                  item. Severity and remarks apply to defects only.
+                  Select a lift, enter the servicing date, mark every checklist
+                  item, and sign. Severity and remarks apply to defects only.
                 </Typography>
               </Stack>
             </Box>

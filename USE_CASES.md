@@ -77,7 +77,9 @@
 
 ### Extension work (this iteration)
 
-Re-seed the checklist to the 25 paper items (migration `027`); add `servicing_date`, `address`, `town_council` (migration `026`); render by paper section; capture the inspector signature at submit; implement the zero-defect auto-file branch; enforce G1–G5.
+~~Re-seed the checklist to the 25 paper items~~ (migration `026`); ~~add `servicing_date`~~ (`inspections.serviced_at`, migration `027`) ~~, `address`, `town_council`~~ (on `lifts`, migration `028`); ~~render by paper section~~; ~~capture the inspector signature at submit~~; ~~enforce G1–G5~~ — all done. Remaining: implement the zero-defect auto-file branch (G6), and the A1 warning when the spot-check is more than a day after the servicing date.
+
+**Note on migration numbering:** the design doc anticipated `026`/`027` for these; the delivered files are `026_seed_spot_check_checklist.sql`, `027_add_serviced_at_to_inspections.sql` and `028_add_town_council_address_to_lifts.sql`. `address`/`town_council` landed on `lifts` rather than `inspections` — they are properties of the lift, constant per block, and are shown read-only on the form.
 
 ---
 
@@ -471,6 +473,8 @@ Contract details are entered manually — **no document parsing** (deliberate sc
 Every state transition appends an `inspection_history` row carrying actor, action, previous status, new status, note, and timestamp. The table is **append-only** — no model exposes an UPDATE or DELETE path (G15). The record detail page renders the trail as a chronological timeline, and the closed record retains all signatures with their signing timestamps for the 5-year retention window.
 
 **Required actions (completeness check):** `Created` · `Defect Alert Sent` · `Filed — no defects` · `Assigned` · `Reassigned` · `Acknowledged` · `Work Progress Saved` · `On Hold — {reason}` · `Resumed` · `Rectified & Signed` · `Rectification Rejected` · `Overdue Reminder Sent` · `Priority Escalated` · `Jointly Endorsed & Closed`.
+
+**Status:** `Created` is now written for lift spot-checks, in the same transaction as the record (UC-001 step 10). Still missing: `Created` on the resident-complaint path, `Reassigned` (a reassign logs as `Assigned`), `Resumed` (no resume path exists), and `Jointly Endorsed & Closed` (close logs `'Closed'`). `On Hold — {reason}` logs the action as `On Hold` with the reason in `note`.
 
 **Extension:** add the four new actions (`Defect Alert Sent`, `Filed — no defects`, `Rectification Rejected`, `Overdue Reminder Sent`) and assert the full set in tests.
 

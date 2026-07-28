@@ -123,9 +123,11 @@ async function create(req, res, next) {
 // POST /api/inspections/lift — inspector submits a lift spot-check (multipart:
 // `lift_id`, `serviced_at`, and `checklist` [JSON string of
 // { checklist_item_id, result, severity?, remark? }] fields, plus
-// `photo_<checklist_item_id>` file parts for Major/Critical defects). Enforces
-// HLD §11 guard rails G1–G4 server-side: complete checklist, severity on every
-// defect, photo rules by severity, and the 100 KB cap (multer, see routes).
+// `photo_<checklist_item_id>` file parts for Major/Critical defects and the
+// inspector's `inspector_signature` part). Enforces HLD §11 guard rails G1–G5
+// server-side: complete checklist, severity on every defect, photo rules by
+// severity, the 100 KB cap (multer, see routes), and the "Checked by"
+// signature.
 // Note: HLD §6.2 folds this into POST /api/inspections
 // via source_type; it lives on a sibling route here so the inspector role guard
 // stays route-level and the resident path stays untouched. No OpenAI
@@ -210,6 +212,18 @@ async function createLiftInspection(req, res, next) {
       if (match && byItemId.has(match[1])) photoFiles.set(match[1], file);
     }
 
+    // G5: the paper form's "Checked by / Signature" box. Without it the record
+    // carries no attestation, so it is rejected before anything is stored.
+    const signatureFile = (req.files ?? []).find(
+      (f) => f.fieldname === 'inspector_signature'
+    );
+    if (!signatureFile) {
+      return res.status(400).json({
+        code: 'SIGNATURE_REQUIRED',
+        message: 'The inspector must sign before submitting the spot-check.',
+      });
+    }
+
     // Item number for error messages — the inspector sees the same numbering
     // as the paper form, not a UUID.
     const orderOf = new Map(activeItems.map((tpl) => [tpl.id, tpl.display_order]));
@@ -258,6 +272,11 @@ async function createLiftInspection(req, res, next) {
         item.photo_url = await cloudinaryService.uploadImage(file.buffer, 'defects');
       }
     }
+    // The inspector's signature lives in its own folder, as on the close flow.
+    const signature_url = await cloudinaryService.uploadImage(
+      signatureFile.buffer,
+      'signatures'
+    );
 
     // Derived server-side from the lift: block, responsible contractor, and a
     // title (inspections.title is NOT NULL; the HLD lift request has none).
@@ -269,6 +288,7 @@ async function createLiftInspection(req, res, next) {
       contractor_id: lift.contractor_id,
       checklist,
       serviced_at,
+      signature_url,
       ...gpsFields(req.body),
     });
 
