@@ -2,1638 +2,753 @@
 # Lift Inspection & Estate Defect Management System — High-Level Design
 
 > Problem statement: **4C-1 (Lift Inspection Digitalisation)** primary · **4C-2 (Interactive Dashboard)** secondary · **4D (Data-Driven Decision Making)** thematic
+>
+> **Requirements document of record:** Daniel Koh's *"Digitalise the Form on Spot-Check of Lift Servicing"* (10 Jun 2026) — the six-step current workflow (slide 2), the digitalisation advantages and design considerations (slide 3), and the two sample paper forms (slides 4–5). Where this design and that deck disagree, **the deck wins**.
 
 ---
 
 ## Table of Contents
 
-1. [System Overview](#1-system-overview)
-2. [Architecture Diagram](#2-architecture-diagram)
-3. [Tech Stack](#3-tech-stack)
-4. [Folder Structure](#4-folder-structure)
-5. [Database Schema](#5-database-schema)
-   - [5.11 Entity Relationship Summary](#511-entity-relationship-summary)
-6. [API Endpoints](#6-api-endpoints)
-   - 6.2 Inspections & Complaints · 6.9 Contractor Portal · 6.10 Admin Cost Analytics · 6.11 Export · 6.12 Vendor Account Lifecycle · 6.13 Data Playground
-7. [Auth & Security](#7-auth--security)
-8. [Environment Variables Reference](#8-environment-variables-reference)
+1. [Client Requirement Traceability](#1-client-requirement-traceability)
+2. [The Six-Step Workflow → System States](#2-the-six-step-workflow--system-states)
+3. [System Overview & Roles](#3-system-overview--roles)
+4. [Portal-to-Portal Flow](#4-portal-to-portal-flow)
+5. [Architecture](#5-architecture)
+6. [Tech Stack](#6-tech-stack)
+7. [The Paper Form → Data Model Mapping](#7-the-paper-form--data-model-mapping)
+8. [Database Schema](#8-database-schema)
+9. [API Endpoints](#9-api-endpoints)
+10. [Notification & Email Matrix](#10-notification--email-matrix)
+11. [State Machine & Guard Rails](#11-state-machine--guard-rails)
+12. [Auth & Security](#12-auth--security)
+13. [Environment Variables](#13-environment-variables)
+14. [Limitations & Deliberate Scope Boundaries](#14-limitations--deliberate-scope-boundaries)
 
 ---
 
-## 1. System Overview
+## 1. Client Requirement Traceability
 
-The Lift Inspection & Estate Defect Management System is a full-stack web application that digitises the paper-based lift spot-check workflow (4C-1) while also handling general resident estate-defect reports. Inspectors complete structured digital lift inspections; residents report issues by text or voice; managers triage and assign defects to lift contractors; contractors acknowledge, rectify, upload proof, and e-sign; and managers close records with a dual e-signature and a 5-year audit trail. The system integrates real-time notifications (Socket.IO), computer-vision defect detection (Roboflow), AI categorisation and cost-aware risk analysis (OpenAI), browser-native voice transcription (Web Speech API), automated monthly PDF reporting (pdfkit + Cloudinary), PowerPoint export (PptxGenJS), and analytics dashboards (Chart.js).
+Every sentence of the client brief mapped to a use case, an owner, and its current build state. This table is the contract; §14 lists everything deliberately excluded.
 
-**User Roles:**
-| Role | Description |
-|------|-------------|
-| `resident` | Reports general estate defects by text or voice; tracks own reports; rates resolution |
-| `inspector` | LMS staff; performs structured digital lift spot-check inspections |
-| `manager` | Triages, assigns to contractors, closes with dual e-sign; views analytics; sends notifications |
-| `contractor` | Lift company staff; acknowledges defects, rectifies, uploads proof photos, e-signs |
-| `admin` | Views operational cost-analytics dashboard (UC-011); manages external vendor (contractor) account lifecycle — onboarding, contract-linked expiry, renewal (UC-012) |
-| `system` | Automated actor — CV pipeline, AI recommendations + cost prediction, scheduled reports, auto-chase |
-
-**Core data-model note:** a single `inspections` table stores all records via a `source_type` discriminator (`lift_inspection`, `resident_complaint`, `cv_auto_detected`). All three share the same downstream lifecycle (triage → assign → rectify → close → audit), so one normalised table with type-specific nullable fields keeps the schema clean.
+| # | Client requirement (verbatim intent) | Use case | Owner | State |
+|---|---|---|---|---|
+| R1 | "A digital version of the spot-check form that works on mobile" | UC-001 | Philena | **Built** — `NewInspectionPage.jsx`; responsive pass in Phase 4 |
+| R2 | "GPS auto-fill for location" | UC-001 | Philena | **Built** — `LocationCapture.jsx`, migration `017` |
+| R3 | "a structured checklist **matching the existing paper form**" | UC-001 | Philena | **Gap** — template must become the real 25 items in sections A/B/C (§7) |
+| R4 | "photo upload with automatic compression" | UC-001 | Philena | **Built** — `imageCompress.js`, ≤100 KB (client design note) |
+| R5 | "severity tagging for each defect" | UC-001 | Philena | **Built** — `checklist_results.severity` ∈ Minor/Major/Critical |
+| R6 | "**auto-email to the lift company when defects are flagged**" | UC-014 | Davian | **Gap** — `emailService` exists but is wired only to UC-009 reports |
+| R7 | "The lift company should be able to acknowledge the defect on the same platform" | UC-010 | Zoe | **Built** — `POST /api/contractor/:id/acknowledge` |
+| R8 | "submit completion photos" | UC-010 | Zoe | **Built** — `submitWork()`, `checklist_results.completion_photo_url` |
+| R9 | "get a **digital sign-off from the EM Services inspector**" | UC-004 | Philena | **Partial** — dual e-sign exists; endorser must be *constrained to an inspector* (§11 G7) |
+| R10 | "The entire paper trail should be replaced with a timestamped digital audit log" | UC-015 | Philena | **Partial** — `inspection_history` exists; must cover every transition incl. email + reject (§11) |
+| R11 | Six-step workflow honoured end to end | §2 | All | **Partial** — steps 1 and 6-reject are the gaps |
+| R12 | "Lift technician rectify the defects **within 2 weeks**" (form note 2) | UC-010 / UC-014 | Davian | **Partial** — 14-day default in migration `025`; overdue chase is new |
+| R13 | "Spot-Checks shall be performed during contractor's **scheduled servicing date**" (form note 1) | UC-001 | Philena | **Gap** — `servicing_date` not captured |
+| R14 | "Option to attach photo (limit to 100k per photo)" + "No photos on minor issue" | UC-001 | Philena | **Partial** — compression built; Minor-severity photo suppression is new |
+| R15 | "Lesser travelling time · save time on paperwork · use less paper" | outcome | — | Emergent from R1–R10 |
+| R16 | "Proper record, audit" · "Download as file every year" | UC-009 | Davian | **Partial** — monthly PDF built; annual export is new |
+| R17 | "Statistic / report" | UC-005 / UC-011 | Hasini / Davian | **UC-005 built** · **UC-011 frontend only — no `/api/admin/costs/*` backend exists; the page runs on `mocks/costMocks.js`** |
+| R18 | "Admin / user control · add new equipment and users with rights" | UC-012 | Davian (BE) / Hasini (FE) | **Built** |
+| R19 | "Mimic data and stress test are required" | UC-016 | All | **Partial** — seed migrations `018`–`024` exist; stress test is new |
+| R20 | Paper-preferring inspectors can photograph a completed form instead of tapping | UC-013 | Mahdiya | **New** — not requested by the client; a deliberate adoption aid (§14) |
 
 ---
 
-## 2. Architecture Diagram
+## 2. The Six-Step Workflow → System States
+
+Daniel Koh's slide 2 is the spine of the system. Nothing in the product exists outside this spine except the resident-complaint and analytics side-channels.
+
+| Step (client's words) | Actor | Portal | System effect | `inspections.status` |
+|---|---|---|---|---|
+| **1.** "LMS staff plan the schedule according to monthly lift servicing schedule" | Inspector | Inspector | Inspector picks the lift and records the contractor's **`servicing_date`** on the form header | *(pre-record)* |
+| **2.** "Lift technician completed servicing" | Contractor | *(off-system)* | Captured as the `servicing_date` the inspector enters — we do not schedule the LC's work | *(pre-record)* |
+| **3.** "LMS staff inspect the site on next/following day and fill the inspection report" | Inspector | Inspector | UC-001: 25-item checklist, per-item Pass/Defect + severity + remark + photo, GPS, inspector e-signature | `Open` → `Pending Assignment` (≥1 defect) or `Closed` (0 defects, auto-filed) |
+| **4.** "Finding on report (defect) will be informed to lift servicing supervisor for rectification" | System → Contractor | — | **UC-014 auto-email** to `contractors.contact_email` + Socket.IO to `contractor-{user_id}`; manager confirms/reassigns in UC-002; 14-day deadline starts | `Pending Assignment` → `Assigned` |
+| **5.** "Lift technician rectify the defects within 2 weeks" | Contractor | Contractor | UC-010: acknowledge → per-item completion photo + remark → contractor e-signature. Partial saves allowed; `On Hold` pauses the clock | `Assigned` → `Acknowledged` → `Rectified` |
+| **6.** "LMS staff does joint inspection with lift companies · Lift technician will endorse on the clearing of defects" | Inspector + Manager | Manager | UC-004: inspector reviews completion proof. **Accept** → dual e-signature (manager + inspector) + `actual_cost` → closed. **Reject** → back to `Assigned` with a fresh deadline and a re-notify email | `Rectified` → `Closed`, or `Rectified` → `Assigned` |
+| **7.** "File the document" | System | — | UC-015 immutable audit trail + UC-009 monthly PDF + annual export; record enters the 5-year archive | `Closed` |
+
+**Why this ordering matters:** the auto-email fires at step 4, *before* manager triage, because the client's step 4 is an automatic consequence of a defect being found — not a management decision. Manager triage (UC-002) then adjusts priority, reassigns if the brand-derived contractor is wrong, or overrides the deadline. This keeps the digital flow faithful to the paper flow while still giving the manager control.
+
+---
+
+## 3. System Overview & Roles
+
+A full-stack web application that digitises the paper-based lift spot-check workflow (4C-1) and, as a secondary channel, general resident estate-defect reports. Inspectors complete structured digital spot-checks on mobile; the lift company is emailed automatically and works the defect on the same platform; the inspector signs off the rectification jointly with the manager; every transition is written to a timestamped audit log. Analytics, cost intelligence, CV assistance, and automated reporting sit on top of that data.
+
+| Role | Portal | Responsibility |
+|---|---|---|
+| `inspector` | Inspector | LMS staff. Performs spot-checks (UC-001), signs the form on submit, co-signs the joint endorsement at close (UC-004), may reject an inadequate rectification |
+| `contractor` | Contractor | Lift company staff. Acknowledges (UC-010), rectifies, uploads completion photos, e-signs, may place a defect `On Hold` |
+| `manager` | Manager | Triages and assigns (UC-002), closes with dual e-signature + actual cost (UC-004), sends notifications (UC-008), owns the analytics dashboard (UC-005) |
+| `resident` | Resident | Secondary channel — reports general estate defects by text or voice (UC-001b), tracks own reports live, rates resolution (UC-003) |
+| `admin` | Admin | Operational cost analytics (UC-011); external vendor account lifecycle (UC-012) |
+| `system` | — | Automated actor: UC-014 emails, UC-007 CV, UC-006 AI, UC-009 reports, expiry + overdue cron jobs |
+
+**Core data-model note:** a single `inspections` table stores all record types via a `source_type` discriminator (`lift_inspection`, `resident_complaint`, `cv_auto_detected`). All three share the same downstream lifecycle (triage → assign → rectify → endorse → close → audit), so one normalised table with type-specific nullable fields keeps the schema clean.
+
+---
+
+## 4. Portal-to-Portal Flow
+
+The single most important property of this system is that a record **hands off cleanly between four portals with no dead ends and no manual re-keying**. Every arrow below is a state transition backed by an audit row, a socket event, and (where the recipient is off-platform) an email.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INSPECTOR PORTAL                    /inspections/new                         │
+│  pick lift → servicing_date → GPS → 25-item checklist (A/B/C)               │
+│  per defect: severity + remark + photo(≤100KB, Major/Critical only)          │
+│  sign form  ─────────────────────────────────────────────► SUBMIT            │
+└───────────────┬──────────────────────────────────┬──────────────────────────┘
+                │ 0 defects                        │ ≥1 defect
+                ▼                                  ▼
+        status = Closed                    status = Pending Assignment
+        audit "Filed — no defects"         contractor auto-derived from lift.brand
+        (no email, no LC involvement)      │
+                                           ├──► UC-014 EMAIL to contractors.contact_email
+                                           │      (defect table, severities, deadline, deep link)
+                                           ├──► socket → contractor-{user_id}
+                                           └──► socket → manager-room
+                                                          │
+┌─────────────────────────────────────────────────────────▼──────────────────┐
+│ MANAGER PORTAL                      /inspections , /inspections/:id         │
+│  triage queue sorted by severity/AI score → open record → confirm or        │
+│  reassign contractor · set priority · override 14-day deadline              │
+│  (reassign re-fires UC-014 email to the new LC)                             │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │ status = Assigned  (deadline clock running)
+                                ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ CONTRACTOR PORTAL                   /contractor-inbox                       │
+│  inbox sorted by deadline, days-remaining countdown                         │
+│  ACKNOWLEDGE ──────────────────────────────► status = Acknowledged          │
+│  per defect: completion photo + remark  (save progress any number of times) │
+│  ON HOLD (access denied / part on order / out of scope) → clock pauses      │
+│  e-sign + SUBMIT WORK DONE ────────────────► status = Rectified             │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │ socket → manager-room + inspector-team
+                                │ email → the inspector who raised it
+                                ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ MANAGER + INSPECTOR (joint endorsement, step 6)   /inspections/:id          │
+│  side-by-side defect photo vs completion photo per item                     │
+│                                                                             │
+│  ACCEPT → manager e-sign + inspector e-sign + actual_cost ──► status Closed │
+│           audit "Jointly endorsed & closed" · 5-year archive                │
+│                                                                             │
+│  REJECT → reason (mandatory ≥10 chars) ────────────────────► status Assigned│
+│           new 14-day deadline · UC-014 re-notify email · audit "Rejected"   │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ AUDIT + REPORTING (step 7 "File the document")                              │
+│  inspection_history (append-only) · monthly PDF (UC-009) · annual export     │
+│  analytics + contractor scorecard (UC-005) · cost dashboard (UC-011)        │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Resident side-channel (secondary):** `/report` → text or voice complaint → OpenAI categorisation → same `inspections` table → identical triage/assign/close path → resident tracks it live at `/my-reports` and rates it on resolution (UC-003).
+
+---
+
+## 5. Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        CLIENT LAYER                                  │
-│   React.js (Vercel) ─── VITE_API_URL ──► Render backend             │
-│   Socket.IO client   ─── WebSocket  ──► Socket.IO server            │
+│                        CLIENT LAYER (Vercel)                         │
+│   Vite + React 18 · React Router v7 · MUI v6 · axios                │
+│   @supabase/supabase-js  ── auth (signup/login/refresh) ─► Supabase │
+│   Socket.IO client       ── WSS + access token ──────────► backend  │
 └──────────────────────────────┬──────────────────────────────────────┘
-                               │ HTTPS + WSS
+                               │ HTTPS + WSS · Authorization: Bearer <supabase access token>
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │                       BACKEND LAYER (Render)                         │
-│   Node.js / Express                                                  │
-│   ├── REST API routes (auth, inspections, contractor, analytics,     │
-│   │                     admin/costs, export, reports…)               │
-│   ├── Socket.IO server (manager-room, block-N, contractor-N, insp-N) │
-│   ├── JWT middleware (role-based: resident / manager)                │
-│   └── CRON_SECRET guard (protects scheduled endpoints)              │
+│   Node 20 / Express 4                                                │
+│   ├── REST routes: inspections, contractor, lifts, checklist-items,  │
+│   │    contractors, users, analytics, recommendations, export, cv,   │
+│   │    notifications, admin/vendors, reports                         │
+│   ├── Socket.IO server — rooms: manager-room · admin-room ·          │
+│   │    inspector-team · contractor-{user_id} · block-{n}             │
+│   ├── middleware/auth.js — verifies the Supabase token via JWKS,     │
+│   │    loads the users profile row, requireRole(...)                 │
+│   ├── cronGuard.js — CRON_SECRET on scheduled endpoints              │
+│   └── notificationDispatcher.js — 60 s setInterval                   │
 └───────┬──────────────┬──────────────┬───────────────┬───────────────┘
-        │              │              │               │
         ▼              ▼              ▼               ▼
-  ┌──────────┐  ┌────────────┐ ┌──────────┐  ┌────────────┐
-  │ Supabase │  │ Cloudinary │ │ Roboflow │  │ OpenAI API │
-  │PostgreSQL│  │ /defects   │ │ CV model │  │ GPT-4o-mini│
-  │          │  │ /reports   │ │ inference│  │            │
-  └──────────┘  └────────────┘ └──────────┘  └────────────┘
+  ┌──────────┐  ┌────────────┐ ┌──────────┐  ┌────────────┐  ┌──────────┐
+  │ Supabase │  │ Cloudinary │ │ Roboflow │  │ OpenAI     │  │Nodemailer│
+  │PostgreSQL│  │ /defects   │ │ CV model │  │ gpt-4o-mini│  │  SMTP    │
+  │ + Auth   │  │ /completed │ │          │  │ (+ vision  │  │ UC-014 + │
+  │          │  │ /signatures│ │          │  │  for OCR)  │  │  UC-009  │
+  │          │  │ /reports   │ │          │  │            │  │          │
+  └──────────┘  └────────────┘ └──────────┘  └────────────┘  └──────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    SCHEDULED LAYER (GitHub Actions)                  │
-│   nightly-recommendations.yml  → GET /api/recommendations/run       │
-│   weekly-report.yml            → GET /api/reports/generate          │
-│   (both authenticated via CRON_SECRET header)                       │
-│                                                                      │
-│   Scheduled notifications: handled server-side via setInterval       │
-│   (60 s loop in notificationDispatcher.js — no GitHub Actions used) │
+│   nightly-recommendations.yml   → GET /api/recommendations/run      │
+│   monthly-report.yml            → GET /api/reports/generate         │
+│   contract-expiry-check.yml     → GET /api/admin/vendors/expiry-check│
+│   overdue-defect-chase.yml      → GET /api/inspections/overdue-chase │
+│   (all authenticated via CRON_SECRET header)                        │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    UPTIME LAYER (UptimeRobot)                        │
-│   Pings GET /health every 5 minutes → keeps Render service warm     │
+│   UPTIME (UptimeRobot) — pings GET /health every 5 min              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Data flow summary:**
-- Inspector completes a lift spot-check (structured checklist + photos) → Express stores an `inspections` record (source_type `lift_inspection`) + child checklist_results in Supabase → contractor auto-derived from lift brand → Socket.IO notifies manager
-- Resident submits a complaint by text or voice → Web Speech API transcribes in-browser → text + audio stored (audio to Cloudinary /audio) → OpenAI categorises → Socket.IO notifies manager
-- Photo triggers Roboflow CV pipeline → if confidence ≥ 70% → `cv_auto_detected` record created → Socket.IO alert to manager
-- Manager assigns defect to contractor → contractor acknowledges, rectifies, uploads completion photos, e-signs (UC-010) → manager closes with dual e-signature (UC-004) → 5-year audit trail preserved
-- Manager closes a record with an actual_cost → feeds the operational cost analytics on the Admin dashboard (UC-011)
-- Manager closes a record (UC-004) → if recurrence threshold met (≥ 3 same lift/block+category in 30 days) → row inserted into `ai_jobs` table
-- GitHub Actions calls `/api/recommendations/run` nightly → endpoint drains `ai_jobs` queue first, then runs full velocity scan → OpenAI generates risk alert → stored in `ai_predictions` → surfaced on dashboard
-- GitHub Actions calls `/api/reports/generate` weekly → pdfkit renders PDF → Cloudinary stores → Nodemailer emails manager
-
 ---
 
-## 3. Tech Stack
+## 6. Tech Stack
 
-| Layer | Technology | Version | Purpose |
-|-------|-----------|---------|---------|
-| Frontend | React.js | 18.x | UI framework |
-| Frontend deploy | Vercel | — | Free static + serverless hosting |
-| Backend | Node.js + Express | 20.x / 4.x | REST API + Socket.IO server |
-| Backend deploy | Render | — | Free web service (750 hrs/month) |
-| Database | Supabase (PostgreSQL) | 15.x | Relational data, no expiry on free tier |
-| Image storage | Cloudinary | SDK 2.x | Stores defect photos and PDF reports |
-| Real-time | Socket.IO | 4.x | WebSocket rooms for live notifications |
-| CV | Roboflow Inference API | — | Defect detection, 70% confidence threshold |
-| AI / NLP | OpenAI API (gpt-4o-mini) | — | Categorisation, risk alerts, report summaries |
-| PDF | pdfkit | 0.15.x | Server-side weekly report generation |
-| Email | Nodemailer | 6.x | SMTP email delivery of weekly reports |
-| Charts | Chart.js | 4.x | Analytics dashboard visualisations |
-| Voice input | Web Speech API | browser-native | Live speech-to-text for resident complaints and inspector remarks (free, no key) |
-| PowerPoint export | PptxGenJS | 3.x | Server-side .pptx generation of dashboards (4C-2 / weekly-meeting pain point) |
-| Scheduling | GitHub Actions | — | Free cron trigger for UC-006, UC-008, UC-009 |
-| Uptime | UptimeRobot | — | Prevents Render free-tier cold starts |
-| Auth | JWT (jsonwebtoken) | 9.x | Stateless auth, stored in memory (not localStorage) |
-| Password hashing | bcrypt | 5.x | Salted password hashing |
-| File handling | multer | 1.x | Multipart/form-data for photo uploads |
-
----
-
-## 4. Folder Structure
-
-Two separate repositories — different runtimes, deploy targets, and package.json files. AI agents generate each independently.
-
-### 4.1 Backend Repository
-
-```
-backend/
-├── src/
-│   ├── routes/
-│   │   ├── auth.js              # POST /auth/login, /auth/logout, /auth/register
-│   │   ├── inspections.js       # CRUD for inspection/complaint records (UC-001–004)
-│   │   ├── contractor.js        # contractor portal: acknowledge, rectify, e-sign (UC-010)
-│   │   ├── admin.js             # admin cost analytics endpoints (UC-011)
-│   │   ├── vendors.js           # UC-012 vendor lifecycle: onboard, list, renew, suspend
-│   │   ├── export.js            # PptxGenJS PowerPoint export (UC-005/011)
-│   │   ├── analytics.js         # GET /analytics/issues-by-block, /trends, /sla-compliance
-│   │   ├── recommendations.js   # GET /recommendations/run (AI engine trigger)
-│   │   ├── reports.js           # GET /reports/generate, POST /reports/generate-manual
-│   │   ├── notifications.js     # POST /notifications, GET /notifications/:id/receipts, PATCH /notifications/:id/read
-│   │   └── cv.js                # POST /cv/detect, GET /cv/batch-scan
-│   │
-│   ├── controllers/
-│   │   ├── authController.js        # register(), login(), logout()
-│   │   ├── inspectionController.js  # create(), list(), getById(), assign(), close() + dual e-sign
-│   │   ├── contractorController.js  # acknowledge(), submitWork(), eSign() (UC-010)
-│   │   ├── adminController.js       # costSummary(), costByCategory(), costPerContractor() (UC-011)
-│   │   ├── vendorController.js      # onboard(), list(), renew(), suspend() (UC-012)
-│   │   ├── exportController.js      # generatePptx() (UC-005/011)
-│   │   ├── analyticsController.js   # getHeatmap(), getTrends(), getSlaCompliance()
-│   │   ├── recommendationController.js # runAnalysis(), acceptAlert(), dismissAlert()
-│   │   ├── reportController.js      # generateReport(), listReports()
-│   │   ├── notificationController.js # send(), dispatchDueNotifications(), markRead(), getReceipts() — dispatch is internal, called by notificationDispatcher.js
-│   │   └── cvController.js          # detect(), batchScan()
-│   │
-│   ├── services/
-│   │   ├── openaiService.js         # categoriseIncident(), generateRiskAlert(), generateSummary()
-│   │   ├── cloudinaryService.js     # uploadImage(), uploadPdf()
-│   │   ├── roboflowService.js       # detectDefect()
-│   │   ├── pdfService.js            # buildMonthlyReport()
-│   │   ├── pptxService.js           # buildDashboardDeck() via PptxGenJS
-│   │   ├── emailService.js          # sendReportEmail() via Nodemailer
-│   │   └── socketService.js         # emitToRoom(), broadcastToBlock()
-│   │
-│   ├── middleware/
-│   │   ├── auth.js                  # verifyJWT(), requireRole('manager')
-│   │   ├── cronGuard.js             # validateCronSecret() for scheduled endpoints
-│   │   ├── rateLimiter.js           # express-rate-limit config
-│   │   ├── errorHandler.js          # global error handler, standardised JSON errors
-│   │   └── validate.js              # request body validation (joi / zod)
-│   │
-│   ├── models/
-│   │   ├── inspectionModel.js       # DB queries for inspections + checklist_results
-│   │   ├── liftModel.js             # DB queries for lifts + contractors
-│   │   ├── signatureModel.js        # DB queries for signatures
-│   │   ├── userModel.js             # DB queries for users table
-│   │   ├── notificationModel.js     # DB queries for notifications + recipients
-│   │   ├── aiPredictionModel.js     # DB queries for ai_predictions table
-│   │   ├── cvDetectionModel.js      # DB queries for cv_detections table
-│   │   └── reportModel.js           # DB queries for reports table
-│   │
-│   ├── config/
-│   │   ├── db.js                    # Supabase PostgreSQL connection pool (pg)
-│   │   ├── cloudinary.js            # Cloudinary SDK init
-│   │   ├── socket.js                # Socket.IO server init + CORS config
-│   │   └── env.js                   # Environment variable validation on startup
-│   │
-│   ├── utils/
-│   │   ├── notificationDispatcher.js  # startNotificationDispatcher() — 60 s setInterval, calls dispatchDueNotifications()
-│   │   ├── jwtHelpers.js            # signToken(), verifyToken()
-│   │   ├── velocityCalculator.js    # failure velocity formula for UC-006
-│   │   ├── slaHelpers.js            # SLA compliance calculation
-│   │   └── csvExporter.js           # Client-side CSV generation helper
-│   │
-│   └── app.js                       # Express app setup, middleware chain, route mounting
-│
-├── migrations/
-│   ├── 001_create_users.sql
-│   ├── 002_create_contractors.sql
-│   ├── 003_create_lifts.sql
-│   ├── 004_create_inspections.sql
-│   ├── 005_create_inspection_history.sql
-│   ├── 006_create_checklist_items.sql
-│   ├── 007_create_checklist_results.sql
-│   ├── 008_create_signatures.sql
-│   ├── 009_create_cv_detections.sql
-│   ├── 010_create_ai_predictions.sql
-│   ├── 011_create_ai_jobs.sql
-│   ├── 012_create_notifications.sql
-│   ├── 013_create_notification_recipients.sql
-│   ├── 014_create_reports.sql
-│   └── 015_create_retry_queue.sql
-│
-├── tests/
-│   ├── unit/
-│   │   ├── auth.test.js
-│   │   ├── inspections.test.js
-│   │   ├── contractor.test.js
-│   │   ├── analytics.test.js
-│   │   ├── recommendations.test.js
-│   │   └── cv.test.js
-│   └── integration/
-│       ├── auth.integration.test.js
-│       └── inspections.integration.test.js
-│
-├── server.js                        # HTTP server + Socket.IO attach + port listen
-├── package.json
-├── .env.example
-└── README.md
-```
-
-### 4.2 Frontend Repository
-
-```
-frontend/
-├── src/
-│   ├── pages/
-│   │   ├── LoginPage.jsx            # UC-auth: login form
-│   │   ├── DashboardPage.jsx        # UC-005: analytics + AI alert cards + CSV what-if preview
-│   │   ├── InspectionListPage.jsx   # UC-002: manager triage queue
-│   │   ├── ContractorInboxPage.jsx   # UC-010: contractor assigned-defects inbox
-│   │   ├── AdminCostPage.jsx         # UC-011: admin cost analytics dashboard
-│   │   ├── AdminVendorPage.jsx       # UC-012: vendor account lifecycle (onboard / renew / suspend)
-│   │   ├── IncidentDetailPage.jsx   # UC-002 / UC-005: detail + status update
-│   │   ├── ReportIssuePage.jsx      # UC-001: resident submission form
-│   │   ├── MyReportsPage.jsx        # UC-003: resident status tracker
-│   │   ├── NotificationsPage.jsx    # UC-008: manager notification composer
-│   │   └── ReportsArchivePage.jsx   # UC-009: weekly PDF archive list
-│   │
-│   ├── components/
-│   │   ├── auth/
-│   │   │   └── LoginForm.jsx
-│   │   ├── inspections/
-│   │   │   ├── IncidentCard.jsx
-│   │   │   ├── IncidentForm.jsx     # photo upload, location picker
-│   │   │   ├── StatusBadge.jsx
-│   │   │   └── AuditLog.jsx
-│   │   ├── analytics/
-│   │   │   ├── HeatmapChart.jsx     # Chart.js matrix
-│   │   │   ├── TrendLineChart.jsx   # Chart.js line
-│   │   │   ├── SlaGauge.jsx         # Chart.js doughnut
-│   │   │   ├── PriorityQueue.jsx    # ranked table
-│   │   │   └── AIAlertCard.jsx      # amber recommendation card
-│   │   ├── cv/
-│   │   │   └── BoundingBoxOverlay.jsx  # canvas overlay for Roboflow results
-│   │   ├── notifications/
-│   │   │   ├── NotificationComposer.jsx
-│   │   │   └── ReadReceiptBadge.jsx
-│   │   └── common/
-│   │       ├── Header.jsx
-│   │       ├── Sidebar.jsx
-│   │       ├── Toast.jsx
-│   │       ├── Modal.jsx
-│   │       ├── LoadingSpinner.jsx
-│   │       └── EmptyState.jsx
-│   │
-│   ├── context/
-│   │   ├── AuthContext.jsx          # JWT token in memory, user role
-│   │   └── SocketContext.jsx        # Socket.IO connection, room management
-│   │
-│   ├── hooks/
-│   │   ├── useAuth.js
-│   │   ├── useSocket.js
-│   │   ├── useIncidents.js
-│   │   └── useAnalytics.js
-│   │
-│   ├── services/
-│   │   ├── api.js                   # axios instance with baseURL = VITE_API_URL
-│   │   ├── authService.js           # login(), logout()
-│   │   ├── inspectionService.js     # create(), list(), assign(), close()
-│   │   ├── contractorService.js     # acknowledge(), submitWork(), eSign()
-│   │   ├── voiceService.js          # Web Speech API wrapper (start/stop/transcript)
-│   │   ├── analyticsService.js      # getHeatmap(), getTrends(), getSla()
-│   │   └── notificationService.js   # send(), getReceipts()
-│   │
-│   ├── utils/
-│   │   ├── csvDownload.js           # client-side CSV export
-│   │   └── dateHelpers.js
-│   │
-│   └── App.jsx                      # Router, AuthContext, SocketContext providers
-│
-├── public/
-├── package.json
-├── vite.config.js
-├── .env.example
-└── README.md
-```
-
----
-
-## 5. Database Schema
-
-> All tables use PostgreSQL on Supabase (free tier, no expiry). Run migration files in order (001 → 015).
->
-> **Migration-order note:** `contractors` (002) is created before `lifts` (003) and `inspections` (004) because both reference it. The `users.contractor_id` foreign key to `contractors` is added in migration 013 (after both tables exist) to avoid a circular dependency at create time.
-
-### 5.1 users
-
-```sql
-CREATE TABLE users (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email         VARCHAR(255) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  full_name     VARCHAR(255) NOT NULL,
-  role          VARCHAR(20)  NOT NULL
-                CHECK (role IN ('resident','inspector','manager','contractor','admin')),
-  block_number  VARCHAR(20),                     -- residents only
-  unit_number   VARCHAR(20),                     -- residents only
-  contractor_id UUID,                            -- contractors only; FK → contractors(id) added in migration 013
-  status        VARCHAR(20)  NOT NULL DEFAULT 'active'
-                             CHECK (status IN ('active', 'suspended')),
-  created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-### 5.2 inspections  *(core record — replaces the old `incidents` table)*
-
-Holds all three record types via `source_type`. Lift-specific columns (`lift_id`)
-are nullable and populated only for `lift_inspection`; resident columns
-(`resident_id`, `description`, `audio_url`) only for `resident_complaint`.
-
-```sql
-CREATE TABLE inspections (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_type           VARCHAR(20)  NOT NULL
-                        CHECK (source_type IN
-                          ('lift_inspection','resident_complaint','cv_auto_detected')),
-  -- originator (one of these is set depending on source_type)
-  resident_id           UUID         REFERENCES users(id) ON DELETE CASCADE,
-  inspector_id          UUID         REFERENCES users(id),
-  lift_id               UUID         REFERENCES lifts(id),          -- lift_inspection only
-  -- common content
-  title                 VARCHAR(255) NOT NULL,
-  description           TEXT,                                        -- complaint text / summary
-  audio_url             VARCHAR(500),            -- Cloudinary /audio URL (voice complaints)
-  location_block        VARCHAR(20)  NOT NULL,
-  location_unit         VARCHAR(20),
-  photo_url             VARCHAR(500),            -- Cloudinary /defects URL (primary photo)
-  photo_pending         BOOLEAN NOT NULL DEFAULT FALSE,
-  status                VARCHAR(30)  NOT NULL DEFAULT 'Open'
-                        CHECK (status IN (
-                          'Open','Pending Assignment','Assigned','Acknowledged',
-                          'On Hold','Rectified','Resolved','Closed'
-                        )),
-  category              VARCHAR(50)  NOT NULL DEFAULT 'Uncategorised'
-                        CHECK (category IN (
-                          'Structural','Electrical','Plumbing','Cleanliness',
-                          'Lift','Doors','Cabin','Safety','Landscaping','Pest',
-                          'Other','Uncategorised'
-                        )),
-  priority              VARCHAR(20)  NOT NULL DEFAULT 'Medium'
-                        CHECK (priority IN ('Critical','High','Medium','Low')),
-  ai_priority_score     INTEGER      CHECK (ai_priority_score BETWEEN 1 AND 100),
-  -- assignment
-  contractor_id         UUID         REFERENCES contractors(id),
-  target_deadline       TIMESTAMP,               -- 14-day rule for lift defects
-  acknowledged_at       TIMESTAMP,
-  rectified_at          TIMESTAMP,
-  hold_reason           VARCHAR(100),            -- when status = 'On Hold'
-  -- closure / audit
-  is_deleted            BOOLEAN NOT NULL DEFAULT FALSE,
-  closing_remark        TEXT,
-  resolution_time_hours NUMERIC(8,2),
-  actual_cost           NUMERIC(10,2),           -- entered at close (UC-004); feeds UC-011
-  satisfaction_rating   INTEGER      CHECK (satisfaction_rating BETWEEN 1 AND 5),
-  satisfaction_comment  TEXT,
-  source_flag           VARCHAR(30)  DEFAULT 'Resident'
-                        CHECK (source_flag IN
-                          ('Resident','Inspector','Auto-Detected','AI-Generated')),
-  cv_detection_id       UUID         REFERENCES cv_detections(id),
-  closed_at             TIMESTAMP,
-  created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at            TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_inspections_source_type  ON inspections(source_type);
-CREATE INDEX idx_inspections_resident_id  ON inspections(resident_id);
-CREATE INDEX idx_inspections_inspector_id ON inspections(inspector_id);
-CREATE INDEX idx_inspections_lift_id      ON inspections(lift_id);
-CREATE INDEX idx_inspections_contractor   ON inspections(contractor_id);
-CREATE INDEX idx_inspections_status       ON inspections(status);
-CREATE INDEX idx_inspections_category     ON inspections(category);
-CREATE INDEX idx_inspections_block        ON inspections(location_block);
-CREATE INDEX idx_inspections_created_at   ON inspections(created_at);
-```
-
-### 5.2a lifts  *(new)*
-
-```sql
-CREATE TABLE lifts (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  block_number     VARCHAR(20)  NOT NULL,
-  lift_code        VARCHAR(20)  NOT NULL,        -- e.g. "44A-L1"
-  brand            VARCHAR(100) NOT NULL,        -- e.g. Otis, Schindler, KONE
-  contractor_id    UUID         REFERENCES contractors(id),  -- responsible LC
-  bca_cert_expiry  DATE,                         -- for the BCA expiry tracker quick-win
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE (block_number, lift_code)
-);
-CREATE INDEX idx_lifts_contractor ON lifts(contractor_id);
-```
-
-### 5.2b contractors  *(new)*
-
-```sql
-CREATE TABLE contractors (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name             VARCHAR(255) NOT NULL,
-  brands_serviced  TEXT,                         -- comma-separated brands
-  contact_email    VARCHAR(255) NOT NULL,        -- for Nodemailer defect alerts
-  user_id          UUID         REFERENCES users(id),  -- linked login account
-  contract_start   DATE,                         -- UC-012: vendor engagement start
-  contract_end     DATE,                         -- UC-012: drives auto-expiry job
-  contract_doc_url VARCHAR(500),                 -- UC-012: contract file, Cloudinary /contracts (reference only)
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-### 5.2c checklist_items  *(new — the structured spot-check template)*
-
-```sql
-CREATE TABLE checklist_items (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  section       VARCHAR(50)  NOT NULL,           -- Structural / Electrical / Doors / Cabin / Safety
-  item_text     VARCHAR(255) NOT NULL,           -- e.g. "Landing door closes flush"
-  display_order INTEGER      NOT NULL DEFAULT 0,
-  active        BOOLEAN      NOT NULL DEFAULT TRUE
-);
-```
-
-### 5.2d checklist_results  *(new — per-inspection results)*
-
-```sql
-CREATE TABLE checklist_results (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  inspection_id     UUID NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
-  checklist_item_id UUID NOT NULL REFERENCES checklist_items(id),
-  result            VARCHAR(10) NOT NULL CHECK (result IN ('Pass','Defect')),
-  severity          VARCHAR(10) CHECK (severity IN ('Minor','Major','Critical')),
-  remark            TEXT,
-  photo_url         VARCHAR(500),                -- Cloudinary /defects (per defect item)
-  completion_photo_url VARCHAR(500),             -- contractor's proof photo (UC-010)
-  completion_remark TEXT,                        -- contractor's remark (UC-010)
-  rectified         BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE INDEX idx_checklist_results_inspection ON checklist_results(inspection_id);
-```
-
-### 5.2e signatures  *(new — dual e-signature for joint endorsement)*
-
-```sql
-CREATE TABLE signatures (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  inspection_id UUID NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
-  signer_role   VARCHAR(20) NOT NULL CHECK (signer_role IN ('inspector','manager','contractor')),
-  signer_id     UUID NOT NULL REFERENCES users(id),
-  image_url     VARCHAR(500) NOT NULL,           -- Cloudinary /signatures
-  signed_at     TIMESTAMP NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_signatures_inspection ON signatures(inspection_id);
-```
-
-### 5.3 inspection_history (audit log)
-
-```sql
-CREATE TABLE inspection_history (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  inspection_id   UUID NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
-  actor_id        UUID NOT NULL REFERENCES users(id),
-  action          VARCHAR(50) NOT NULL,          -- 'Assigned','Reassigned','Priority Escalated','Closed','Force-Closed'
-  previous_status VARCHAR(30),
-  new_status      VARCHAR(30),
-  note            TEXT,
-  created_at      TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_inspection_history_inspection_id ON inspection_history(inspection_id);
-```
-
-### 5.4 cv_detections
-
-```sql
-CREATE TABLE cv_detections (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  image_url     VARCHAR(500) NOT NULL,           -- Cloudinary /defects URL
-  defect_class  VARCHAR(100) NOT NULL,           -- 'crack','water_stain','debris'…
-  confidence    NUMERIC(5,4) NOT NULL,           -- 0.0000 – 1.0000
-  bounding_box  JSONB,                           -- { x, y, width, height }
-  source        VARCHAR(30)  NOT NULL
-                CHECK (source IN ('resident_upload','scheduled_scan')),
-  status        VARCHAR(20)  NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending','processed','low_confidence')),
-  detected_at   TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-### 5.5 ai_predictions
-
-```sql
-CREATE TABLE ai_predictions (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_block VARCHAR(20) NOT NULL,
-  category      VARCHAR(50)  NOT NULL,
-  velocity_pct  NUMERIC(8,2) NOT NULL,
-  alert_text    TEXT         NOT NULL,
-  status        VARCHAR(20)  NOT NULL DEFAULT 'Active'
-                CHECK (status IN ('Active','Accepted','Dismissed')),
-  dismissed_by  UUID         REFERENCES users(id),
-  dismissed_at  TIMESTAMP,
-  created_at    TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_ai_predictions_status ON ai_predictions(status);
-```
-
-### 5.6 ai_jobs (recurrence trigger queue)
-
-```sql
-CREATE TABLE ai_jobs (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_block  VARCHAR(20) NOT NULL,
-  category        VARCHAR(50) NOT NULL,
-  triggered_by    UUID NOT NULL REFERENCES inspections(id),
-  status          VARCHAR(20) NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending','processed','failed')),
-  created_at      TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-### 5.7 notifications
-
-```sql
-CREATE TABLE notifications (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  manager_id  UUID NOT NULL REFERENCES users(id),
-  message     VARCHAR(500) NOT NULL,
-  scope       JSONB NOT NULL,                    -- { blocks: ['7','12'], type: 'specific' }
-  urgency     VARCHAR(20) NOT NULL
-              CHECK (urgency IN ('Informational','Warning','Critical')),
-  status      VARCHAR(20) NOT NULL DEFAULT 'Sent'
-              CHECK (status IN ('Sent','Scheduled','Cancelled','Failed')),
-  send_time   TIMESTAMP,                         -- null = immediate
-  sent_at     TIMESTAMP,
-  created_at  TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
-### 5.8 notification_recipients
-
-```sql
-CREATE TABLE notification_recipients (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  notification_id  UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-  resident_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  delivered        BOOLEAN NOT NULL DEFAULT FALSE,
-  read             BOOLEAN NOT NULL DEFAULT FALSE,
-  read_at          TIMESTAMP,
-  UNIQUE (notification_id, resident_id)
-);
-
-CREATE INDEX idx_notif_recipients_notification ON notification_recipients(notification_id);
-CREATE INDEX idx_notif_recipients_resident     ON notification_recipients(resident_id);
-```
-
-### 5.9 reports
-
-```sql
-CREATE TABLE reports (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  report_url      VARCHAR(500),                  -- Cloudinary /reports URL
-  period_start    DATE NOT NULL,
-  period_end      DATE NOT NULL,
-  generated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
-  triggered_by    VARCHAR(20) NOT NULL
-                  CHECK (triggered_by IN ('github_actions','manual')),
-  report_status   VARCHAR(20) NOT NULL DEFAULT 'Ready'
-                  CHECK (report_status IN ('Ready','Upload failed')),
-  email_delivered BOOLEAN NOT NULL DEFAULT FALSE
-);
-```
-
-### 5.10 retry_queue (CV rate-limit buffer)
-
-```sql
-CREATE TABLE retry_queue (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  image_url   VARCHAR(500) NOT NULL,
-  inspection_id UUID       REFERENCES inspections(id),
-  attempts    INTEGER NOT NULL DEFAULT 0,
-  status      VARCHAR(20)  NOT NULL DEFAULT 'pending'
-              CHECK (status IN ('pending','processed','failed')),
-  created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-  retry_after TIMESTAMP NOT NULL DEFAULT NOW()
-);
-```
-
----
-
-### 5.11 Entity Relationship Summary
-
-The diagram below shows every foreign-key relationship across the 15 tables. Read each arrow as "references". `inspections` is the central table (all three record types).
-
-```
-                       ┌─────────────┐
-                       │ contractors │◄───────────────┐
-                       │ id (PK)     │  contractor_id │
-                       │ name        │  (FK)          │
-                       │ user_id(FK) │                │
-                       └──────┬──────┘                │
-                     contractor_id (FK)               │
-                              ▼                        │
-┌──────────┐   ┌──────────────────────────┐   ┌───────┴──────┐   ┌────────────────┐
-│  users   │◄──┤        inspections        ├──►│    lifts     │   │  cv_detections │
-│          │   │  (core record)            │   │ id (PK)      │◄──┤ id (PK)        │
-│ id (PK)  │   │ id (PK)                   │   │ block/code   │   │ defect_class   │
-│ role     │   │ source_type               │   │ brand        │   │ confidence     │
-│ email    │◄──┤ resident_id (FK)          │   │ contractor_id│   │ bounding_box   │
-│ contr._id│   │ inspector_id (FK)         │   │  (FK)        │   └───────▲────────┘
-└────▲─────┘   │ lift_id (FK)              │   │ bca_cert_exp │           │
-     │         │ contractor_id (FK)        │   └──────────────┘  cv_detection_id (FK)
-     │         │ cv_detection_id (FK) ─────┼──────────────────────────────┘
-     │         │ status / category / cost  │
-     │         └───┬───────────┬───────────┘
-     │             │           │ inspection_id (FK)
-     │  actor_id   │           ▼
-     │  (FK)       │   ┌────────────────────┐   ┌──────────────────────┐
-     └─────────────┤   │ inspection_history │   │  checklist_results   │
-                   │   │ inspection_id (FK) │   │ inspection_id (FK)    │
-                   │   │ actor_id (FK)      │   │ checklist_item_id(FK) │
-                   │   │ action / note      │   │ result / severity     │
-                   │   └────────────────────┘   │ completion_photo/rem. │
-                   │                            └──────────▲───────────┘
-                   │   ┌────────────────────┐   checklist_item_id (FK)
-                   │   │    signatures      │   ┌──────────┴───────────┐
-                   │   │ inspection_id (FK) │   │  checklist_items     │
-                   │   │ signer_id (FK)     │   │ id (PK) / section    │
-                   │   │ signer_role/image  │   │ item_text            │
-                   │   └────────────────────┘   └──────────────────────┘
-                   │
-                   │   ┌────────────────────┐
-                   └──►│    retry_queue     │  inspection_id (FK) → inspections.id
-                       │ image_url / status │
-                       └────────────────────┘
-
-┌──────────┐   ┌─────────────────────┐        ┌──────────┐   ┌─────────────────────┐
-│  users   │◄──┤   ai_predictions    │        │inspection│◄──┤     ai_jobs          │
-│dismissed │   │ velocity_pct        │        │triggered │   │ triggered_by (FK)   │
-│_by (FK)  │   │ estimated_cost      │        │_by (FK)  │   │ location_block      │
-└──────────┘   │ alert_text / status │        └──────────┘   │ category / status   │
-               └─────────────────────┘                       └─────────────────────┘
-
-┌──────────┐   ┌─────────────────────┐        ┌──────────────────────────┐
-│  users   │◄──┤   notifications     ├───────►│  notification_recipients │
-│manager_  │   │ message / scope     │notif._id│ notification_id (FK)     │
-│id (FK)   │   │ urgency / status    │(FK)     │ resident_id (FK) ────────┼──► users.id
-└──────────┘   └─────────────────────┘        │ delivered / read         │
-                                               └──────────────────────────┘
-
-┌──────────────┐
-│   reports    │  (no FK relationships — standalone audit archive of generated PDFs)
-│ report_url   │
-└──────────────┘
-```
-
-**Written relationship summary:**
-
-| Relationship | Type | Description |
+| Layer | Technology | Purpose |
 |---|---|---|
-| `users` → `inspections` (resident) | one-to-many | A resident files many complaints (`inspections.resident_id → users.id`); set only for `resident_complaint`. |
-| `users` → `inspections` (inspector) | one-to-many | An inspector files many lift inspections (`inspections.inspector_id → users.id`); set only for `lift_inspection`. |
-| `lifts` → `inspections` | one-to-many | A lift is the subject of many inspections (`inspections.lift_id → lifts.id`); set only for `lift_inspection`. |
-| `contractors` → `inspections` | one-to-many | A contractor is assigned many defects (`inspections.contractor_id → contractors.id`). |
-| `contractors` → `lifts` | one-to-many | A contractor services many lifts by brand (`lifts.contractor_id → contractors.id`). |
-| `users` → `contractors` | one-to-one | A contractor login account links to a contractor record (`contractors.user_id → users.id`); `users.contractor_id` back-references it. |
-| `inspections` → `inspection_history` | one-to-many | One inspection has many audit entries (`inspection_history.inspection_id → inspections.id`). Cascades on delete. |
-| `users` → `inspection_history` | one-to-many | Any actor (inspector/manager/contractor) appears on many audit entries (`inspection_history.actor_id → users.id`). |
-| `inspections` → `checklist_results` | one-to-many | A lift inspection has many checklist result rows (`checklist_results.inspection_id → inspections.id`). Cascades on delete. |
-| `checklist_items` → `checklist_results` | one-to-many | A template item is answered across many inspections (`checklist_results.checklist_item_id → checklist_items.id`). |
-| `inspections` → `signatures` | one-to-many | An inspection carries up to two endorsement signatures (`signatures.inspection_id → inspections.id`). Cascades on delete. |
-| `contractors` → `users` (lifecycle) | one-to-one | A vendor's contract-bounded access (UC-012): `contractors.contract_end` drives the daily expiry job that flips the linked `users.status` to `suspended`. |
-| `users` → `signatures` | one-to-many | A user (inspector/manager/contractor) signs many records (`signatures.signer_id → users.id`). |
-| `cv_detections` → `inspections` | one-to-one | An auto-detected defect links to the record it created (`inspections.cv_detection_id → cv_detections.id`). Optional. |
-| `users` → `ai_predictions` | one-to-many | A manager can dismiss many predictions (`ai_predictions.dismissed_by → users.id`). Optional. |
-| `inspections` → `ai_jobs` | one-to-many | Closing a recurring defect queues a job referencing the triggering inspection (`ai_jobs.triggered_by → inspections.id`). |
-| `users` → `notifications` | one-to-many | A manager sends many notifications (`notifications.manager_id → users.id`). |
-| `notifications` → `notification_recipients` | one-to-many | One notification fans out to many recipient rows (`notification_recipients.notification_id → notifications.id`). Cascades. |
-| `users` → `notification_recipients` | one-to-many | A recipient has many receipt rows (`notification_recipients.resident_id → users.id`). Cascades. |
-| `inspections` → `retry_queue` | one-to-many | Images hitting Roboflow rate limits are queued referencing the originating inspection (`retry_queue.inspection_id → inspections.id`). Optional. |
-| `reports` | standalone | No foreign keys — self-contained audit archive of generated PDFs. |
+| Frontend | Vite + React 18, React Router v7, MUI v6, axios | UI |
+| Frontend deploy | Vercel | Static hosting |
+| Backend | Node 20 + Express 4 | REST + Socket.IO |
+| Backend deploy | Render | Web service |
+| Database | Supabase PostgreSQL 15, `pg` Pool, **raw SQL only — no ORM** | Relational data |
+| Migrations | numbered `.sql` under `backend/migrations`, applied by `scripts/migrate.js` | Schema source of truth |
+| **Auth** | **Supabase Auth (client-side `@supabase/supabase-js`)** | Sign-up / login / logout / session refresh. **No custom auth endpoints, no `jsonwebtoken`, no `bcrypt`, no `JWT_SECRET`, no `password_hash` column.** Backend verifies the Supabase token against the project JWKS and reads the role from the `users` profile row |
+| Image storage | Cloudinary | Defect photos, completion photos, signatures, PDF/PPTX reports |
+| Real-time | Socket.IO 4 | Room-scoped live updates |
+| Email | Nodemailer 6 | **UC-014 defect alerts to lift companies** + UC-009 report delivery + overdue chase |
+| CV | Roboflow Inference API | Defect detection, 0.70 confidence threshold |
+| AI / NLP | OpenAI `gpt-4o-mini` (+ vision for UC-013) | Categorisation, risk alerts, report summaries, form OCR |
+| PDF | pdfkit | Monthly report + annual export |
+| PowerPoint | PptxGenJS | Dashboard deck export |
+| Charts | Chart.js 4 | Analytics |
+| Voice | Web Speech API | Resident complaints, inspector remarks |
+| Uploads | multer (memory storage) | Multipart → Cloudinary buffers |
+| Validation | joi | Request bodies |
+| Rate limiting | express-rate-limit | Abuse control |
+| Scheduling | GitHub Actions (4 workflows) + in-process `setInterval` | Cron |
 
 ---
 
-## 6. API Endpoints
+## 7. The Paper Form → Data Model Mapping
 
-> All authenticated routes require `Authorization: Bearer <JWT>`.  
-> All cron routes require `Authorization: Bearer <CRON_SECRET>`.  
-> All responses use `Content-Type: application/json`.
+This section exists so that a marker can hold the sample form next to the app and see a 1:1 correspondence. **Nothing on the paper form may be unmapped.**
 
-### 6.1 Auth
+### 7.1 Form header
 
-#### POST /api/auth/register
-Creates a new resident account.
+| Paper field | System field |
+|---|---|
+| TOWN COUNCIL | `inspections.town_council` — defaults from `TOWN_COUNCIL_NAME` env, editable |
+| LIFT COMPANY | derived: `lifts.contractor_id → contractors.name` (read-only on the form) |
+| BLOCK/LIFT | `inspections.lift_id → lifts.block_number + lifts.lift_code` (e.g. "44A / 44A-L1") |
+| ADDRESS | `inspections.address` — auto-filled from the selected lift, GPS-assisted, editable |
 
-**Request:**
-```json
-{
-  "email": "ali@example.com",
-  "password": "SecurePass123",
-  "full_name": "Ali Hassan",
-  "role": "resident",
-  "block_number": "44A",
-  "unit_number": "12-05"
-}
-```
-**Response 201:**
-```json
-{
-  "id": "a1b2c3d4-...",
-  "email": "ali@example.com",
-  "full_name": "Ali Hassan",
-  "role": "resident",
-  "created_at": "2026-06-01T08:00:00Z"
-}
-```
-**Error 400 — duplicate email:**
-```json
-{ "code": "EMAIL_ALREADY_EXISTS", "message": "An account with this email is already registered." }
-```
+### 7.2 Checklist body — 25 items, three sections
 
----
+`checklist_items` is re-seeded to the exact paper items. `section` becomes the paper's section letter + name; `display_order` preserves the paper's numbering.
 
-#### POST /api/auth/login
-Authenticates user and returns JWT.
+| Section | # | `item_text` |
+|---|---|---|
+| **A — Motor Room** | 1 | Motor room cleanliness – Any debris? |
+| | 2 | Cleanliness of traction machine – Any leakage? |
+| | 3 | Controller contactors & relays – Any humming? |
+| | 4 | Bearings – Any abnormal noise? |
+| | 5 | Wire ropes (main rope & governor rope) and sheaves – Any wear or red dust? |
+| | 6 | Brake drum & lining – Sign of worn off? Oily? |
+| | 7 | Governor Machine – Any abnormal noise? |
+| | 8 | Anti Crime device – Functioning? |
+| | 9 | ARD & EBOPS – Functioning? Replacement date? |
+| **B — Lift Car** | 1 | COB buttons & CPI – Functioning? |
+| | 2 | Car Fan & Grille – Any abnormalities? |
+| | 3 | Car lights & diffuser – Lighted up and clear? |
+| | 4 | Car door operation – Any noise? |
+| | 5 | Door side gaps – Less than 10mm? |
+| | 6 | Sill to sill clearance – Less than 35mm? |
+| | 7 | Safety edge & sensor – Functioning? |
+| | 8 | Travelling – Any jerkiness? |
+| **C — Hoistway & Lift Pit** | 1 | Hall buttons & HPI – Functioning? |
+| | 2 | All landing door locks adjustment – Any noise? |
+| | 3 | All landing door shoes, tracks and eccentric rollers clearance – Any sign of wear and tear? |
+| | 4 | All landing door self-closing devices – Self-closing? |
+| | 5 | Levelling at each landings – Level? |
+| | 6 | Car top safety and cleanliness – Any safety netting? |
+| | 7 | All safety switches – Functioning? |
+| | 8 | Lift pit cleanliness – Any debris? |
 
-**Request:**
-```json
-{ "email": "ali@example.com", "password": "SecurePass123" }
-```
-**Response 200:**
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": { "id": "a1b2c3d4-...", "email": "ali@example.com", "role": "resident", "full_name": "Ali Hassan" }
-}
-```
-**Error 401:**
-```json
-{ "code": "INVALID_CREDENTIALS", "message": "Incorrect email or password." }
-```
+The paper's **√ / X** column maps to `checklist_results.result` ∈ `Pass` | `Defect`. The paper's free-text **REMARKS** column maps to `checklist_results.remark` (voice-enabled). Severity and photo have **no paper equivalent** — they are the digital improvements the client asked for (R5, R14).
 
----
+### 7.3 Form footer — the two signature blocks
 
-#### POST /api/auth/logout
-Invalidates the current session (client drops token).
+| Paper field | System field | Written when |
+|---|---|---|
+| Servicing Date | `inspections.servicing_date` | UC-001 submit (step 1/2) |
+| Date of spot checking | `inspections.created_at` | UC-001 submit (step 3) |
+| Checked by | `inspections.inspector_id → users.full_name` | UC-001 submit |
+| Signature (left block) | `signatures` row, `signer_role = 'inspector'` | **UC-001 submit** |
+| Date of Rectification | `inspections.rectified_at` | UC-010 finalize (step 5) |
+| Rectified by | `inspections.contractor_id → contractors.name` | UC-010 finalize |
+| Signature (right block) | `signatures` row, `signer_role = 'contractor'` | UC-010 finalize |
+| *(no paper equivalent)* | `signatures` rows `manager` + `inspector` at close | UC-004 joint endorsement (step 6) |
 
-**Response 200:**
-```json
-{ "message": "Logged out successfully." }
-```
+### 7.4 Form notes → enforced rules
 
----
-
-### 6.2 Inspections & Complaints
-
-#### POST /api/inspections
-**Auth:** `resident` (complaint) or `inspector` (lift spot-check)  
-Creates a new inspection/complaint record (multipart/form-data). For voice
-complaints, the transcript is sent as `description` and the recorded audio as
-the `audio` file part (Web Speech API transcribes client-side before submit).
-
-**Request — resident complaint (form-data):**
-```
-source_type   = "resident_complaint"
-title         = "Lift button broken at Level 3"
-description   = "Lift button 3 is stuck and does not respond"   (typed OR voice transcript)
-location_block = "44A"
-location_unit  = "12-05"
-photo         = [binary file]          (optional)
-audio         = [binary file]          (optional — raw recording if voice was used)
-```
-
-**Request — lift inspection (form-data):**
-```
-source_type   = "lift_inspection"
-lift_id        = "a1b2c3d4-..."
-location_block = "44A"
-checklist      = [ { checklist_item_id, result, severity, remark, photo } , ... ]
-```
-**Response 201:**
-```json
-{
-  "id": "INC-7f3a...",
-  "title": "Lift button broken at Level 3",
-  "status": "Open",
-  "category": "Lift",
-  "ai_priority_score": 72,
-  "photo_url": "https://res.cloudinary.com/.../defects/INC-7f3a.jpg",
-  "created_at": "2026-06-01T09:15:00Z"
-}
-```
-**Error 400 — missing fields:**
-```json
-{ "code": "VALIDATION_ERROR", "fields": ["title", "location_block"] }
-```
-**Error 409 — duplicate:**
-```json
-{ "code": "DUPLICATE_SUBMISSION", "existing_id": "INC-7f3a...", "message": "A similar report was submitted 1 minute ago." }
-```
+| Paper note | Enforcement |
+|---|---|
+| "Spot-Checks shall be performed during contractor's scheduled servicing date" | `servicing_date` is **mandatory**; UI warns if `date_of_spot_check − servicing_date > 1 day` (the client's "next/following day"), but does not block — the inspector may override with a remark |
+| "lift contractors are required to clear the defects … within 2 weeks" | `target_deadline` defaults to `NOW() + 14 days` (migration `025`); overdue chase emails at D−3 and D+0; SLA compliance measured against it |
 
 ---
 
-#### GET /api/inspections
-**Auth:** `manager`  
-Returns all non-deleted records, sorted by AI priority / defect severity descending.
+## 8. Database Schema
 
-**Query params:** `?status=Open&category=Lift&block=44A&from=2026-05-01&to=2026-06-01`
+> PostgreSQL on Supabase. Migrations `001`–`025` are **applied and must not be edited**. New work lands in `026`+.
 
-**Response 200:**
+### 8.1 Existing tables (built — do not modify)
+
+`users` · `contractors` · `lifts` · `inspections` · `inspection_history` · `checklist_items` · `checklist_results` · `signatures` · `cv_detections` · `ai_predictions` · `ai_jobs` · `notifications` · `notification_recipients` · `reports` · `retry_queue` · `vendor_history`
+
+Key columns already in place and relied on below:
+
+```sql
+-- users (Supabase auth user id is the PK; NO password_hash — Supabase Auth owns credentials)
+id UUID PK · email · full_name · role CHECK IN
+  ('resident','inspector','manager','contractor','admin')
+block_number · unit_number · contractor_id · status CHECK IN ('active','suspended')
+
+-- inspections (core record)
+id · source_type CHECK IN ('lift_inspection','resident_complaint','cv_auto_detected')
+resident_id · inspector_id · lift_id · contractor_id
+title · description · audio_url · location_block · location_unit
+photo_url · photo_pending
+status CHECK IN ('Open','Pending Assignment','Assigned','Acknowledged',
+                 'On Hold','Rectified','Resolved','Closed')
+category · priority · ai_priority_score
+target_deadline  DEFAULT (NOW() + INTERVAL '14 days')   -- migration 025
+acknowledged_at · rectified_at · hold_reason
+gps_lat · gps_lng · gps_accuracy_m · gps_captured_at    -- migration 017
+is_deleted · closing_remark · resolution_time_hours · actual_cost
+satisfaction_rating · satisfaction_comment · source_flag · cv_detection_id
+closed_at · created_at · updated_at
+
+-- checklist_items      section · item_text · display_order · active
+-- checklist_results    inspection_id · checklist_item_id · result CHECK IN ('Pass','Defect')
+--                      severity CHECK IN ('Minor','Major','Critical') · remark · photo_url
+--                      completion_photo_url · completion_remark · rectified
+-- signatures           inspection_id · signer_role CHECK IN ('inspector','manager','contractor')
+--                      signer_id · image_url · signed_at
+-- inspection_history   inspection_id · actor_id · action · previous_status · new_status
+--                      note · created_at
+```
+
+### 8.2 New migrations required
+
+**`026_add_paper_form_fields.sql`** — closes R13 and §7.1/7.3 gaps.
+
+```sql
+ALTER TABLE inspections
+  ADD COLUMN IF NOT EXISTS servicing_date        DATE,
+  ADD COLUMN IF NOT EXISTS address               VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS town_council          VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS defect_email_sent_at  TIMESTAMP,   -- UC-014 idempotency
+  ADD COLUMN IF NOT EXISTS reopen_count          INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_inspections_servicing_date ON inspections(servicing_date);
+```
+
+**`027_reseed_checklist_paper_form.sql`** — replaces the 10 placeholder items with the 25 real ones.
+
+```sql
+-- Retire the placeholder template without breaking historical results
+-- (checklist_results.checklist_item_id is a FK — never DELETE, only deactivate).
+UPDATE checklist_items SET active = FALSE;
+
+INSERT INTO checklist_items (section, item_text, display_order)
+SELECT v.section, v.item_text, v.display_order
+FROM (VALUES
+  ('A — Motor Room', 'Motor room cleanliness – Any debris?', 1),
+  -- … all 25 rows from §7.2 …
+  ('C — Hoistway & Lift Pit', 'Lift pit cleanliness – Any debris?', 25)
+) AS v(section, item_text, display_order)
+WHERE NOT EXISTS (SELECT 1 FROM checklist_items c WHERE c.item_text = v.item_text);
+```
+
+> **Loophole closed:** deactivating rather than deleting keeps every historical `checklist_results` row resolvable. `GET /api/checklist-items` returns `active = TRUE` only; the detail view resolves item text by id regardless of `active`.
+
+**`028_create_defect_email_log.sql`** — auditable proof that step 4 happened.
+
+```sql
+CREATE TABLE defect_email_log (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id  UUID NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+  contractor_id  UUID NOT NULL REFERENCES contractors(id),
+  recipient      VARCHAR(255) NOT NULL,
+  email_type     VARCHAR(30)  NOT NULL
+                 CHECK (email_type IN ('defect_alert','reassignment','overdue_chase','rejection')),
+  status         VARCHAR(20)  NOT NULL DEFAULT 'sent'
+                 CHECK (status IN ('sent','failed')),
+  error_message  TEXT,
+  sent_at        TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_defect_email_log_inspection ON defect_email_log(inspection_id);
+```
+
+### 8.3 Entity relationships (unchanged core)
+
+`inspections` is the hub. `users` → inspections (as resident / inspector), `lifts` → inspections, `contractors` → inspections and → lifts, `inspections` → {`inspection_history`, `checklist_results`, `signatures`, `defect_email_log`, `retry_queue`} (all cascade on delete), `checklist_items` → `checklist_results`, `cv_detections` ↔ `inspections`, `notifications` → `notification_recipients` → `users`, `contractors` → `vendor_history`. `reports` is standalone.
+
+---
+
+## 9. API Endpoints
+
+> All authenticated routes require `Authorization: Bearer <supabase access token>`.
+> All cron routes require `Authorization: Bearer <CRON_SECRET>`.
+> All errors use `{ code, message }`.
+
+### 9.1 Built and mounted (do not change signatures)
+
+| Method + path | Role | Purpose |
+|---|---|---|
+| `GET /health` | — | UptimeRobot liveness |
+| `GET /api/users/me` | any | Profile row for the Supabase auth user |
+| `GET /api/lifts` | inspector | Lift picker for UC-001 |
+| `GET /api/checklist-items` | any | Active checklist template, grouped by section |
+| `GET /api/contractors` | manager | Assignment dropdown |
+| `POST /api/inspections/complaint` | resident | UC-001b resident complaint (`upload.single('photo')`) |
+| `POST /api/inspections/lift` | inspector | UC-001 spot-check (`upload.any()`) |
+| `GET /api/inspections/my` | resident, inspector | Own submissions |
+| `GET /api/inspections/status-board` | any | Shared status board |
+| `GET /api/inspections` | manager | Triage queue |
+| `GET /api/inspections/:id` | any (scoped) | Full detail + checklist + history + signatures |
+| `PATCH /api/inspections/:id` | manager | UC-002 triage: priority, contractor, deadline, status, hold |
+| `POST /api/inspections/:id/close` | manager | UC-004 close: `manager_signature` + `endorser_signature` + cost |
+| `GET /api/contractor/assigned` | contractor | UC-010 inbox with days-remaining |
+| `POST /api/contractor/:id/acknowledge` | contractor | UC-010 step 5 start |
+| `POST /api/contractor/:id/rectify` | contractor | UC-010 completion photos + e-sign (`upload.any()`) |
+| `POST /api/contractor/:id/hold` | contractor | UC-010 Alt A — pause the clock |
+| `GET /api/analytics/{filter-options,summary,issues-by-block,trends,sla-compliance,contractor-scorecard,priority-queue}` | manager | UC-005. All accept `?from&to&block&category&section`. `section` selects inspections carrying at least one **Defect** in that section of the paper form, resolved through `checklist_results → checklist_items.section` — so it follows the template rather than a hardcoded list. `filter-options` returns `{ blocks, categories, sections }`; `contractor-scorecard` returns `avg_reopens` (NULL until migration `026`) |
+| `GET /api/recommendations` · `GET /run` · `POST /:id/accept` · `POST /:id/dismiss` | manager / cron | UC-006 |
+| `POST /api/export/pptx` | manager, admin | UC-005/011 deck |
+| `GET /api/cv/detections` · `GET /api/cv/batch-scan` | manager / cron | UC-007 |
+| `POST /api/notifications` · `GET /:id/receipts` · `PATCH /:id/read` | manager / any | UC-008 |
+| `POST /api/admin/vendors` · `GET /` · `GET /expiry-check` · `POST /run-expiry-check` · `POST /:id/renew` · `POST /:id/suspend` · `PATCH /:id` · `GET /:id/history` | admin / cron | UC-012 |
+| `GET /api/reports/generate` · `POST /generate-manual` · `GET /` | cron / manager / admin | UC-009 |
+
+### 9.2 New endpoints
+
+#### `POST /api/inspections/:id/reject` — **inspector or manager** (UC-004 Alt Flow, step 6 reject)
+
+Rejects an inadequate rectification. Returns the record to `Assigned` with a fresh 14-day deadline, increments `reopen_count`, writes an audit row, and re-fires the UC-014 email with `email_type = 'rejection'`.
+
 ```json
+// Request
+{ "reason": "Landing door still catches on the sill — photo shows the old part." }
+// Response 200
+{ "id": "INS-9k2m...", "status": "Assigned", "reopen_count": 1,
+  "target_deadline": "2026-08-11T00:00:00Z", "contractor_notified": true }
+// Error 400
+{ "code": "VALIDATION_ERROR", "message": "Rejection reason must be at least 10 characters." }
+// Error 409 — wrong state
+{ "code": "INVALID_STATE", "message": "Only a Rectified record can be rejected." }
+```
+
+#### `GET /api/inspections/overdue-chase` — **CRON_SECRET** (R12)
+
+Daily. Finds `Assigned`/`Acknowledged` records where `target_deadline` is 3 days out or already past (excluding `On Hold`), emails the contractor, notifies the manager, writes `defect_email_log` + audit rows. Idempotent per record per day.
+
+```json
+{ "due_soon": 4, "overdue": 2, "emails_sent": 6, "skipped_on_hold": 1 }
+```
+
+#### `POST /api/inspections/ocr-prefill` — **inspector** (UC-013)
+
+Accepts a photo of a completed paper form; returns a **draft** the inspector must confirm. Writes nothing to `inspections`.
+
+```json
+// Request: multipart, form_photo = [binary]
+// Response 200
 {
-  "data": [
-    {
-      "id": "INC-7f3a...",
-      "title": "Lift button broken at Level 3",
-      "location_block": "44A",
-      "category": "Lift",
-      "priority": "High",
-      "ai_priority_score": 72,
-      "status": "Open",
-      "resident_name": "Ali Hassan",
-      "created_at": "2026-06-01T09:15:00Z"
-    }
+  "confidence": "medium",
+  "header": { "block_lift": "886/A", "servicing_date": "2026-03-22",
+              "address": "Woodlands Dr 63" },
+  "items": [
+    { "checklist_item_id": "…", "section": "A — Motor Room", "display_order": 1,
+      "result": "Pass",   "remark": null,                    "field_confidence": 0.94 },
+    { "checklist_item_id": "…", "section": "A — Motor Room", "display_order": 2,
+      "result": "Defect", "remark": "Unsealed strip to renew","field_confidence": 0.61 }
   ],
-  "total": 1
+  "unreadable_items": [17, 23],
+  "disclaimer": "Draft only — every field must be confirmed by the inspector before submit."
 }
+// Error 422
+{ "code": "OCR_UNREADABLE", "message": "Could not read the form. Fill the checklist manually." }
 ```
+
+#### `GET /api/reports/annual?year=2026` — **manager, admin** (R16)
+
+Generates the client's "download as file every year" archive: a single PDF of every closed spot-check for the year plus a CSV appendix, stored in Cloudinary `/reports`.
 
 ---
 
-#### GET /api/inspections/my
-**Auth:** `resident` or `inspector`  
-Returns all records submitted by the authenticated originator.
+### 9.3 Analytics API reference (UC-005)
 
-**Response 200:**
+> All seven routes are `requireRole('manager')` and share the same optional query
+> string: `?from&to&block&category&section`. Dates are `YYYY-MM-DD`; `from` is
+> inclusive from 00:00 and `to` is inclusive to 23:59 of that day.
+> **`section`** selects records carrying at least one `Defect` in that section of
+> the paper form, resolved through `checklist_results → checklist_items.section`.
+
+**Shared errors (every route below)**
+
+| Code | HTTP | Cause |
+|---|---|---|
+| `UNAUTHORIZED` | 401 | Missing, malformed or expired Supabase access token |
+| `FORBIDDEN` | 403 | Authenticated but `role != 'manager'` |
+| `ACCOUNT_SUSPENDED` | 403 | Profile `status = 'suspended'` |
+| `SERVER_ERROR` | 500 | Unhandled failure; central `errorHandler` shape |
+
+#### `GET /api/analytics/filter-options`
+
+Populates the filter dropdowns from live data — nothing is hardcoded client-side.
+
 ```json
-{
-  "data": [
-    {
-      "id": "INC-7f3a...",
-      "title": "Lift button broken at Level 3",
-      "status": "In Progress",
-      "category": "Lift",
-      "assigned_department": "Lift",
-      "created_at": "2026-06-01T09:15:00Z",
-      "updated_at": "2026-06-01T11:00:00Z"
-    }
-  ]
-}
+{ "blocks": ["44A", "44B", "88B"],
+  "categories": ["Doors", "Electrical", "Lift"],
+  "sections": ["A — Motor Room", "B — Lift Car", "C — Hoistway & Lift Pit"] }
 ```
 
----
+#### `GET /api/analytics/summary`
 
-#### GET /api/inspections/:id
-**Auth:** `resident` | `inspector` | `manager` | `contractor`  
-Returns full record detail including checklist results, audit history, signatures, and (for voice complaints) the `audio_url`.
+KPI row. Ignores `from`/`to` — the movement figure defines its own two 30-day windows.
 
-**Response 200:**
 ```json
-{
-  "id": "INC-7f3a...",
-  "title": "Lift button broken at Level 3",
-  "description": "Lift button 3 is stuck and does not respond",
-  "location_block": "44A",
-  "location_unit": "12-05",
-  "photo_url": "https://res.cloudinary.com/.../defects/INC-7f3a.jpg",
-  "status": "In Progress",
-  "category": "Lift",
-  "priority": "High",
-  "ai_priority_score": 72,
-  "assigned_department": "Lift",
-  "target_resolution_hrs": 48,
-  "satisfaction_rating": null,
-  "source_flag": "Resident",
-  "history": [
-    {
-      "action": "Assigned",
-      "previous_status": "Open",
-      "new_status": "In Progress",
-      "actor_name": "Mdm Tan (Manager)",
-      "created_at": "2026-06-01T11:00:00Z"
-    }
-  ],
-  "created_at": "2026-06-01T09:15:00Z",
-  "updated_at": "2026-06-01T11:00:00Z"
-}
+{ "open_count": 46, "overdue_count": 4, "avg_resolution_hours": 58.3,
+  "sla_percentage": 76.36, "new_last_30": 58, "new_prior_30": 41,
+  "new_records_change_pct": 41.5, "sla_threshold_hrs": 72 }
 ```
-**Error 404:**
+
+`overdue_count` excludes `On Hold` (G11) and soft-deleted records.
+`new_records_change_pct` is `null` when there is no prior-period data — never a fabricated `0`.
+
+#### `GET /api/analytics/issues-by-block`
+
+Request: `?block=44A&section=A%20—%20Motor%20Room`
+
 ```json
-{ "code": "NOT_FOUND", "message": "Incident not found or has been closed." }
+{ "data": [ { "block": "44A", "category": "Lift", "count": 5 },
+            { "block": "44A", "category": "Electrical", "count": 2 } ] }
 ```
 
----
+#### `GET /api/analytics/trends`
 
-#### PATCH /api/inspections/:id
-**Auth:** `manager`  
-Updates priority, contractor assignment, deadline, or status (UC-002).
-
-**Request:**
 ```json
-{
-  "priority": "Critical",
-  "assigned_department": "Lift",
-  "target_resolution_hrs": 24,
-  "status": "In Progress",
-  "note": "Technician confirmed visit for 3 Jun"
-}
+{ "data": [ { "date": "2026-06-24", "count": 3 },
+            { "date": "2026-06-25", "count": 6 } ] }
 ```
-**Response 200:**
+
+#### `GET /api/analytics/sla-compliance`
+
 ```json
-{
-  "id": "INC-7f3a...",
-  "status": "In Progress",
-  "priority": "Critical",
-  "assigned_department": "Lift",
-  "updated_at": "2026-06-01T11:00:00Z"
-}
+{ "compliant_count": 42, "total_resolved": 55,
+  "sla_percentage": 76.36, "sla_threshold_hrs": 72 }
 ```
 
----
+With nothing closed yet: `{ "compliant_count": 0, "total_resolved": 0, "sla_percentage": 0, "sla_threshold_hrs": 72 }` — zero, never `NaN`.
 
-#### POST /api/inspections/:id/close
-**Auth:** `manager`  
-Closes a record with a mandatory closing remark, dual e-signature, and optional `actual_cost` (UC-004).
+#### `GET /api/analytics/contractor-scorecard`
 
-**Request:**
 ```json
-{ "closing_remark": "Lift technician replaced faulty button. Verified working." }
+{ "data": [ { "contractor": "Otis Service SG", "jobs": 14,
+              "avg_rectification_days": 3.1, "repeat_defect_rate": 21.4,
+              "overdue_count": 2, "avg_reopens": 0.27 } ] }
 ```
-**Response 200:**
+
+`avg_rectification_days` is `null` until a job has been both acknowledged and rectified.
+`avg_reopens` is `null` until migration `026` adds `inspections.reopen_count`; the controller probes `information_schema` once and begins averaging automatically.
+
+#### `GET /api/analytics/priority-queue`
+
+Extra params: `?priority=Critical&status=Open`.
+Score = `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, where recency is 100 at 0 days falling 10/day to a floor of 0, and frequency is 10 points per **open** record sharing block + category, capped at 100.
+
 ```json
-{
-  "id": "INC-7f3a...",
-  "status": "Closed",
-  "is_deleted": true,
-  "resolution_time_hours": 25.75,
-  "closed_at": "2026-06-02T10:55:00Z"
-}
+{ "data": [ { "id": "INS-7f3a…", "title": "Landing door misalignment",
+              "block": "44A", "category": "Doors", "priority": "Critical",
+              "status": "Assigned", "ai_priority_score": 88,
+              "created_at": "2026-06-22T09:15:00Z", "composite_score": 71.4 } ] }
 ```
-**Error 400 — remark too short:**
+
+#### `POST /api/export/pptx` — **manager, admin**
+
+Re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift from the screen. Always uses database rows — never Data Playground preview rows.
+
 ```json
-{ "code": "VALIDATION_ERROR", "message": "Closing remark must be at least 10 characters." }
-```
-
----
-
-#### POST /api/inspections/:id/rating
-**Auth:** `resident`  
-Submits a satisfaction rating on a resolved complaint (UC-003).
-
-**Request:**
-```json
-{ "rating": 4, "comment": "Fixed quickly, thank you!" }
-```
-**Response 200:**
-```json
-{ "id": "INC-7f3a...", "satisfaction_rating": 4, "satisfaction_comment": "Fixed quickly, thank you!" }
-```
-**Error 409 — already rated:**
-```json
-{ "code": "ALREADY_RATED", "message": "You have already submitted a rating for this record." }
-```
-
----
-
-### 6.3 Analytics
-
-#### GET /api/analytics/issues-by-block
-**Auth:** `manager`
-
-**Query params:** `?from=2026-05-01&to=2026-06-01&category=Lift`
-
-**Response 200:**
-```json
-{
-  "data": [
-    { "block": "44A", "category": "Lift",       "count": 5 },
-    { "block": "44A", "category": "Electrical", "count": 2 },
-    { "block": "88B", "category": "Plumbing",   "count": 7 }
-  ]
-}
-```
-
----
-
-#### GET /api/analytics/trends
-**Auth:** `manager`
-
-**Response 200:**
-```json
-{
-  "data": [
-    { "date": "2026-05-28", "count": 3 },
-    { "date": "2026-05-29", "count": 6 },
-    { "date": "2026-05-30", "count": 2 }
-  ]
-}
-```
-
----
-
-#### GET /api/analytics/sla-compliance
-**Auth:** `manager`
-
-**Response 200:**
-```json
-{
-  "compliant_count": 42,
-  "total_resolved": 55,
-  "sla_percentage": 76.36,
-  "sla_threshold_hrs": 72
-}
-```
-
----
-
-### 6.4 AI Recommendations
-
-> **UC-004 → UC-006 trigger flow:** When `POST /inspections/:id/close` runs (UC-004), the controller checks whether the count of closed incidents for the same `location_block + category` in the last 30 days has reached the recurrence threshold (≥ 3). If so, it inserts a row into the `ai_jobs` table referencing the triggering incident. The nightly `GET /api/recommendations/run` call (triggered by GitHub Actions) reads all `pending` rows from `ai_jobs` first, processes those block+category pairs with elevated priority, then runs the general velocity scan across all pairs. This ensures that any block that just hit the recurrence threshold is guaranteed to be analysed on the next nightly run, even if its velocity would not otherwise have crossed the 40% threshold.
-
----
-
-#### GET /api/recommendations
-**Auth:** `manager`  
-Returns all active (non-dismissed, non-accepted) AI risk alerts. Called by the dashboard on page load and after filter changes to populate the amber recommendation cards above the heatmap.
-
-**Query params:** `?status=Active` *(default; also accepts `Accepted`, `Dismissed`, `all`)*
-
-**Response 200:**
-```json
-{
-  "data": [
-    {
-      "id": "pred-abc123...",
-      "location_block": "44A",
-      "category": "Lift",
-      "velocity_pct": 60.0,
-      "alert_text": "Block 44A lift failures have increased 60% in 30 days. Recommend preventive inspection before end of month.",
-      "status": "Active",
-      "created_at": "2026-06-02T02:05:00Z"
-    },
-    {
-      "id": "pred-def456...",
-      "location_block": "88B",
-      "category": "Plumbing",
-      "velocity_pct": 45.0,
-      "alert_text": "Block 88B plumbing complaints up 45% vs prior period. Inspect riser pipes before wet season.",
-      "status": "Active",
-      "created_at": "2026-06-02T02:06:00Z"
-    }
-  ],
-  "total": 2
-}
-```
-**Error 401:** No JWT or expired token → `{ "code": "UNAUTHORIZED" }`  
-**Error 403:** Non-manager role → `{ "code": "FORBIDDEN" }`
-
----
-
-#### GET /api/recommendations/run
-**Auth:** `CRON_SECRET` header  
-Runs the nightly AI velocity analysis. Called by GitHub Actions at 02:00 SGT daily. Also callable on-demand by the manager via the "Run Analysis Now" button (which hits the backend, not the browser).
-
-**Internal logic (in order):**
-1. Query `ai_jobs` table for all rows with `status = 'pending'` → process these block+category pairs first.
-2. Run velocity analysis across all lift/block+category pairs from the `inspections` table.
-3. For pairs where velocity ≥ 40%: call OpenAI, insert into `ai_predictions`, mark `ai_jobs` row as `processed`.
-4. Return summary.
-
-**Response 200:**
-```json
-{
-  "alerts_generated": 2,
-  "skipped": 5,
-  "ai_jobs_processed": 1,
-  "alerts": [
-    {
-      "id": "pred-abc123...",
-      "location_block": "44A",
-      "category": "Lift",
-      "velocity_pct": 60.0,
-      "alert_text": "Block 44A lift failures have increased 60% in 30 days. Recommend preventive inspection before end of month.",
-      "triggered_by_ai_job": true
-    }
-  ]
-}
-```
-
----
-
-#### POST /api/recommendations/:id/accept
-**Auth:** `manager`  
-Accepts an AI alert and auto-creates a maintenance ticket.
-
-**Response 201:**
-```json
-{
-  "prediction_id": "pred-abc123...",
-  "status": "Accepted",
-  "maintenance_record_created": {
-    "id": "INC-maint-9f2b...",
-    "title": "Auto-generated: Block 44A Lift preventive maintenance",
-    "priority": "High",
-    "source_flag": "AI-Generated",
-    "status": "Open"
-  }
-}
-```
-
----
-
-#### POST /api/recommendations/:id/dismiss
-**Auth:** `manager`
-
-**Response 200:**
-```json
-{ "prediction_id": "pred-abc123...", "status": "Dismissed", "dismissed_at": "2026-06-01T02:15:00Z" }
-```
-
----
-
-### 6.5 Reports
-
-#### GET /api/reports/generate
-**Auth:** `CRON_SECRET` header  
-Triggered by GitHub Actions weekly. Generates PDF and emails manager.
-
-**Response 200:**
-```json
-{
-  "report_id": "rpt-xyz789...",
-  "period_start": "2026-05-26",
-  "period_end": "2026-06-01",
-  "report_url": "https://res.cloudinary.com/.../reports/weekly-2026-06-01.pdf",
-  "email_delivered": true,
-  "triggered_by": "github_actions"
-}
-```
-
----
-
-#### POST /api/reports/generate-manual
-**Auth:** `manager` (JWT)  
-Manager-triggered report generation mid-week.
-
-**Response 201:** *(same shape as above, `triggered_by: "manual"`)*
-
----
-
-#### GET /api/reports
-**Auth:** `manager`  
-Lists all generated reports.
-
-**Response 200:**
-```json
-{
-  "data": [
-    {
-      "id": "rpt-xyz789...",
-      "report_url": "https://res.cloudinary.com/.../reports/weekly-2026-06-01.pdf",
-      "period_start": "2026-05-26",
-      "period_end": "2026-06-01",
-      "generated_at": "2026-06-02T07:00:00Z",
-      "triggered_by": "github_actions"
-    }
-  ]
-}
-```
-
----
-
-### 6.6 Notifications
-
-#### POST /api/notifications
-**Auth:** `manager`  
-Sends or schedules a block-scoped notification.
-
-**Request:**
-```json
-{
-  "message": "Water supply will be interrupted on 3 Jun 09:00–12:00 for pipe maintenance.",
-  "scope": { "blocks": ["44A", "44B"], "type": "specific" },
-  "urgency": "Warning",
-  "send_time": null
-}
-```
-**Response 201:**
-```json
-{
-  "notification_id": "notif-123...",
-  "status": "Sent",
-  "recipients_count": 34,
-  "sent_at": "2026-06-01T10:00:00Z"
-}
-```
-
----
-
-#### Scheduled notification dispatch — server-side
-
-> **Not a REST endpoint.** Scheduled notification dispatch is handled by a `setInterval` loop (`notificationDispatcher.js`) running inside the Express process, polling every 60 seconds. This avoids consuming GitHub Actions free minutes. The `GET /api/notifications/dispatch` endpoint previously documented here has been removed. The `dispatchDueNotifications()` function is called internally on each tick. No external trigger or CRON_SECRET is required.
-
-#### GET /api/notifications/:id/receipts
-**Auth:** `manager`
-
-**Response 200:**
-```json
-{ "notification_id": "notif-123...", "total_recipients": 34, "read_count": 12, "unread_count": 22 }
-```
-
----
-
-#### PATCH /api/notifications/:id/read
-**Auth:** `resident`  
-Marks a notification as read for the authenticated resident.
-
-**Response 200:**
-```json
-{ "notification_id": "notif-123...", "read": true, "read_at": "2026-06-01T10:05:00Z" }
-```
-
----
-
-### 6.7 Computer Vision
-
-#### POST /api/cv/detect
-**Auth:** Internal (called from `inspectionController` after photo upload)  
-Sends an image to Roboflow and returns detection results.
-
-**Request:**
-```json
-{ "image_url": "https://res.cloudinary.com/.../defects/INS-7f3a.jpg", "inspection_id": "INS-7f3a..." }
-```
-**Response 200 — high confidence:**
-```json
-{
-  "cv_detection_id": "cv-det-abc...",
-  "defect_class": "crack",
-  "confidence": 0.87,
-  "bounding_box": { "x": 120, "y": 80, "width": 200, "height": 60 },
-  "ticket_created": true,
-  "inspection_id": "INS-auto-9k2m..."
-}
-```
-**Response 200 — low confidence:**
-```json
-{
-  "cv_detection_id": "cv-det-abc...",
-  "defect_class": "water_stain",
-  "confidence": 0.54,
-  "bounding_box": { "x": 50, "y": 30, "width": 90, "height": 45 },
-  "ticket_created": false,
-  "status": "low_confidence",
-  "flagged_for_review": true
-}
-```
-
----
-
-#### GET /api/cv/batch-scan
-**Auth:** `CRON_SECRET` header  
-Processes images in `retry_queue` that failed earlier.
-
-**Response 200:**
-```json
-{ "processed": 3, "failed": 1, "remaining": 0 }
-```
-
----
-
-### 6.8 Health Check
-
-#### GET /health
-**Auth:** None  
-Used by UptimeRobot to keep Render service warm.
-
-**Response 200:**
-```json
-{ "status": "ok", "timestamp": "2026-06-01T10:00:00Z" }
-```
-
----
-
-### 6.9 Contractor Portal (UC-010)
-
-#### GET /api/contractor/assigned
-**Auth:** `contractor`  
-Returns records where `contractor_id` matches the authenticated contractor, sorted by `target_deadline` ascending, each with a days-to-deadline countdown.
-
-**Response 200:**
-```json
-{
-  "data": [
-    {
-      "id": "INS-9k2m...",
-      "lift": "44A-L1",
-      "location_block": "44A",
-      "defect_summary": "Landing door misalignment (Major)",
-      "target_deadline": "2026-06-20T00:00:00Z",
-      "days_remaining": 6,
-      "status": "Assigned"
-    }
-  ]
-}
-```
-
-#### POST /api/contractor/:id/acknowledge
-**Auth:** `contractor`  
-Sets status → "Acknowledged", records `acknowledged_at`, appends audit entry, emits Socket.IO to manager + originator.
-
-**Response 200:**
-```json
-{ "id": "INS-9k2m...", "status": "Acknowledged", "acknowledged_at": "2026-06-14T09:00:00Z" }
-```
-
-#### POST /api/contractor/:id/rectify
-**Auth:** `contractor`  
-Submits completion photos + remarks per checklist item and the contractor e-signature (multipart/form-data). Sets status → "Rectified", records `rectified_at`, writes a `signatures` row (role `contractor`).
-
-**Request (form-data):**
-```
-items        = [ { checklist_result_id, completion_remark, completion_photo } , ... ]
-signature    = [binary PNG from canvas signature pad]
-```
-**Response 200:**
-```json
-{ "id": "INS-9k2m...", "status": "Rectified", "rectified_at": "2026-06-18T15:30:00Z", "signature_stored": true }
-```
-**Error 400 — signature missing:**
-```json
-{ "code": "SIGNATURE_REQUIRED", "message": "Signature not captured — please sign again." }
-```
-
-#### POST /api/contractor/:id/hold
-**Auth:** `contractor`  
-Marks a defect "On Hold" with a reason (access denied / part on order / out of scope); pauses the deadline countdown and notifies the manager (UC-010 Alt Flow A).
-
----
-
-### 6.10 Admin Cost Analytics (UC-011)
-
-> All figures are operational maintenance costs derived from this system's own data (`inspections.actual_cost`, `ai_predictions.estimated_cost`). This dashboard does **not** ingest EM Services' corporate financial statements.
-
-#### GET /api/admin/costs/summary
-**Auth:** `admin`  
-**Query:** `?period=...&block=...&lift=...&contractor=...`
-```json
-{
-  "total_actual": 18240.50,
-  "total_projected": 7600.00,
-  "variance_pct": -12.3,
-  "period": "2026-06"
-}
-```
-
-#### GET /api/admin/costs/by-category
-**Auth:** `admin` → bar chart data: actual cost grouped by category/lift.
-```json
-{ "data": [ { "category": "Doors", "actual_cost": 6200.00 }, { "category": "Electrical", "actual_cost": 4100.00 } ] }
-```
-
-#### GET /api/admin/costs/by-contractor
-**Auth:** `admin` → cost-per-contractor table (pairs with UC-005 scorecard).
-```json
-{ "data": [ { "contractor": "Otis", "actual_cost": 9800.00, "jobs": 14 } ] }
-```
-
-#### GET /api/admin/costs/trend
-**Auth:** `admin` → cost over time for the trend line chart.
-```json
-{ "data": [ { "month": "2026-04", "actual_cost": 5200.00 }, { "month": "2026-05", "actual_cost": 6100.00 } ] }
-```
-
----
-
-### 6.11 Export (UC-005 / UC-011)
-
-#### POST /api/export/pptx
-**Auth:** `manager` | `admin`  
-Renders the current filtered dashboard (charts + tables) into a PowerPoint deck server-side (PptxGenJS) and returns a download URL. Directly addresses the weekly-meeting PPT-conversion pain point (4C-2 / 4D).
-
-**Request:**
-```json
-{ "views": ["heatmap","sla_gauge","contractor_scorecard"], "filters": { "block": "44A", "period": "2026-06" } }
-```
-**Response 200:**
-```json
-{ "pptx_url": "https://res.cloudinary.com/.../reports/dashboard-2026-06.pptx" }
-```
-**Error 500 — generation failed:**
-```json
+// Request
+{ "views": ["heatmap", "trends", "sla_gauge", "contractor_scorecard"],
+  "filters": { "block": "44A", "section": "B — Lift Car" } }
+// Response 200
+{ "pptx_url": "https://res.cloudinary.com/…/reports/dashboard-2026-07.pptx" }
+// Error 500
 { "code": "EXPORT_FAILED", "message": "Export failed — please try again or use CSV." }
 ```
 
+### 9.4 Admin cost API reference (UC-011) — **specified, not yet built**
+
+> `requireRole('admin')` — a manager receives `403 FORBIDDEN` (COST-T02).
+> Query: `?from&to&block&category&contractor`.
+> **No route is mounted yet**; `AdminCostPage.jsx` currently reads
+> `mocks/costMocks.js`. Response shapes below are the contract the frontend
+> already consumes, so wiring is a swap of the async wrappers in `costService.js`.
+
+```jsonc
+// GET /api/admin/costs/summary
+{ "total_actual": 18240.50, "total_projected": 7600.00,
+  "variance_pct": -12.3, "jobs": 37, "prior_actual": 20800.00 }
+
+// GET /api/admin/costs/by-category
+{ "data": [ { "category": "Doors", "actual_cost": 6200.00, "jobs": 12 } ] }
+
+// GET /api/admin/costs/by-contractor
+{ "data": [ { "contractor": "Otis Service SG", "actual_cost": 9800.00, "jobs": 14 } ] }
+
+// GET /api/admin/costs/trend
+{ "data": [ { "month": "2026-05", "actual_cost": 6100.00, "jobs": 9 } ] }
+```
+
+`variance_pct` is `null` when there is no prior window to compare against.
+
 ---
 
-### 6.12 Vendor Account Lifecycle (UC-012)
+## 10. Notification & Email Matrix
 
-> Scoped to external vendor (contractor) accounts only. EM Services' own staff
-> (inspector/manager) are long-term employee accounts handled by EM's existing
-> HR/IT processes — out of scope (see Limitations).
+Every off-platform party must be reachable, and every on-platform party must see the change without a refresh. This matrix is the completeness check.
 
-#### POST /api/admin/vendors
-**Auth:** `admin`  
-Onboards a new external vendor. Admin manually enters vendor details and
-contract duration (no automated contract parsing — deliberate scope decision);
-the contract document is uploaded to Cloudinary `/contracts` for record-keeping
-only. Creates a `contractors` row and a linked `users` row
-(`role = 'contractor'`, `status = 'active'`).
+| Trigger | Email (Nodemailer) | Socket.IO room(s) | Audit action |
+|---|---|---|---|
+| Spot-check submitted, ≥1 defect | **→ `contractors.contact_email`** (defect table, severities, deadline, deep link) | `manager-room`, `contractor-{user_id}` | `Defect Alert Sent` |
+| Spot-check submitted, 0 defects | — | `manager-room` | `Filed — no defects` |
+| Manager reassigns to a different contractor | → new contractor (`reassignment`) | `manager-room`, both `contractor-{user_id}` rooms | `Reassigned` |
+| Contractor acknowledges | — | `manager-room`, `inspector-team` | `Acknowledged` |
+| Contractor saves progress (non-final) | — | `manager-room` | `Work Progress Saved` |
+| Contractor places on hold | → manager | `manager-room` | `On Hold — {reason}` |
+| Contractor finalizes (e-signed) | → the raising inspector | `manager-room`, `inspector-team` | `Rectified & Signed` |
+| Inspector/manager **rejects** | → contractor (`rejection`) | `contractor-{user_id}`, `manager-room` | `Rectification Rejected` |
+| Joint endorsement + close | — | `manager-room`, `admin-room`, `block-{n}` | `Jointly Endorsed & Closed` |
+| D−3 and D+0 on deadline | → contractor (`overdue_chase`) | `manager-room` | `Overdue Reminder Sent` |
+| Resident complaint status change | — | `block-{n}`, `manager-room` | per transition |
+| Monthly report ready | → manager | — | — |
+| Vendor contract expired | → admin | `admin-room` | `Contract Expired` |
 
-**Request (form-data):**
+**Delivery guarantees.** Email is best-effort and **never blocks the HTTP response** — every send is wrapped, failures write `defect_email_log.status = 'failed'` with the error, and the UI surfaces an amber "LC not emailed — retry" chip to the manager. Socket emits are likewise wrapped: a socket hiccup must never fail a state transition.
+
+---
+
+## 11. State Machine & Guard Rails
+
 ```
-name             = "Otis Elevator Co."
-contact_email    = "service@otis.example.com"
-brands_serviced  = "Otis"
-contract_start   = "2026-07-01"
-contract_end     = "2027-06-30"
-contract_doc     = [binary PDF/DOCX]
-login_email      = "otis.contractor@example.com"
-login_password   = [admin-set temporary password]
-```
-**Response 201:**
-```json
-{
-  "contractor_id": "CTR-4f2a...",
-  "user_id": "USR-9b1c...",
-  "status": "active",
-  "contract_end": "2027-06-30",
-  "contract_doc_url": "https://res.cloudinary.com/.../contracts/otis.pdf"
-}
-```
-**Error 400 — invalid dates:**
-```json
-{ "code": "INVALID_CONTRACT_DATES", "message": "Contract end date must be after start date." }
-```
-**Error 409 — email exists:**
-```json
-{ "code": "EMAIL_ALREADY_EXISTS", "message": "An account with this email already exists." }
+                     ┌──────────────────────── reject (≥10 char reason, +14d) ─────────┐
+                     ▼                                                                 │
+  [new] ──► Pending Assignment ──assign──► Assigned ──ack──► Acknowledged ──finalize──► Rectified ──accept──► Closed
+    │              │                          ▲  │               │                                              ▲
+    │              │                          │  └──hold──► On Hold ──resume──┘                                 │
+    │              └── 0 defects ─────────────┼──────────────────────────────────────────────────────────────────┘
+    │                                         │
+    └── resident complaint ──► Open ──triage──┘
 ```
 
-#### GET /api/admin/vendors
-**Auth:** `admin`  
-Lists all vendor accounts with contract status, sorted by `contract_end`
-ascending (soonest-expiring first).
+The guard rails below are the "loopholes covered" list. Each is enforced server-side, has a test id, and returns a `{ code, message }` error.
 
-**Response 200:**
-```json
-{
-  "data": [
-    {
-      "contractor_id": "CTR-4f2a...",
-      "name": "Otis Elevator Co.",
-      "status": "active",
-      "contract_end": "2027-06-30",
-      "days_until_expiry": 349
-    }
-  ]
-}
-```
+| # | Guard rail | Enforcement |
+|---|---|---|
+| **G1** | A spot-check cannot be submitted without `servicing_date`, `lift_id`, and a result for **all 25 active items** | 400 `INCOMPLETE_CHECKLIST` listing the missing `display_order` values |
+| **G2** | A `Defect` result must carry a `severity` | 400 `SEVERITY_REQUIRED` |
+| **G3** | `Major`/`Critical` defects require a photo; `Minor` defects **must not** carry one (client: "No photos on minor issue") | 400 `PHOTO_REQUIRED_FOR_SEVERITY` / `PHOTO_NOT_ALLOWED_FOR_MINOR` |
+| **G4** | Every photo is compressed to ≤100 KB client-side; the server rejects anything larger | 400 `PHOTO_TOO_LARGE` (multer limit) |
+| **G5** | The inspector must e-sign before submit ("Checked by / Signature") | 400 `SIGNATURE_REQUIRED` |
+| **G6** | 0 defects → auto-file to `Closed`, no contractor assignment, **no email** | Controller branch + audit `Filed — no defects` |
+| **G7** | At close, the endorser signature **must belong to a user whose role is `inspector`** — the client's "digital sign-off from the EM Services inspector" | 400 `ENDORSER_MUST_BE_INSPECTOR` |
+| **G8** | Close is blocked unless **every** `Defect` row has `rectified = TRUE` and a `completion_photo_url` (or an explicit manager waiver note) | 409 `UNRECTIFIED_DEFECTS` listing item numbers |
+| **G9** | Contractor endpoints only ever touch records whose `contractor_id` maps to the caller's own `users.contractor_id` | 403 `FORBIDDEN` |
+| **G10** | Acknowledge/rectify/hold are rejected from a wrong state (e.g. acknowledging a `Closed` record) | 409 `INVALID_STATE` |
+| **G11** | `On Hold` pauses the deadline; resuming extends `target_deadline` by the held duration | Computed on resume, audit-logged |
+| **G12** | UC-014 email fires **at most once per (inspection, contractor)** — `defect_email_sent_at` + `defect_email_log` guard replays | Idempotency check before send |
+| **G13** | Email or socket failure never rolls back a state transition | try/catch around every side effect; failure recorded, not thrown |
+| **G14** | Close writes `signatures` + `inspection_history` + status **in one transaction** | `closeInspection()` pg transaction |
+| **G15** | `inspection_history` is append-only — no UPDATE or DELETE path exists in any model | Reviewed; no mutating query |
+| **G16** | Suspended vendors (UC-012) cannot acknowledge or rectify | 403 `ACCOUNT_SUSPENDED` |
+| **G17** | Reassigning away from a contractor with open work writes an audit row and notifies both parties | UC-002 Alt C |
+| **G18** | OCR output is a **draft**: `POST /ocr-prefill` never writes to `inspections`; the inspector confirms every field and signs before submit | Separate endpoint, no DB write |
+| **G19** | Retiring a checklist item deactivates it; historical `checklist_results` stay resolvable | `active = FALSE`, never DELETE |
+| **G20** | A rejected record keeps its full history — `reopen_count` increments, prior signatures are retained, not overwritten | Append-only signatures table |
 
-#### POST /api/admin/vendors/:id/renew
-**Auth:** `admin`  
-Extends a vendor's contract with a new `contract_end` (optional new contract
-document). If the account was `suspended` due to expiry, reactivates it to
-`active`. Appends audit entry `Contract Renewed`.
+---
 
-**Request:**
-```json
-{ "contract_end": "2028-06-30" }
-```
-**Response 200:**
-```json
-{ "contractor_id": "CTR-4f2a...", "status": "active", "contract_end": "2028-06-30" }
-```
-
-#### POST /api/admin/vendors/:id/suspend
-**Auth:** `admin`  
-Manually suspends a vendor before contract end (early termination). Sets
-`users.status = 'suspended'` immediately; open records assigned to that
-contractor surface in the manager's "Pending Reassignment" queue (UC-002 Alt C).
-
-**Response 200:**
-```json
-{ "contractor_id": "CTR-4f2a...", "status": "suspended" }
-```
-
-**Scheduled job — contract expiry check**
-(`.github/workflows/contract-expiry-check.yml`, same pattern as §5.4): runs
-daily, finds `contractors` where `contract_end < NOW()` and the linked
-`users.status = 'active'`, sets status to `suspended`, and notifies `admin`
-(Socket.IO + email) that the vendor has expired and their open records need
-renewal or reassignment. Suspended vendors receive `403 ACCOUNT_SUSPENDED` at
-login.
-
-### 6.13 Data Playground — CSV What-If Preview (UC-005)
-
-> Client-side only — no persistence, no new backend endpoints, no schema impact.
-> Built directly into the manager Analytics Dashboard (`DashboardPage.jsx`), not
-> a separate page.
-
-The dashboard has an **Import CSV** control that lets a manager blend
-hypothetical inspection rows into the existing analytics charts to preview how
-the numbers would change — a what-if view. Parsing and merging happen entirely
-in the browser; nothing is written to the database, and **Clear preview** simply
-drops the parsed rows.
-
-- Accepts a CSV with header `block,category[,date][,resolution_time_hours]`
-  (`block` and `category` required; `date` and `resolution_time_hours` optional).
-- Imported rows are merged client-side into the heatmap (issues by block ×
-  category), the trend line, and the SLA gauge.
-- A **chart-view toggle** switches all charts between **Combined**, **Existing
-  only**, and **Imported only**.
-- Imported data is visually distinguished — a ring on affected heatmap cells, a
-  dashed "Imported (preview)" trend series, and a before → after SLA gauge.
-- Limits: ≤ 1 MB per file and ≤ 5,000 rows; CSV only. Malformed files surface a
-  readable error message.
-- Exports (CSV / PowerPoint) always use the real database data, never the
-  previewed rows.
-
-## 7. Auth & Security
+## 12. Auth & Security
 
 | Mechanism | Implementation |
-|-----------|---------------|
-| Password hashing | `bcrypt` with salt rounds = 12 |
-| Authentication | JWT signed with `JWT_SECRET`, expiry 30 minutes, sliding window |
-| Token storage | Frontend stores JWT **in memory only** (React context) — never localStorage |
-| Role enforcement | `requireRole(...)` middleware — five roles (`resident`, `inspector`, `manager`, `contractor`, `admin`); contractor routes gated to own assignments, admin cost dashboard gated to `admin` only |
-| Cron endpoint protection | `cronGuard.js` middleware validates `Authorization: Bearer <CRON_SECRET>` |
-| CORS | `cors({ origin: process.env.FRONTEND_URL, credentials: true })` |
-| Socket.IO CORS | `new Server(httpServer, { cors: { origin: process.env.FRONTEND_URL } })` |
-| Rate limiting | `express-rate-limit`: 100 req/15 min per IP on auth routes |
-| Input validation | All request bodies validated with `joi` or `zod` before controller |
-| Error format | All errors return `{ code: "ERROR_CODE", message: "Human-readable" }` |
+|---|---|
+| Identity | **Supabase Auth on the client.** Sign-up, login, logout, password hashing, and session refresh are handled by `@supabase/supabase-js`. **No `/api/auth/*` endpoints are mounted**; `routes/auth.js` is retained but unmounted |
+| Token | Frontend obtains the access token via `getAccessToken()` (`lib/auth.js`) and sends `Authorization: Bearer <token>` on REST and on the Socket.IO handshake |
+| Verification | `middleware/auth.js` verifies the Supabase token against the project JWKS locally, then loads the `users` profile row (keyed by the Supabase auth user id) to obtain `role`, `block_number`, `status` |
+| Authorisation | `requireRole(...)` over five roles. Contractor routes additionally scope to the caller's own `contractor_id` (G9); admin cost/vendor routes are `admin`-only |
+| Account status | `users.status = 'suspended'` → 403 `ACCOUNT_SUSPENDED` on every authenticated route (G16) |
+| Cron protection | `cronGuard.js` validates `Authorization: Bearer <CRON_SECRET>` |
+| Headers | `helmet()` |
+| CORS | `cors({ origin: FRONTEND_URL, credentials: true })`; Socket.IO CORS configured separately |
+| Rate limiting | `express-rate-limit` app-wide |
+| Body caps | `express.json({ limit: '1mb' })`; multer memory storage with per-file size + MIME filter |
+| Validation | `joi` before every controller |
+| Error shape | `{ code, message }` from a central `errorHandler` |
 
-**Standardised Error Codes:**
-
-| Code | HTTP | Meaning |
-|------|------|---------|
-| `INVALID_CREDENTIALS` | 401 | Wrong email or password |
-| `UNAUTHORIZED` | 401 | Missing or expired JWT |
-| `FORBIDDEN` | 403 | Role does not have access |
-| `VALIDATION_ERROR` | 400 | Request body failed validation |
-| `NOT_FOUND` | 404 | Resource does not exist |
-| `DUPLICATE_SUBMISSION` | 409 | Duplicate record detected |
-| `ALREADY_RATED` | 409 | Satisfaction rating already submitted |
-| `EMAIL_ALREADY_EXISTS` | 400 | Registration email conflict |
-| `SERVER_ERROR` | 500 | Unhandled internal error |
+**Error codes:** `UNAUTHORIZED` 401 · `FORBIDDEN` 403 · `ACCOUNT_SUSPENDED` 403 · `VALIDATION_ERROR` 400 · `INCOMPLETE_CHECKLIST` 400 · `SEVERITY_REQUIRED` 400 · `PHOTO_REQUIRED_FOR_SEVERITY` 400 · `PHOTO_NOT_ALLOWED_FOR_MINOR` 400 · `PHOTO_TOO_LARGE` 400 · `SIGNATURE_REQUIRED` 400 · `ENDORSER_MUST_BE_INSPECTOR` 400 · `NOT_FOUND` 404 · `INVALID_STATE` 409 · `UNRECTIFIED_DEFECTS` 409 · `DUPLICATE_SUBMISSION` 409 · `ALREADY_RATED` 409 · `OCR_UNREADABLE` 422 · `EXPORT_FAILED` 500 · `SERVER_ERROR` 500
 
 ---
 
-## 8. Environment Variables Reference
+## 13. Environment Variables
 
-### Render (Backend)
+### Render (backend)
 
-| Variable | Example Value | Used By |
-|----------|--------------|---------|
-| `DATABASE_URL` | `postgresql://user:pass@host.supabase.co:5432/postgres` | All DB queries |
-| `JWT_SECRET` | `s3cr3t-256bit-random-string` | `jwtHelpers.js` |
-| `FRONTEND_URL` | `https://your-app.vercel.app` | CORS, Socket.IO |
-| `NODE_ENV` | `production` | Express config |
-| `CLOUDINARY_CLOUD_NAME` | `your-cloud-name` | `cloudinaryService.js` |
-| `CLOUDINARY_API_KEY` | `123456789` | `cloudinaryService.js` |
-| `CLOUDINARY_API_SECRET` | `abc123xyz` | `cloudinaryService.js` |
-| `OPENAI_API_KEY` | `sk-proj-...` | `openaiService.js` |
-| `ROBOFLOW_API_KEY` | `rf_abc123...` | `roboflowService.js` |
-| `CRON_SECRET` | `cron-secret-32chars` | `cronGuard.js` |
-| `SMTP_HOST` | `smtp.gmail.com` | `emailService.js` |
-| `SMTP_USER` | `yourapp@gmail.com` | `emailService.js` |
-| `SMTP_PASS` | `app-password` | `emailService.js` |
+| Variable | Used by |
+|---|---|
+| `DATABASE_URL` | `config/db.js` |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWKS_URL` | `config/supabase.js`, `middleware/auth.js` |
+| `FRONTEND_URL` | CORS + Socket.IO |
+| `NODE_ENV` | Express |
+| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | `cloudinaryService.js` |
+| `OPENAI_API_KEY` | `openaiService.js` (categorisation, alerts, summaries, **UC-013 vision**) |
+| `ROBOFLOW_API_KEY` | `roboflowService.js` |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | `emailService.js` (**UC-014** + UC-009) |
+| `MAIL_FROM` | Sender identity on defect alerts |
+| `CRON_SECRET` | `cronGuard.js` |
+| **`TOWN_COUNCIL_NAME`** | Default for the form header (§7.1) — **new** |
+| **`APP_PUBLIC_URL`** | Deep links inside defect-alert emails — **new** |
 
-### Vercel (Frontend)
+### Vercel (frontend)
 
-| Variable | Example Value | Used By |
-|----------|--------------|---------|
-| `VITE_API_URL` | `https://your-app.onrender.com` | `api.js` axios baseURL |
+`VITE_API_URL` · `VITE_SUPABASE_URL` · `VITE_SUPABASE_ANON_KEY`
 
-### GitHub Actions Secrets
+### GitHub Actions secrets
 
-| Secret | Example Value | Used By |
-|--------|--------------|---------|
-| `CRON_SECRET` | *(same as Render)* | All 3 workflow YAMLs |
-| `RENDER_BACKEND_URL` | `https://your-app.onrender.com` | All 3 workflow YAMLs |
+`CRON_SECRET` · `RENDER_BACKEND_URL`
+
+> Never commit secrets. Document names in `.env.example` only.
+
+---
+
+## 14. Limitations & Deliberate Scope Boundaries
+
+1. **UC-013 OCR is an adoption aid, not a requirement.** The client asked for a digital form that *replaces* paper, not one that photographs it. UC-013 exists because older inspectors may prefer to fill paper on site and digitise afterwards. It is therefore **prefill-and-confirm only** — handwriting recognition on ticks and cursive remarks is not reliable enough to submit unattended, and the inspector's e-signature (G5) is what makes the record valid. If UC-013 slips, nothing in the client brief is unmet.
+
+2. **We do not schedule the lift company's servicing.** Step 1 of the workflow ("LMS staff plan the schedule according to monthly lift servicing schedule") stays a Town Council planning activity; we capture its output as `servicing_date`. Building a servicing scheduler is out of scope.
+
+3. **The joint inspection (step 6) is modelled as a co-signature, not a second site visit workflow.** Both signatures are captured on one device at one time, which is what the paper form does.
+
+4. **Cost figures are operational only** — derived from `inspections.actual_cost` and `ai_predictions.estimated_cost`. The system does not ingest EM Services' corporate financials.
+
+5. **Vendor lifecycle (UC-012) covers external contractors only.** EM's own staff accounts are assumed to be handled by existing HR/IT processes. Contract documents are stored for reference; their contents are entered manually, not parsed.
+
+6. **Data Playground (UC-005 extension) is session-only.** Imported CSV rows are a what-if preview merged client-side into the charts; nothing is persisted and exports always use real data. Scope is the fixed `block,category[,date][,resolution_time_hours]` shape — arbitrary spreadsheets are out of scope.
+
+7. **Voice input uses the browser-native Web Speech API** — free, no key, accuracy varies with accent. A type-fallback is always available. Production would use a cloud STT service.
+
+8. **CV (UC-007) is assistive.** Roboflow suggests; a human always confirms. Below 0.70 confidence a detection goes to a manual-review queue rather than creating a record.
 
 ---
 
 *End of HIGH_LEVEL_DESIGN.md*
-
----
-
-## Limitations & Deliberate Scope Boundaries (UC-012 / Data Playground additions)
-
-**Vendor account lifecycle (UC-012):** Contract detail extraction from the
-uploaded document (vendor name, contact, duration) is entered manually by the
-admin rather than auto-parsed — automated document parsing was considered and
-scoped out as disproportionate effort for this project. The uploaded contract
-file is retained for reference only. UC-012 is scoped exclusively to external
-vendor (contractor) accounts; EM Services' own employees (inspector / manager)
-are standard long-term accounts whose onboarding/offboarding is assumed to be
-handled by EM's existing HR/IT processes, outside this system's scope.
-
-**Data Playground — CSV what-if preview (UC-005 extension):** Imported CSV rows
-are session-only and never persisted — the feature is a what-if preview surface,
-not an ingestion pipeline. This is deliberate: it lets managers preview how the
-analytics charts would shift under a hypothetical set of rows without any schema
-change or data-governance burden, and cleanly separates the simulated view from
-the system's operational data (exports always use real data). Scope is limited
-to CSV in the fixed `block,category[,date][,resolution_time_hours]` shape;
-arbitrary spreadsheet formats (e.g. XLSX) and free-form column mapping are out
-of scope.

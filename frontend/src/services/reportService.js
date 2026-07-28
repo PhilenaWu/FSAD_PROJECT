@@ -18,3 +18,13 @@ export async function generateManualReport(data = {}) {
   const res = await api.post('/api/reports/generate-manual', data);
   return res.data;
 }
+
+// GET /api/reports/annual?year=YYYY → { report_url, year, ... }
+// The client's "download as file every year" archive (HLD §9.2 / R16): every
+// closed spot-check for the year as one PDF plus a CSV appendix. The endpoint
+// is Davian's D.8 and 404s until it ships — the page handles that explicitly
+// rather than showing a generic failure.
+export async function getAnnualReport(year) {
+  const res = await api.get('/api/reports/annual', { params: { year } });
+  return res.data;
+}

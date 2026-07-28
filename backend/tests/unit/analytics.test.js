@@ -44,8 +44,19 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/SELECT DISTINCT category AS v/i.test(sql)) {
     return { rows: [{ v: 'Lift' }, { v: 'Plumbing' }] };
   }
+  // Paper-form sections — read from the checklist template, not hardcoded.
+  if (/SELECT DISTINCT section AS v FROM checklist_items/i.test(sql)) {
+    return { rows: [{ v: 'A — Motor Room' }, { v: 'B — Lift Car' }] };
+  }
+  // reopen_count column probe (present in this suite so the scorecard
+  // exercises the averaging branch).
+  if (/information_schema\.columns/i.test(sql)) {
+    return { rows: [{ '?column?': 1 }] };
+  }
   // KPI summary — first query (counts + windows), then its SLA sub-query.
-  if (/open_count/i.test(sql)) {
+  // Anchored on "AS open_count": a bare /open_count/ also matches the
+  // scorecard's AVG(i.reopen_count) and would hijack that query.
+  if (/AS open_count/i.test(sql)) {
     return {
       rows: [{ open_count: 46, overdue_count: 4, avg_resolution_hours: 58.3, new_last_30: 58, new_prior_30: 41 }],
     };
@@ -71,7 +82,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/JOIN contractors/i.test(sql)) {
     return {
       rows: [
-        { contractor: 'KONE Pte Ltd', jobs: 11, avg_rectification_days: 3.1, repeat_defect_rate: 4.2, overdue_count: 0 },
+        { contractor: 'KONE Pte Ltd', jobs: 11, avg_rectification_days: 3.1, repeat_defect_rate: 4.2, overdue_count: 0, avg_reopens: 0.27 },
       ],
     };
   }
@@ -132,11 +143,24 @@ describe('GET /api/analytics/issues-by-block', () => {
 });
 
 describe('GET /api/analytics/filter-options', () => {
-  test('200 with data-derived blocks and categories', async () => {
+  test('200 with data-derived blocks, categories and paper-form sections', async () => {
     const res = await asManager(request(app).get('/api/analytics/filter-options'));
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ blocks: ['44A', '88B'], categories: ['Lift', 'Plumbing'] });
+    expect(res.body).toEqual({
+      blocks: ['44A', '88B'],
+      categories: ['Lift', 'Plumbing'],
+      sections: ['A — Motor Room', 'B — Lift Car'],
+    });
+  });
+
+  test('sections come from checklist_items, so the paper re-seed needs no code change', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/filter-options'));
+
+    const sql = mockQuery.mock.calls.map(([s]) => s).join('\n');
+    expect(sql).toMatch(/FROM checklist_items/i);
+    expect(sql).toMatch(/active = TRUE/i);
   });
 });
 
@@ -189,7 +213,7 @@ describe('GET /api/analytics/trends', () => {
 });
 
 describe('GET /api/analytics/contractor-scorecard', () => {
-  test('200 with per-contractor metrics', async () => {
+  test('200 with per-contractor metrics including overdue and re-opens', async () => {
     const res = await asManager(request(app).get('/api/analytics/contractor-scorecard'));
 
     expect(res.status).toBe(200);
@@ -197,7 +221,97 @@ describe('GET /api/analytics/contractor-scorecard', () => {
       contractor: 'KONE Pte Ltd',
       jobs: 11,
       overdue_count: 0,
+      avg_reopens: 0.27,
     });
+  });
+
+  test('averages reopen_count when the column exists', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/contractor-scorecard'));
+
+    const scorecardSql = mockQuery.mock.calls.map(([s]) => s).find((s) => /JOIN contractors/i.test(s));
+    expect(scorecardSql).toMatch(/AVG\(i\.reopen_count\)/i);
+  });
+});
+
+// HLD G11 — a hold pauses the rectification clock, so held records are not
+// overdue. The overdue-chase job skips them; if these queries counted them the
+// dashboard would contradict the emails the contractor actually receives.
+describe('overdue counts respect the On Hold pause (G11)', () => {
+  test('KPI summary excludes On Hold and soft-deleted records', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/summary'));
+
+    const [sql] = mockQuery.mock.calls.find(([s]) => /AS open_count/i.test(s));
+    const overdue = sql.slice(sql.indexOf('target_deadline'), sql.indexOf('AS overdue_count'));
+    expect(overdue).toMatch(/'On Hold'/);
+    expect(overdue).toMatch(/is_deleted = FALSE/i);
+  });
+
+  test('contractor scorecard excludes On Hold', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/contractor-scorecard'));
+
+    const [sql] = mockQuery.mock.calls.find(([s]) => /JOIN contractors/i.test(s));
+    const overdue = sql.slice(sql.indexOf('i.target_deadline'), sql.indexOf('AS overdue_count'));
+    expect(overdue).toMatch(/'On Hold'/);
+  });
+});
+
+// The composite score's frequency term is documented as "per OPEN record
+// sharing block+category" — counting resolved history would rank a block that
+// used to have problems as urgently as one that has them now.
+describe('priority queue frequency term counts open records only', () => {
+  test('the LATERAL subquery filters out Resolved/Closed', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/priority-queue'));
+
+    const [sql] = mockQuery.mock.calls.find(([s]) => /composite_score/i.test(s));
+    const lateral = sql.slice(sql.indexOf('JOIN LATERAL'), sql.indexOf(') freq'));
+    expect(lateral).toMatch(/f\.is_deleted = FALSE/i);
+    expect(lateral).toMatch(/f\.status NOT IN \('Resolved', 'Closed'\)/i);
+  });
+});
+
+// H.2 — filter by the paper form's section (HLD §7.2). "Which part of the
+// lift fails most" is a client question ("Statistic / report", R17).
+describe('?section filter', () => {
+  test('adds an EXISTS over checklist_results scoped to Defect rows', async () => {
+    mockQuery.mockClear();
+    const res = await asManager(
+      request(app).get('/api/analytics/issues-by-block').query({ section: 'A — Motor Room' })
+    );
+
+    expect(res.status).toBe(200);
+    const [sql, params] = mockQuery.mock.calls.find(([s]) =>
+      /GROUP BY location_block, category/i.test(s)
+    );
+    expect(sql).toMatch(/EXISTS/i);
+    expect(sql).toMatch(/JOIN checklist_items/i);
+    expect(sql).toMatch(/cr\.result = 'Defect'/i);
+    expect(params).toContain('A — Motor Room');
+  });
+
+  test('is absent from the SQL when no section is requested', async () => {
+    mockQuery.mockClear();
+    await asManager(request(app).get('/api/analytics/issues-by-block'));
+
+    const [sql] = mockQuery.mock.calls.find(([s]) =>
+      /GROUP BY location_block, category/i.test(s)
+    );
+    expect(sql).not.toMatch(/checklist_results/i);
+  });
+
+  test('joins against the prefixed alias on the scorecard query', async () => {
+    mockQuery.mockClear();
+    await asManager(
+      request(app).get('/api/analytics/contractor-scorecard').query({ section: 'B — Lift Car' })
+    );
+
+    const [sql] = mockQuery.mock.calls.find(([s]) => /JOIN contractors/i.test(s));
+    // Prefixed callers select FROM inspections i — the subquery must correlate
+    // on i.id, not inspections.id, or Postgres cannot resolve the reference.
+    expect(sql).toMatch(/cr\.inspection_id = i\.id/i);
   });
 });
 

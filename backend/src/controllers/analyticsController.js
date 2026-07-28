@@ -12,10 +12,12 @@ const SLA_THRESHOLD_HRS = 72;
 
 // Build a WHERE clause + params array from the shared filter query params.
 // Returns { where: 'WHERE ...', params: [...] } — where is '' when unfiltered.
-function buildFilters({ from, to, block, category }, columnPrefix = '') {
+function buildFilters({ from, to, block, category, section }, columnPrefix = '') {
   const clauses = [];
   const params = [];
   const col = (name) => `${columnPrefix}${name}`;
+  // Unprefixed callers select `FROM inspections`, prefixed ones `FROM inspections i`.
+  const idCol = columnPrefix ? `${columnPrefix}id` : 'inspections.id';
 
   if (from) {
     params.push(from);
@@ -34,11 +36,44 @@ function buildFilters({ from, to, block, category }, columnPrefix = '') {
     params.push(category);
     clauses.push(`${col('category')} = $${params.length}`);
   }
+  if (section) {
+    params.push(section);
+    // "Has at least one DEFECT in this section of the paper spot-check form"
+    // (HLD §7.2 — Motor Room / Lift Car / Hoistway & Lift Pit). Matching on
+    // Pass rows too would select nearly every inspection and say nothing.
+    // Section names are read from checklist_items, never hardcoded, so the
+    // re-seed to the real 25 paper items needs no change here.
+    clauses.push(
+      `EXISTS (
+         SELECT 1 FROM checklist_results cr
+         JOIN checklist_items ci ON ci.id = cr.checklist_item_id
+         WHERE cr.inspection_id = ${idCol}
+           AND cr.result = 'Defect'
+           AND ci.section = $${params.length}
+       )`
+    );
+  }
 
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
     params,
   };
+}
+
+// `inspections.reopen_count` arrives with the paper-form migration (026). The
+// scorecard reports average re-opens once it exists and NULL before then, so
+// this file works either side of that migration without a code change.
+// Cached after the first lookup — the schema cannot change mid-process.
+let reopenColumnPresent = null;
+async function hasReopenCount() {
+  if (reopenColumnPresent === null) {
+    const { rows } = await query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'inspections' AND column_name = 'reopen_count'`
+    );
+    reopenColumnPresent = rows.length > 0;
+  }
+  return reopenColumnPresent;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,8 +92,14 @@ async function fetchSummary({ block, category } = {}) {
     `SELECT
        COUNT(*) FILTER (WHERE is_deleted = FALSE
                           AND status NOT IN ('Resolved','Closed'))::int AS open_count,
+       -- 'On Hold' is excluded: holding pauses the rectification clock (HLD
+       -- G11), and the overdue-chase job skips held records too — counting
+       -- them here would make the dashboard contradict the chase emails.
+       -- is_deleted excluded to match open_count above.
        COUNT(*) FILTER (WHERE target_deadline < NOW()
-                          AND status NOT IN ('Rectified','Resolved','Closed'))::int AS overdue_count,
+                          AND is_deleted = FALSE
+                          AND status NOT IN ('On Hold','Rectified','Resolved','Closed'))::int
+         AS overdue_count,
        ROUND(AVG(resolution_time_hours) FILTER (WHERE closed_at IS NOT NULL)::numeric, 1)::float
          AS avg_resolution_hours,
        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS new_last_30,
@@ -107,9 +148,16 @@ async function fetchFilterOptions() {
   const categories = await query(
     `SELECT DISTINCT category AS v FROM inspections ORDER BY category`
   );
+  // Paper-form sections come from the checklist template itself, so the
+  // dropdown follows the seeded items (currently placeholders, later the
+  // real A/B/C sections) with no frontend change.
+  const sections = await query(
+    `SELECT DISTINCT section AS v FROM checklist_items WHERE active = TRUE ORDER BY section`
+  );
   return {
     blocks: blocks.rows.map((r) => r.v),
     categories: categories.rows.map((r) => r.v),
+    sections: sections.rows.map((r) => r.v),
   };
 }
 
@@ -171,11 +219,17 @@ async function fetchSlaCompliance(filters) {
 
 // Per contractor: jobs, avg rectification days (acknowledged → rectified),
 // repeat-defect rate (share of jobs on a block+category the contractor has
-// seen before), overdue count (past deadline and not yet rectified/closed).
+// seen before), overdue count (past deadline and not yet rectified/closed),
+// and average re-opens (UC-004 rejections sent back for rework).
 async function fetchContractorScorecard(filters) {
   const { where, params } = buildFilters(filters, 'i.');
   const assignedClause = 'i.contractor_id IS NOT NULL';
   const fullWhere = where ? `${where} AND ${assignedClause}` : `WHERE ${assignedClause}`;
+
+  // NULL until migration 026 adds the column; the table renders "—" for it.
+  const avgReopens = (await hasReopenCount())
+    ? 'ROUND(AVG(i.reopen_count)::numeric, 2)::float'
+    : 'NULL::float';
 
   const { rows } = await query(
     `SELECT
@@ -189,10 +243,13 @@ async function fetchContractorScorecard(filters) {
          100.0 * (COUNT(*) - COUNT(DISTINCT (i.location_block, i.category))) / COUNT(*),
          1
        )::float AS repeat_defect_rate,
+       -- 'On Hold' excluded — see fetchSummary: a hold pauses the clock (G11),
+       -- so a contractor waiting on site access or a part is not "overdue".
        COUNT(*) FILTER (
          WHERE i.target_deadline < NOW()
-           AND i.status NOT IN ('Rectified', 'Resolved', 'Closed')
-       )::int AS overdue_count
+           AND i.status NOT IN ('On Hold', 'Rectified', 'Resolved', 'Closed')
+       )::int AS overdue_count,
+       ${avgReopens} AS avg_reopens
      FROM inspections i
      JOIN contractors c ON c.id = i.contractor_id
      ${fullWhere}
@@ -242,11 +299,16 @@ async function fetchPriorityQueue(filters) {
        )::numeric, 1)::float AS composite_score
      FROM inspections i
      JOIN LATERAL (
+       -- OPEN records only. Counting resolved history here would rank a block
+       -- that used to have problems as urgently as one that has them now —
+       -- the queue answers "what needs attention today". Long-run recurrence
+       -- is UC-006's job (velocity analysis), not this score's.
        SELECT COUNT(*)::int AS same_pair_count
        FROM inspections f
        WHERE f.location_block = i.location_block
          AND f.category = i.category
          AND f.is_deleted = FALSE
+         AND f.status NOT IN ('Resolved', 'Closed')
      ) freq ON TRUE
      ${fullWhere}
      ORDER BY composite_score DESC`,
@@ -259,7 +321,7 @@ async function fetchPriorityQueue(filters) {
 // Route handlers (HLD §6.3 response shapes).
 // ---------------------------------------------------------------------------
 
-// GET /api/analytics/filter-options → { blocks: [...], categories: [...] }
+// GET /api/analytics/filter-options → { blocks, categories, sections }
 async function getFilterOptions(req, res, next) {
   try {
     res.json(await fetchFilterOptions());
