@@ -363,6 +363,221 @@ async function queueRecurrenceJob(inspectionId, locationBlock, category) {
   return false;
 }
 
+// --- Contractor portal (UC-010) -------------------------------------------
+
+// Defects assigned to one contractor for their inbox. Non-deleted records where
+// contractor_id matches, soonest deadline first, each with a days_remaining
+// countdown (NULL when no deadline set). The defect checklist_results (the
+// Defect rows the contractor must rectify, with their template item text) are
+// fetched in a second query and grouped in, so the frontend can render the
+// per-item completion form without another round trip.
+async function findAssignedToContractor(contractorId) {
+  const inspections = await query(
+    `SELECT *,
+            (target_deadline::date - CURRENT_DATE) AS days_remaining
+     FROM inspections
+     WHERE contractor_id = $1 AND is_deleted = FALSE
+     ORDER BY target_deadline ASC NULLS LAST, created_at DESC`,
+    [contractorId]
+  );
+  if (inspections.rows.length === 0) return [];
+
+  const ids = inspections.rows.map((r) => r.id);
+  const results = await query(
+    `SELECT cr.*, ci.item_text, ci.section
+     FROM checklist_results cr
+     JOIN checklist_items ci ON ci.id = cr.checklist_item_id
+     WHERE cr.inspection_id = ANY($1) AND cr.result = 'Defect'
+     ORDER BY ci.display_order`,
+    [ids]
+  );
+
+  const byInspection = new Map(ids.map((id) => [id, []]));
+  for (const row of results.rows) {
+    byInspection.get(row.inspection_id).push(row);
+  }
+  return inspections.rows.map((ins) => ({
+    ...ins,
+    checklist_results: byInspection.get(ins.id),
+  }));
+}
+
+// Shared helper: load an inspection FOR UPDATE only if it is live and assigned
+// to this contractor (UC-010 E3 — a record reassigned away is no longer theirs).
+// Returns the row, or undefined so the caller can 404.
+async function lockAssigned(client, id, contractorId) {
+  const { rows } = await client.query(
+    `SELECT * FROM inspections
+     WHERE id = $1 AND contractor_id = $2 AND is_deleted = FALSE
+     FOR UPDATE`,
+    [id, contractorId]
+  );
+  return rows[0];
+}
+
+// Contractor acknowledges a defect (UC-010 step 3): status → Acknowledged,
+// stamp acknowledged_at, write an audit row. Returns the updated row, or
+// undefined when the record isn't a live defect assigned to this contractor.
+async function acknowledgeByContractor(id, contractorId, actorId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const before = await lockAssigned(client, id, contractorId);
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+
+    const updated = await client.query(
+      `UPDATE inspections
+       SET status = 'Acknowledged', acknowledged_at = NOW(), updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    await client.query(
+      `INSERT INTO inspection_history
+         (inspection_id, actor_id, action, previous_status, new_status)
+       VALUES ($1, $2, 'Acknowledged', $3, 'Acknowledged')`,
+      [id, actorId, before.status]
+    );
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Contractor records rectification work (UC-010 steps 5–7 + Alt Flow B partial).
+// Writes each item's completion photo/remark and its `rectified` flag, then
+// branches on `finalize`:
+//   • finalize → status 'Rectified', stamp rectified_at, store the contractor
+//     e-signature, audit 'Rectified & Signed' (the full completion).
+//   • partial  → status 'Acknowledged' (only if it was 'Assigned'), audit
+//     'Work Progress Saved', no signature. The record stays in the contractor's
+//     inbox until every item is done and they finalize.
+// `items` is an array of { checklist_result_id, completion_remark,
+// completion_photo_url, rectified }. All atomic. Returns the updated row, or
+// undefined when it isn't assigned to this contractor.
+async function rectifyByContractor(
+  id,
+  contractorId,
+  actorId,
+  { items = [], signatureUrl, note, finalize = true }
+) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const before = await lockAssigned(client, id, contractorId);
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+
+    // Per-item completion. COALESCE keeps an earlier photo if none re-uploaded;
+    // `rectified` defaults TRUE so an item present without the flag counts done.
+    for (const item of items) {
+      await client.query(
+        `UPDATE checklist_results
+         SET completion_photo_url = COALESCE($3, completion_photo_url),
+             completion_remark = $4,
+             rectified = $5
+         WHERE id = $1 AND inspection_id = $2`,
+        [
+          item.checklist_result_id,
+          id,
+          item.completion_photo_url,
+          item.completion_remark,
+          item.rectified !== false,
+        ]
+      );
+    }
+
+    let updated;
+    if (finalize) {
+      updated = await client.query(
+        `UPDATE inspections
+         SET status = 'Rectified', rectified_at = NOW(), updated_at = NOW()
+         WHERE id = $1 RETURNING *`,
+        [id]
+      );
+      await signatureModel.create(
+        { inspection_id: id, signer_role: 'contractor', signer_id: actorId, image_url: signatureUrl },
+        client
+      );
+      await client.query(
+        `INSERT INTO inspection_history
+           (inspection_id, actor_id, action, previous_status, new_status, note)
+         VALUES ($1, $2, 'Rectified & Signed', $3, 'Rectified', $4)`,
+        [id, actorId, before.status, note]
+      );
+    } else {
+      // Partial save: nudge Assigned → Acknowledged (work in progress), keep any
+      // other status (e.g. On Hold) as-is.
+      const newStatus = before.status === 'Assigned' ? 'Acknowledged' : before.status;
+      updated = await client.query(
+        `UPDATE inspections
+         SET status = $2, updated_at = NOW()
+         WHERE id = $1 RETURNING *`,
+        [id, newStatus]
+      );
+      await client.query(
+        `INSERT INTO inspection_history
+           (inspection_id, actor_id, action, previous_status, new_status, note)
+         VALUES ($1, $2, 'Work Progress Saved', $3, $4, $5)`,
+        [id, actorId, before.status, newStatus, note]
+      );
+    }
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Contractor puts a defect on hold (UC-010 Alt Flow A): status → On Hold with a
+// reason; the deadline countdown pauses (the frontend hides it while held).
+// Returns the updated row, or undefined when it isn't assigned to this contractor.
+async function holdByContractor(id, contractorId, actorId, hold_reason) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const before = await lockAssigned(client, id, contractorId);
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+
+    const updated = await client.query(
+      `UPDATE inspections
+       SET status = 'On Hold', hold_reason = $2, updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id, hold_reason]
+    );
+    await client.query(
+      `INSERT INTO inspection_history
+         (inspection_id, actor_id, action, previous_status, new_status, note)
+       VALUES ($1, $2, 'On Hold', $3, 'On Hold', $4)`,
+      [id, actorId, before.status, hold_reason]
+    );
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Privacy-safe estate-wide feed for the resident status board. The column list
 // is a deliberate allow-list — NEVER add resident_id, location_unit, title,
 // description, photo/audio URLs, GPS, or any identifying field here.
@@ -382,6 +597,10 @@ module.exports = {
   findById,
   closeInspection,
   findAllForManager,
+  findAssignedToContractor,
+  acknowledgeByContractor,
+  rectifyByContractor,
+  holdByContractor,
   findByOriginator,
   findByResident,
   findDetailById,
