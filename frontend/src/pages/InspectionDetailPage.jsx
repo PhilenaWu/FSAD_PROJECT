@@ -31,13 +31,13 @@ import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
+import { PRIORITIES } from '../utils/inspectionOptions';
 
 // Statuses a manager may set here — everything except Closed (UC-004 flow).
 const SETTABLE_STATUSES = [
   'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
   'On Hold', 'Rectified', 'Resolved',
 ];
-const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 
 // Make the triage controls read as controls against the white card: tinted
 // input background, hover/focus border feedback (standard MUI outlined

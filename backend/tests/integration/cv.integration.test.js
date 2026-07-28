@@ -67,6 +67,15 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/SELECT \* FROM cv_detections WHERE status = \$1/i.test(sql)) {
     return { rows: cvDetections.filter((d) => d.status === params[0]) };
   }
+  if (/SELECT \* FROM cv_detections WHERE id = \$1/i.test(sql)) {
+    const row = cvDetections.find((d) => d.id === params[0]);
+    return { rows: row ? [row] : [] };
+  }
+  if (/UPDATE cv_detections SET status = \$2/i.test(sql)) {
+    const row = cvDetections.find((d) => d.id === params[0]);
+    if (row) row.status = params[1];
+    return { rows: row ? [row] : [] };
+  }
   if (/INSERT INTO cv_detections/i.test(sql)) {
     return { rows: [{ id: 'cv-1', status: params[5] }] };
   }
@@ -182,5 +191,140 @@ describe('GET /api/cv/detections', () => {
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
     expect(res.body.data[0].id).toBe('cv-2');
+  });
+});
+
+describe('POST /api/cv/detections/:id/create-ticket', () => {
+  test('401 without a token', async () => {
+    const res = await request(app).post('/api/cv/detections/cv-1/create-ticket');
+    expect(res.status).toBe(401);
+  });
+
+  test('403 for a non-manager role', async () => {
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/create-ticket')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ category: 'Lift', priority: 'High' });
+    expect(res.status).toBe(403);
+  });
+
+  test('404 for an unknown detection', async () => {
+    const res = await request(app)
+      .post('/api/cv/detections/nope/create-ticket')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Lift', priority: 'High' });
+    expect(res.status).toBe(404);
+  });
+
+  test('400 when the detection is not low_confidence', async () => {
+    cvDetections.push({ id: 'cv-1', status: 'processed', defect_class: 'scratch', confidence: '0.8' });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/create-ticket')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Lift', priority: 'High' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('400 when category/priority/location are missing and none stored', async () => {
+    cvDetections.push({
+      id: 'cv-1', status: 'low_confidence', defect_class: 'debris', confidence: '0.5',
+      location_block: null,
+    });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/create-ticket')
+      .set('Authorization', 'Bearer manager-token')
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('201 creates a ticket and marks the detection processed', async () => {
+    cvDetections.push({
+      id: 'cv-1',
+      status: 'low_confidence',
+      defect_class: 'spill',
+      confidence: '0.445',
+      image_url: 'https://example.com/a.jpg',
+      location_block: '44A',
+      location_unit: null,
+    });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/create-ticket')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Cleanliness', priority: 'High' });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 'insp-auto-1', source_type: 'cv_auto_detected' });
+    expect(cvDetections[0].status).toBe('processed');
+
+    const insertCall = mockQuery.mock.calls.find(([sql]) => /INSERT INTO inspections/i.test(sql));
+    expect(insertCall[1]).toContain('Cleanliness');
+    expect(insertCall[1]).toContain('High');
+    expect(insertCall[1]).toContain('44A');
+  });
+
+  test("a manager-supplied location overrides the detection's stored location", async () => {
+    cvDetections.push({
+      id: 'cv-1', status: 'low_confidence', defect_class: 'spill', confidence: '0.445',
+      image_url: 'https://example.com/a.jpg', location_block: '44A', location_unit: null,
+    });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/create-ticket')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Cleanliness', priority: 'High', location_block: '88B' });
+
+    expect(res.status).toBe(201);
+    const insertCall = mockQuery.mock.calls.find(([sql]) => /INSERT INTO inspections/i.test(sql));
+    expect(insertCall[1]).toContain('88B');
+  });
+});
+
+describe('POST /api/cv/detections/:id/dismiss', () => {
+  test('401 without a token', async () => {
+    const res = await request(app).post('/api/cv/detections/cv-1/dismiss');
+    expect(res.status).toBe(401);
+  });
+
+  test('403 for a non-manager role', async () => {
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/dismiss')
+      .set('Authorization', 'Bearer resident-token');
+    expect(res.status).toBe(403);
+  });
+
+  test('404 for an unknown detection', async () => {
+    const res = await request(app)
+      .post('/api/cv/detections/nope/dismiss')
+      .set('Authorization', 'Bearer manager-token');
+    expect(res.status).toBe(404);
+  });
+
+  test('400 when the detection is not low_confidence', async () => {
+    cvDetections.push({ id: 'cv-1', status: 'dismissed', defect_class: 'spill', confidence: '0.4' });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/dismiss')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(400);
+  });
+
+  test('200 marks the detection dismissed, no ticket created', async () => {
+    cvDetections.push({ id: 'cv-1', status: 'low_confidence', defect_class: 'spill', confidence: '0.4' });
+
+    const res = await request(app)
+      .post('/api/cv/detections/cv-1/dismiss')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('dismissed');
+    expect(mockQuery.mock.calls.some(([sql]) => /INSERT INTO inspections/i.test(sql))).toBe(false);
   });
 });

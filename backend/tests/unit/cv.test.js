@@ -23,6 +23,7 @@ const retryQueueModel = require('../../src/models/retryQueueModel');
 const roboflowService = require('../../src/services/roboflowService');
 const socketService = require('../../src/services/socketService');
 const cvController = require('../../src/controllers/cvController');
+const { priorityFromScore } = require('../../src/utils/priorityFromScore');
 
 beforeEach(() => {
   mockQuery.mockReset();
@@ -61,7 +62,28 @@ describe('cvDetectionModel.create', () => {
       JSON.stringify(row.bounding_box),
       row.source,
       row.status,
+      undefined, // location_block — not supplied in this call
+      undefined, // location_unit
     ]);
+  });
+
+  test('stores location_block/location_unit when supplied', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'cv-4' }] });
+
+    await cvDetectionModel.create({
+      image_url: 'https://example.com/photo.jpg',
+      defect_class: 'spill',
+      confidence: 0.5,
+      bounding_box: null,
+      source: 'resident_upload',
+      status: 'low_confidence',
+      location_block: '44A',
+      location_unit: '12-05',
+    });
+
+    const [, params] = mockQuery.mock.calls[0];
+    expect(params[6]).toBe('44A');
+    expect(params[7]).toBe('12-05');
   });
 
   test('passes a null bounding_box through as null, not the string "null"', async () => {
@@ -117,6 +139,21 @@ describe('cvDetectionModel.findById', () => {
     const result = await cvDetectionModel.findById('missing');
 
     expect(result).toBeUndefined();
+  });
+});
+
+describe('cvDetectionModel.updateStatus', () => {
+  test('updates the row and returns it', async () => {
+    const row = { id: 'cv-1', status: 'dismissed' };
+    mockQuery.mockResolvedValueOnce({ rows: [row] });
+
+    const result = await cvDetectionModel.updateStatus('cv-1', 'dismissed');
+
+    expect(result).toEqual(row);
+    expect(mockQuery).toHaveBeenCalledWith(
+      'UPDATE cv_detections SET status = $2 WHERE id = $1 RETURNING *',
+      ['cv-1', 'dismissed']
+    );
   });
 });
 
@@ -286,6 +323,120 @@ describe('cvController.detect', () => {
     ).rejects.toThrow('boom');
     expect(mockQuery).not.toHaveBeenCalled();
   });
+
+  describe('priority blend (a report with both a human complaint and a photo)', () => {
+    test('blends the human and CV scores into the originating report’s priority, no separate ticket', async () => {
+      jest.spyOn(roboflowService, 'detectDefect').mockResolvedValue({
+        defect_class: 'scratch',
+        confidence: 0.8, // → cvScore 80
+        bounding_box: { x: 1, y: 1, width: 1, height: 1 },
+      });
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'cv-1', status: 'processed' }] }) // cv_detections insert
+        // blendPriorityIntoInspection's findById — human score 40
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-1', location_block: '44A', ai_priority_score: 40, status: 'Open' }],
+        })
+        // updatePriority — (40 + 80) / 2 = 60 → 'High' (51-75 bucket)
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-1', location_block: '44A', priority: 'High', status: 'Open', updated_at: 't' }],
+        });
+
+      const result = await cvController.detect('https://example.com/photo.jpg', 'resident_upload', {
+        location_block: '44A',
+        inspection_id: 'insp-1',
+      });
+
+      expect(result.inspection).toEqual({
+        id: 'insp-1', location_block: '44A', priority: 'High', status: 'Open', updated_at: 't',
+      });
+      expect(mockQuery).toHaveBeenCalledTimes(3);
+
+      const [detectionSql, detectionParams] = mockQuery.mock.calls[0];
+      expect(detectionSql).toMatch(/INSERT INTO cv_detections/i);
+      expect(detectionParams[5]).toBe('processed'); // blended detections don't sit in the review queue
+
+      const [updateSql, updateParams] = mockQuery.mock.calls[2];
+      expect(updateSql).toMatch(/UPDATE inspections SET priority/i);
+      expect(updateParams).toEqual(['insp-1', 'High', 60, 'cv-1']);
+
+      // status_update, not cv_alert — this is a priority change on an
+      // existing record, not a new ticket.
+      expect(socketService.emitToRooms).toHaveBeenCalledWith(
+        ['manager-room', 'block-44A'],
+        'status_update',
+        { id: 'insp-1', status: 'Open', priority: 'High', updated_at: 't' }
+      );
+    });
+
+    test('blends even when confidence misses the 70% ticket-creation threshold', async () => {
+      jest.spyOn(roboflowService, 'detectDefect').mockResolvedValue({
+        defect_class: 'spill',
+        confidence: 0.2, // → cvScore 20, well below CONFIDENCE_THRESHOLD
+        bounding_box: { x: 1, y: 1, width: 1, height: 1 },
+      });
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'cv-2', status: 'processed' }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-2', location_block: '44A', ai_priority_score: 50, status: 'Open' }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-2', location_block: '44A', priority: 'Medium', status: 'Open', updated_at: 't' }],
+        });
+
+      await cvController.detect('https://example.com/photo.jpg', 'resident_upload', {
+        location_block: '44A',
+        inspection_id: 'insp-2',
+      });
+
+      // (50 + 20) / 2 = 35 → 'Medium' (26-50 bucket); status stays 'processed'
+      // on the detection even though it's below threshold — it was handled
+      // via the blend, not left for manual review.
+      const [detectionSql, detectionParams] = mockQuery.mock.calls[0];
+      expect(detectionSql).toMatch(/INSERT INTO cv_detections/i);
+      expect(detectionParams[5]).toBe('processed');
+      const updateParams = mockQuery.mock.calls[2][1];
+      expect(updateParams).toEqual(['insp-2', 'Medium', 35, 'cv-2']);
+    });
+
+    test('falls back to a human score of 50 when ai_priority_score is null', async () => {
+      jest.spyOn(roboflowService, 'detectDefect').mockResolvedValue({
+        defect_class: 'crack',
+        confidence: 1, // cvScore 100
+        bounding_box: { x: 1, y: 1, width: 1, height: 1 },
+      });
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'cv-3', status: 'processed' }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-3', location_block: '44A', ai_priority_score: null, status: 'Open' }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'insp-3', location_block: '44A', priority: 'Critical', status: 'Open', updated_at: 't' }],
+        });
+
+      await cvController.detect('https://example.com/photo.jpg', 'resident_upload', {
+        location_block: '44A',
+        inspection_id: 'insp-3',
+      });
+
+      // (50 + 100) / 2 = 75 → 'High' (51-75 bucket, inclusive)
+      const updateParams = mockQuery.mock.calls[2][1];
+      expect(updateParams).toEqual(['insp-3', 'High', 75, 'cv-3']);
+    });
+  });
+});
+
+describe('priorityFromScore', () => {
+  test('maps 0-100 scores to the priority label enum in even quartiles', () => {
+    expect(priorityFromScore(0)).toBe('Low');
+    expect(priorityFromScore(25)).toBe('Low');
+    expect(priorityFromScore(26)).toBe('Medium');
+    expect(priorityFromScore(50)).toBe('Medium');
+    expect(priorityFromScore(51)).toBe('High');
+    expect(priorityFromScore(75)).toBe('High');
+    expect(priorityFromScore(76)).toBe('Critical');
+    expect(priorityFromScore(100)).toBe('Critical');
+  });
 });
 
 describe('cvController.batchScan', () => {
@@ -294,9 +445,11 @@ describe('cvController.batchScan', () => {
   });
 
   test('CV-T04: 2 pending rows both succeed — both processed, response { processed: 2 }', async () => {
-    // item 1 clears the threshold (linked to insp-1 → location lookup + ticket);
-    // item 2 doesn't (unlinked scheduled_scan → no lookup, no ticket). Covers
-    // both branches while keeping the overall response { processed: 2 }.
+    // item 1 is linked to an originating report (insp-1) → blends into that
+    // report's priority (recordDetection's blend path), no new ticket. item 2
+    // is unlinked (scheduled_scan) and misses the threshold → cv_detections
+    // row only. (An unlinked item can't create a ticket via batchScan today —
+    // location only ever comes from a linked inspection.)
     mockQuery
       // findPending()
       .mockResolvedValueOnce({
@@ -305,12 +458,18 @@ describe('cvController.batchScan', () => {
           { id: 'rq-2', image_url: 'https://example.com/b.jpg', inspection_id: null },
         ],
       })
-      // item 1: inspectionModel.findById(insp-1) for the ticket's location
+      // item 1: batchScan's own findById(insp-1) for the cv_detections location
       .mockResolvedValueOnce({ rows: [{ id: 'insp-1', location_block: '44A', location_unit: '12-05' }] })
       // item 1: cv_detections insert
       .mockResolvedValueOnce({ rows: [{ id: 'cv-1', status: 'processed' }] })
-      // item 1: inspections insert (cv_auto_detected ticket)
-      .mockResolvedValueOnce({ rows: [{ id: 'insp-auto-1', source_type: 'cv_auto_detected' }] })
+      // item 1: blendPriorityIntoInspection's own findById(insp-1)
+      .mockResolvedValueOnce({
+        rows: [{ id: 'insp-1', location_block: '44A', ai_priority_score: 60, status: 'Open' }],
+      })
+      // item 1: updatePriority
+      .mockResolvedValueOnce({
+        rows: [{ id: 'insp-1', location_block: '44A', priority: 'High', status: 'Open', updated_at: 't' }],
+      })
       // item 1: markProcessed
       .mockResolvedValueOnce({ rows: [{ id: 'rq-1', status: 'processed' }] })
       // item 2: cv_detections insert (low confidence, no lookup/ticket needed)
@@ -336,9 +495,9 @@ describe('cvController.batchScan', () => {
     const result = await cvController.batchScan();
 
     expect(result).toEqual({ processed: 2, failed: 0, remaining: 0 });
-    // item 1's ticket carries the location found via the inspection lookup.
-    const inspectionInsertParams = mockQuery.mock.calls[3][1];
-    expect(inspectionInsertParams).toContain('44A');
+    // item 1 blended: priority was updated on insp-1, not a new ticket created.
+    const updateCall = mockQuery.mock.calls.find(([sql]) => /UPDATE inspections SET priority/i.test(sql));
+    expect(updateCall[1][0]).toBe('insp-1');
   });
 
   test('a repeated 429 reschedules the row instead of marking it failed', async () => {
