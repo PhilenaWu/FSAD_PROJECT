@@ -66,8 +66,9 @@ async function create(data) {
 // per checklist item; items may carry a per-defect photo_url). Caller supplies
 // inspector/lift/title/block/contractor and the checklist array; category and
 // resident columns stay at their defaults — no AI categorisation for lift
-// inspections. Rolls back on any failure. Returns the inspection row with a
-// checklist_results array attached.
+// inspections. `serviced_at` is the paper form's Servicing Date (the contractor
+// visit being audited) and is optional. Rolls back on any failure. Returns the
+// inspection row with a checklist_results array attached.
 async function createLiftInspection(data) {
   const {
     inspector_id,
@@ -76,6 +77,7 @@ async function createLiftInspection(data) {
     location_block,
     contractor_id,
     checklist,
+    serviced_at,
     gps_lat,
     gps_lng,
     gps_accuracy_m,
@@ -89,14 +91,14 @@ async function createLiftInspection(data) {
     const inspectionResult = await client.query(
       `INSERT INTO inspections (
          source_type, inspector_id, lift_id, title, location_block,
-         contractor_id, source_flag, gps_lat, gps_lng, gps_accuracy_m,
-         gps_captured_at
+         contractor_id, source_flag, serviced_at, gps_lat, gps_lng,
+         gps_accuracy_m, gps_captured_at
        )
-       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector', $6, $7, $8, $9)
+       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector', $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         inspector_id, lift_id, title, location_block, contractor_id,
-        gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+        serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
       ]
     );
     const inspection = inspectionResult.rows[0];

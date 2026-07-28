@@ -118,9 +118,10 @@ async function create(req, res, next) {
 }
 
 // POST /api/inspections/lift — inspector submits a lift spot-check (multipart:
-// `lift_id` + `checklist` [JSON string of { checklist_item_id, result,
-// severity?, remark? }] fields, plus optional `photo_<checklist_item_id>` file
-// parts for Defect rows). Note: HLD §6.2 folds this into POST /api/inspections
+// `lift_id`, optional `serviced_at`, and `checklist` [JSON string of
+// { checklist_item_id, result, severity?, remark? }] fields, plus optional
+// `photo_<checklist_item_id>` file parts for Defect rows). Note: HLD §6.2 folds
+// this into POST /api/inspections
 // via source_type; it lives on a sibling route here so the inspector role guard
 // stays route-level and the resident path stays untouched. No OpenAI
 // categorisation and no duplicate guard (that guard protects against resident
@@ -128,7 +129,10 @@ async function create(req, res, next) {
 async function createLiftInspection(req, res, next) {
   try {
     const inspector_id = req.user.id;
+    // serviced_at = the paper form's "Servicing Date". Multipart sends it as a
+    // 'YYYY-MM-DD' string; an absent/blank one stores NULL.
     const { lift_id } = req.body;
+    const serviced_at = req.body.serviced_at === '' ? undefined : req.body.serviced_at;
 
     // checklist arrives as a JSON string field alongside the file parts.
     let checklist;
@@ -197,6 +201,7 @@ async function createLiftInspection(req, res, next) {
       location_block: lift.block_number,
       contractor_id: lift.contractor_id,
       checklist,
+      serviced_at,
       ...gpsFields(req.body),
     });
 

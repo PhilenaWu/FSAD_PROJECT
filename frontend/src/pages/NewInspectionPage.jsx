@@ -41,6 +41,7 @@ export default function NewInspectionPage() {
   const [loading, setLoading] = useState(true);
 
   const [liftId, setLiftId] = useState('');
+  const [servicedAt, setServicedAt] = useState(''); // paper form's "Servicing Date"
   // answers[itemId] = { result: 'Pass'|'Defect', severity, remark }
   const [answers, setAnswers] = useState({});
   const [gps, setGps] = useState(null); // optional; never replaces lift choice
@@ -103,6 +104,7 @@ export default function NewInspectionPage() {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
     }
     setLiftId('');
+    setServicedAt('');
     setAnswers({});
     setGps(null);
   }
@@ -111,14 +113,18 @@ export default function NewInspectionPage() {
     e.preventDefault();
     setFeedback(null);
 
-    // Client guard mirroring the backend: a lift and every item answered.
+    // Client guard: a lift, the servicing date, and every item answered. The
+    // paper form always carries a servicing date, so require it here even though
+    // the column is nullable for older records.
     const unanswered = items.filter((i) => !answers[i.id]?.result);
-    if (!liftId || unanswered.length > 0) {
+    if (!liftId || !servicedAt || unanswered.length > 0) {
       setFeedback({
         severity: 'error',
         message: !liftId
           ? 'Select a lift before submitting.'
-          : `Answer all checklist items (${unanswered.length} remaining).`,
+          : !servicedAt
+            ? 'Enter the servicing date before submitting.'
+            : `Answer all checklist items (${unanswered.length} remaining).`,
       });
       return;
     }
@@ -137,6 +143,7 @@ export default function NewInspectionPage() {
     // photo is its own photo_<checklist_item_id> file part.
     const formData = new FormData();
     formData.append('lift_id', liftId);
+    formData.append('serviced_at', servicedAt);
     formData.append('checklist', JSON.stringify(checklist));
     if (gps) {
       formData.append('gps_lat', gps.lat);
@@ -236,6 +243,19 @@ export default function NewInspectionPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+
+                {/* Servicing Date from the paper form header — the contractor
+                    visit this spot-check audits, not today's check date. */}
+                <TextField
+                  type="date"
+                  label="Servicing date"
+                  value={servicedAt}
+                  onChange={(e) => setServicedAt(e.target.value)}
+                  required
+                  fullWidth
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  helperText="Date the lift company serviced this lift"
+                />
 
                 {/* Optional GPS — supplements (never replaces) the lift choice. */}
                 <LocationCapture value={gps} onChange={setGps} />
@@ -417,8 +437,8 @@ export default function NewInspectionPage() {
                 </Button>
 
                 <Typography variant="caption" color="text.secondary">
-                  Select a lift and mark every checklist item. Severity and remarks
-                  apply to defects only.
+                  Select a lift, enter the servicing date, and mark every checklist
+                  item. Severity and remarks apply to defects only.
                 </Typography>
               </Stack>
             </Box>

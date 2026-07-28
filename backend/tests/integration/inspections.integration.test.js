@@ -128,13 +128,14 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/INSERT INTO inspections/i.test(sql) && /inspector_id/i.test(sql)) {
     const [
       inspector_id, lift_id, title, location_block, contractor_id,
-      gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+      serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
     ] = params;
     const now = new Date().toISOString();
     const row = {
       id: `insp-${store.inspections.length + 1}`,
       source_type: 'lift_inspection',
       inspector_id, lift_id, title, location_block, contractor_id,
+      serviced_at: serviced_at ?? null,
       gps_lat: gps_lat ?? null,
       gps_lng: gps_lng ?? null,
       gps_accuracy_m: gps_accuracy_m ?? null,
@@ -428,11 +429,14 @@ describe('POST /api/inspections/lift', () => {
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
       .field('lift_id', 'lift-1')
+      .field('serviced_at', '2026-03-22')
       .field('checklist', JSON.stringify(validChecklist))
       .attach('photo_item-2', PNG, 'defect.png');
 
     expect(res.status).toBe(201);
     expect(res.body.source_type).toBe('lift_inspection');
+    // Servicing Date from the paper form header (migration 027).
+    expect(res.body.serviced_at).toBe('2026-03-22');
     expect(res.body.inspector_id).toBe('ins-1');
     expect(res.body.lift_id).toBe('lift-1');
     // Derived from the lift row, not the request.
@@ -447,6 +451,18 @@ describe('POST /api/inspections/lift', () => {
 
     const cloudinaryService = require('../../src/services/cloudinaryService');
     expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(1);
+  });
+
+  test('201 stores serviced_at as NULL when the field is blank or absent', async () => {
+    const res = await request(app)
+      .post('/api/inspections/lift')
+      .set('Authorization', 'Bearer inspector-token')
+      .field('lift_id', 'lift-1')
+      .field('serviced_at', '')
+      .field('checklist', JSON.stringify(validChecklist));
+
+    expect(res.status).toBe(201);
+    expect(res.body.serviced_at).toBeNull();
   });
 
   test('403 when the user is not an inspector', async () => {
