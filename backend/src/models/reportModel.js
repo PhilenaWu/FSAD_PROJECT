@@ -2,7 +2,8 @@
 // the shared pg pool — no ORM. getReportData aggregates every metric the monthly
 // PDF needs for a [startDate, endDate) window: counts by status / category /
 // block, average rectification time, SLA compliance, top recurring defects, and
-// cost totals. All inspection queries exclude soft-deleted rows (is_deleted).
+// cost totals. Closed records are included everywhere — see the note on
+// `inPeriod` for why is_deleted is not a delete flag in this schema.
 'use strict';
 
 const { query } = require('../config/db');
@@ -54,7 +55,14 @@ const { query } = require('../config/db');
 async function getReportData(startDate, endDate) {
   const params = [startDate, endDate];
   // Shared period predicate for every inspections query.
-  const inPeriod = 'is_deleted = FALSE AND created_at >= $1 AND created_at < $2';
+  //
+  // Deliberately NOT filtered on is_deleted. That flag is written in exactly two
+  // places — the manual close (UC-004) and the G6 zero-defect auto-file — so it
+  // means "archived out of the active queues", not "deleted", and it is TRUE for
+  // every Closed record. Filtering it here dropped all completed work from the
+  // report: byStatus could never show 'Closed', totalDefects undercounted, and
+  // SLA compliance was averaged over unfinished defects only.
+  const inPeriod = 'created_at >= $1 AND created_at < $2';
 
   const [statusRes, categoryRes, blockRes, scalarRes, costRes, recurringRes, predictionRes] =
     await Promise.all([
@@ -113,8 +121,7 @@ async function getReportData(startDate, endDate) {
       query(
         `SELECT COALESCE(SUM(actual_cost), 0)::float AS actual_cost_total
            FROM inspections
-          WHERE is_deleted = FALSE
-            AND status = 'Closed'
+          WHERE status = 'Closed'
             AND actual_cost IS NOT NULL
             AND closed_at >= $1 AND closed_at < $2`,
         params

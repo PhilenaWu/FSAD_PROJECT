@@ -63,6 +63,13 @@ jest.mock('../../src/services/socketService', () => ({
   emitToRooms: jest.fn(),
 }));
 
+// --- Mock: outbound mail (UC-014). Keeps the assign and reject paths off SMTP. ---
+jest.mock('../../src/services/emailService', () => ({
+  sendDefectAlert: jest.fn(),
+  sendReportEmail: jest.fn(),
+}));
+const emailService = require('../../src/services/emailService');
+
 // --- Mock: the pg layer. A tiny in-memory model of the tables we touch. ---
 const profiles = {
   'res-1': { role: 'resident', status: 'active' },
@@ -1540,6 +1547,61 @@ describe('POST /api/inspections/:id/reject', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  // D.4 — the contractor is told by email, not just in-app, that the work is
+  // back with them. A lift inspection already carries the lift's contractor
+  // (con-1), so there is someone to notify without assigning one.
+  test('emails the assigned contractor the UC-014 rejection variant', async () => {
+    const id = await seedAwaitingEndorsement();
+    emailService.sendDefectAlert.mockClear();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(emailService.sendDefectAlert).toHaveBeenCalledTimes(1);
+
+    const [defect, to, options] = emailService.sendDefectAlert.mock.calls[0];
+    expect(defect.id).toBe(id);
+    expect(defect.status).toBe('Assigned'); // carries the fresh deadline
+    expect(to).toContain('lc@example.com');
+    expect(options).toEqual({ email_type: 'rejection', reason: REASON });
+  });
+
+  test('no email when the record has no contractor to notify', async () => {
+    const id = await seedAwaitingEndorsement();
+    store.inspections.find((i) => i.id === id).contractor_id = null;
+    emailService.sendDefectAlert.mockClear();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(emailService.sendDefectAlert).not.toHaveBeenCalled();
+  });
+
+  // Same policy as the socket push (G13): the rejection is already committed, so
+  // a mail failure is logged and swallowed rather than surfaced as a 500.
+  test('a failed rejection email never fails the rejection', async () => {
+    const id = await seedAwaitingEndorsement();
+    emailService.sendDefectAlert.mockClear();
+    emailService.sendDefectAlert.mockRejectedValueOnce(new Error('smtp down'));
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Assigned');
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 

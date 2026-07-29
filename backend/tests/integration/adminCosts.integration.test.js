@@ -208,7 +208,10 @@ describe('GET /api/admin/costs/summary', () => {
 
     expect(actualSql).toMatch(/FROM inspections/i);
     expect(actualSql).toMatch(/status = 'Closed'/i);
-    expect(actualSql).toMatch(/is_deleted = FALSE/i);
+    // Must NOT filter is_deleted: every Closed record has is_deleted = TRUE
+    // (close and the G6 auto-file are its only writers), so pairing the two
+    // clauses is unsatisfiable and silently zeroes the whole dashboard.
+    expect(actualSql).not.toMatch(/is_deleted/i);
     expect(projectedSql).toMatch(/FROM ai_predictions/i);
     expect(projectedSql).toMatch(/status = 'Active'/i);
   });
@@ -491,13 +494,14 @@ describe('GET /api/admin/costs/trends', () => {
     expect(trendSql()[1]).toEqual([null, null, 12]);
   });
 
-  test('pulls actual only from closed, non-deleted inspections', async () => {
+  test('pulls actual only from closed, costed inspections', async () => {
     await get();
     const [sql] = trendSql();
 
     expect(sql).toMatch(/FROM inspections i/i);
     expect(sql).toMatch(/i\.status = 'Closed'/i);
-    expect(sql).toMatch(/i\.is_deleted = FALSE/i);
+    // See the summary test: an is_deleted filter here can never match.
+    expect(sql).not.toMatch(/i\.is_deleted/i);
     expect(sql).toMatch(/i\.actual_cost IS NOT NULL/i);
     expect(sql).toMatch(/date_trunc\('month', i\.closed_at\)/i);
   });
@@ -749,7 +753,7 @@ describe('filters — applied individually', () => {
     await admin(`/api/admin/costs/summary?block=44A&startDate=2026-01-01&liftId=${LIFT_ID}`);
 
     expect(actualSql()[0]).toMatch(/status = 'Closed'/);
-    expect(actualSql()[0]).toMatch(/is_deleted = FALSE/);
+    expect(actualSql()[0]).not.toMatch(/is_deleted/);
     expect(actualSql()[0]).toMatch(/actual_cost IS NOT NULL/);
     expect(projectedSql()[0]).toMatch(/status = 'Active'/);
   });

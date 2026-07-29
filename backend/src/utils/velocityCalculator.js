@@ -73,13 +73,20 @@ async function calculateVelocity(block, category, db, options = {}) {
 
   // Single aggregate round trip. block/category/dates are all bound params.
   // FILTER splits the two non-overlapping windows in one pass.
+  //
+  // Deliberately NOT filtered on is_deleted. That flag is written only by the
+  // manual close (UC-004) and the G6 zero-defect auto-file, so it marks a record
+  // as archived, not deleted, and is TRUE for every Closed record. Filtering it
+  // dropped every rectified defect out of both windows, which is precisely the
+  // history velocity exists to measure: a block+category whose defects were all
+  // closed read as zero activity, so a recurring fault could never raise an
+  // alert once it had been fixed even once.
   const sql = `
     SELECT
       COUNT(*) FILTER (WHERE created_at >= $3 AND created_at < $4) AS count_last_30,
       COUNT(*) FILTER (WHERE created_at >= $5 AND created_at < $3) AS count_prior_30
     FROM inspections
-    WHERE is_deleted = FALSE
-      AND location_block = $1
+    WHERE location_block = $1
       AND category = $2
   `;
   const params = [block, category, currentStart, asOfIso, priorStart];

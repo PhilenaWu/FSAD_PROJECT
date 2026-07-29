@@ -729,6 +729,32 @@ async function rejectRectification(req, res, next) {
       // Socket not initialised (e.g. tests) — ignore.
     }
 
+    // D.4 — re-fire the UC-014 email with email_type 'rejection' so the
+    // contractor is told by mail, not just in-app, that the work came back with
+    // a fresh deadline. Same policy as the assign path and the socket push: a
+    // mail failure must never fail the rejection (G13).
+    if (inspection.contractor_id) {
+      try {
+        const { rows } = await query(
+          'SELECT id, contact_email FROM contractors WHERE id = $1',
+          [inspection.contractor_id]
+        );
+        const recipients = [rows[0]?.contact_email];
+        if (config.DEFECT_ALERT_RECIPIENTS) {
+          recipients.push(config.DEFECT_ALERT_RECIPIENTS);
+        }
+        const to = recipients.filter(Boolean).join(',');
+        if (to) {
+          await emailService.sendDefectAlert(inspection, to, {
+            email_type: 'rejection',
+            reason,
+          });
+        }
+      } catch (err) {
+        console.error('[inspectionController] Rejection email failed:', err.message);
+      }
+    }
+
     res.json(inspection);
   } catch (err) {
     next(err);

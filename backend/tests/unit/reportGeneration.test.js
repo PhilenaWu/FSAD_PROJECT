@@ -54,8 +54,8 @@ function populated() {
   };
 }
 
-// An empty period (also models "all records deleted": the is_deleted = FALSE
-// filter yields no rows, so counts are zero and breakdowns empty).
+// An empty period: no inspections created in the window, so counts are zero and
+// breakdowns empty.
 function empty() {
   return {
     scalar: {
@@ -113,13 +113,19 @@ describe('reportModel.getReportData — aggregation', () => {
     expect(data.sla.compliancePct).toBe(66.7);
   });
 
-  test('excludes soft-deleted rows and uses bound params (no interpolation)', async () => {
+  test('includes closed records and uses bound params (no interpolation)', async () => {
     responses = populated();
     await reportModel.getReportData(START, END);
 
     for (const [sql, params] of mockQuery.mock.calls) {
       if (/FROM inspections/.test(sql)) {
-        expect(sql).toMatch(/is_deleted = FALSE/);
+        // No is_deleted filter. The flag is written only by the manual close and
+        // the G6 zero-defect auto-file, so it marks a record as archived, not
+        // deleted, and is TRUE for every Closed record. Filtering it dropped all
+        // completed work: byStatus could never show 'Closed', totalDefects
+        // undercounted, and the cost query (status = 'Closed' AND
+        // is_deleted = FALSE) was unsatisfiable, so actual spend was always $0.
+        expect(sql).not.toMatch(/is_deleted/);
         // Window is bound to $1/$2 on either created_at (most queries) or
         // closed_at (the actual-cost query).
         expect(sql).toMatch(/(created_at|closed_at) >= \$1 AND (created_at|closed_at) < \$2/);

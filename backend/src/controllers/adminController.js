@@ -107,12 +107,17 @@ function paramBag(initial = []) {
   };
 }
 
-// WHERE fragment selecting closed, costed, non-deleted inspections, narrowed by
-// whichever filters are set. `p` is a column prefix ('' or 'i.').
+// WHERE fragment selecting closed, costed inspections, narrowed by whichever
+// filters are set. `p` is a column prefix ('' or 'i.').
+//
+// Deliberately NOT filtered on is_deleted. That flag is written in exactly two
+// places — the manual close (UC-004) and the G6 zero-defect auto-file — so it
+// means "archived out of the active queues", not "deleted", and it is TRUE for
+// every Closed record. Pairing it with status = 'Closed' is unsatisfiable and
+// silently returned $0 across the whole dashboard.
 function inspectionWhere(filters, bag, p = '') {
   const clauses = [
     `${p}status = 'Closed'`,
-    `${p}is_deleted = FALSE`,
     `${p}actual_cost IS NOT NULL`,
   ];
 

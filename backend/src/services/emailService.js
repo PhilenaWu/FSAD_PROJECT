@@ -48,9 +48,15 @@ async function sendReportEmail(reportUrl, periodLabel, recipientEmail) {
 }
 
 /**
- * Send a defect-assignment alert to the assigned contractor (LC) when a manager
- * assigns a defect. Fired from the assign path; failures are swallowed by the
- * caller so a mail hiccup never blocks the assignment.
+ * Send a defect alert to the assigned contractor (LC). Fired from the assign path
+ * (UC-002) and from the rejection path (UC-004 Alt 4); failures are swallowed by
+ * the caller so a mail hiccup never blocks the underlying action.
+ *
+ * `email_type` selects the UC-014 variant:
+ *   - 'defect_alert' (default) — a defect has just been assigned.
+ *   - 'rejection'    — the manager refused the rectification, so the same defect
+ *                      is back with the contractor on a fresh deadline. Quotes
+ *                      the reason and the new deadline (USE_CASES UC-014 A2).
  *
  * @param {Object} defect - the assigned inspection row.
  * @param {string} defect.title
@@ -61,10 +67,17 @@ async function sendReportEmail(reportUrl, periodLabel, recipientEmail) {
  * @param {string} [defect.description]
  * @param {string} [defect.target_deadline] - ISO timestamp of the 14-day deadline.
  * @param {string} recipientEmail - recipient address(es); comma-separated for many.
+ * @param {Object} [options]
+ * @param {'defect_alert'|'rejection'} [options.email_type='defect_alert'] - variant.
+ * @param {string} [options.reason] - rejection reason; quoted when email_type is
+ *   'rejection'.
  * @returns {Promise<void>} resolves when the message is accepted by the SMTP server.
  * @throws {Error} if SMTP delivery fails (propagated from nodemailer).
  */
-async function sendDefectAlert(defect, recipientEmail) {
+async function sendDefectAlert(defect, recipientEmail, options = {}) {
+  const { email_type = 'defect_alert', reason } = options;
+  const isRejection = email_type === 'rejection';
+
   const location = defect.location_unit
     ? `Block ${defect.location_block}, Unit ${defect.location_unit}`
     : `Block ${defect.location_block}`;
@@ -74,24 +87,38 @@ async function sendDefectAlert(defect, recipientEmail) {
       })
     : 'not set';
 
-  const subject = `Defect Assigned — ${defect.title} (${location})`;
+  // Lead paragraph and deadline label are the only things the variant changes —
+  // the defect table below is identical, so the contractor reads the same facts
+  // either way.
+  const lead = isRejection
+    ? 'Your rectification of the defect below was not accepted, and the defect has been re-opened for you to action again.'
+    : 'A defect has been assigned to you for rectification.';
+  const deadlineLabel = isRejection ? 'New deadline' : 'Deadline';
+  const subject = isRejection
+    ? `Rectification Rejected — ${defect.title} (${location})`
+    : `Defect Assigned — ${defect.title} (${location})`;
+
   const text =
-    `A defect has been assigned to you for rectification.\n\n` +
+    `${lead}\n\n` +
     `Title: ${defect.title}\n` +
     `Category: ${defect.category}\n` +
     `Priority: ${defect.priority}\n` +
     `Location: ${location}\n` +
-    `Rectification deadline: ${deadline}\n` +
+    `${isRejection ? 'New rectification deadline' : 'Rectification deadline'}: ${deadline}\n` +
+    (isRejection && reason ? `\nReason for rejection: ${reason}\n` : '') +
     (defect.description ? `\nDetails: ${defect.description}\n` : '') +
     `\nPlease acknowledge and action this defect in the EM Services portal.`;
   const html =
-    `<p>A defect has been assigned to you for rectification.</p>` +
+    `<p>${lead}</p>` +
+    (isRejection && reason
+      ? `<p><strong>Reason for rejection:</strong> ${reason}</p>`
+      : '') +
     `<table cellpadding="4" style="border-collapse:collapse">` +
     `<tr><td><strong>Title</strong></td><td>${defect.title}</td></tr>` +
     `<tr><td><strong>Category</strong></td><td>${defect.category}</td></tr>` +
     `<tr><td><strong>Priority</strong></td><td>${defect.priority}</td></tr>` +
     `<tr><td><strong>Location</strong></td><td>${location}</td></tr>` +
-    `<tr><td><strong>Deadline</strong></td><td>${deadline}</td></tr>` +
+    `<tr><td><strong>${deadlineLabel}</strong></td><td>${deadline}</td></tr>` +
     `</table>` +
     (defect.description ? `<p><strong>Details:</strong> ${defect.description}</p>` : '') +
     `<p>Please acknowledge and action this defect in the EM Services portal.</p>` +
