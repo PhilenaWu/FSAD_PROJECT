@@ -247,7 +247,11 @@ export default function DashboardPage() {
   }
 
   // Re-fetch everything whenever a filter changes (phase task 5.9).
-  const fetchAll = useCallback(async () => {
+  // `isStale` lets the effect below disown a request whose filters have since
+  // changed. Without it, a slow request for the old filters can resolve after
+  // a fast one for the new filters and repaint the page with figures that
+  // contradict the filter bar — the reader has no way to tell.
+  const fetchAll = useCallback(async (isStale = () => false) => {
     if (dateRangeInvalid) return; // hold the last good data; the filter bar shows the error
     setLoading(true);
     setFetchFailed(false);
@@ -261,6 +265,7 @@ export default function DashboardPage() {
         getContractorScorecard(params),
         getRecommendations(),
       ]);
+      if (isStale()) return;
       setSummary(sm);
       setHeatmap(hm.data);
       setTrends(tr.data);
@@ -268,14 +273,21 @@ export default function DashboardPage() {
       setScorecard(sc.data);
       setAlerts(rec.data);
     } catch {
+      if (isStale()) return;
       setFetchFailed(true);
     } finally {
-      setLoading(false);
+      // A superseded request must not clear the spinner the newer one raised.
+      if (!isStale()) setLoading(false);
     }
   }, [filters, dateRangeInvalid]);
 
   useEffect(() => {
-    if (isManager) fetchAll();
+    if (!isManager) return undefined;
+    let superseded = false;
+    fetchAll(() => superseded);
+    return () => {
+      superseded = true;
+    };
   }, [fetchAll, isManager]);
 
   // Filter dropdown options — once per visit; failures just leave them empty.
@@ -296,7 +308,7 @@ export default function DashboardPage() {
     let timer;
     const onStatusUpdate = () => {
       clearTimeout(timer);
-      timer = setTimeout(fetchAll, 1500);
+      timer = setTimeout(() => fetchAll(), 1500);
     };
     socket.on('status_update', onStatusUpdate);
     return () => {
@@ -488,7 +500,9 @@ export default function DashboardPage() {
           severity="error"
           sx={{ mb: 3 }}
           action={
-            <Button color="inherit" size="small" onClick={fetchAll}>
+            // Wrapped: onClick would otherwise hand the click event to
+            // fetchAll's first parameter.
+            <Button color="inherit" size="small" onClick={() => fetchAll()}>
               Retry
             </Button>
           }

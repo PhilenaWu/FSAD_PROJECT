@@ -29,6 +29,9 @@ const TREND_MONTHS_MAX = 24;
 // inspections.location_block / ai_predictions.location_block are VARCHAR(20).
 const BLOCK_MAX_LEN = 20;
 
+// inspections.category / ai_predictions.category are VARCHAR(50).
+const CATEGORY_MAX_LEN = 50;
+
 // ---------------------------------------------------------------------------
 // Filter parsing and validation
 // ---------------------------------------------------------------------------
@@ -47,7 +50,7 @@ function isRealDate(value) {
 // Validate the shared cost filters. Returns { filters } or { error: message }.
 // Every value is validated here, before any SQL runs, so a malformed UUID
 // surfaces as a 400 rather than a Postgres cast error dressed up as a 500.
-const FILTER_NAMES = ['startDate', 'endDate', 'block', 'liftId', 'contractorId'];
+const FILTER_NAMES = ['startDate', 'endDate', 'block', 'category', 'liftId', 'contractorId'];
 
 function parseFilters(reqQuery) {
   const filters = {};
@@ -83,6 +86,10 @@ function parseFilters(reqQuery) {
 
   if (filters.block && filters.block.length > BLOCK_MAX_LEN) {
     return { error: `block must be at most ${BLOCK_MAX_LEN} characters.` };
+  }
+
+  if (filters.category && filters.category.length > CATEGORY_MAX_LEN) {
+    return { error: `category must be at most ${CATEGORY_MAX_LEN} characters.` };
   }
 
   return { filters };
@@ -133,6 +140,9 @@ function inspectionWhere(filters, bag, p = '') {
   if (filters.block) {
     clauses.push(`${p}location_block = ${bag.add(filters.block)}`);
   }
+  if (filters.category) {
+    clauses.push(`${p}category = ${bag.add(filters.category)}`);
+  }
   if (filters.liftId) {
     clauses.push(`${p}lift_id = ${bag.add(filters.liftId)}::uuid`);
   }
@@ -164,6 +174,9 @@ function predictionWhere(filters, bag, p = '') {
   if (filters.block) {
     clauses.push(`${p}location_block = ${bag.add(filters.block)}`);
   }
+  if (filters.category) {
+    clauses.push(`${p}category = ${bag.add(filters.category)}`);
+  }
   if (filters.liftId || filters.contractorId) {
     clauses.push('FALSE'); // not attributable — see above
   }
@@ -181,15 +194,19 @@ function projectionsSuppressed(filters) {
 // Data fetchers (exported so a later PDF/PPT export can reuse the same numbers)
 // ---------------------------------------------------------------------------
 
-// { total_actual, total_projected, variance_pct }
+// { total_actual, total_projected, variance_pct, jobs }
 // variance_pct is how far projected exposure sits above (+) or below (-)
 // actual spend to date, to 1 dp. Null when there is no actual spend to compare
 // against — a percentage of zero is undefined, and the UI shows "—" rather
 // than a fabricated figure.
+// `jobs` is how many closed, costed records the total is made of — the KPI tile
+// states it alongside the money, and the dashboard divides by it for average
+// cost per job, so it must come from the same WHERE as the SUM.
 async function fetchCostSummary(filters = {}) {
   const actualBag = paramBag();
   const actual = await query(
-    `SELECT SUM(actual_cost)::float AS total_actual
+    `SELECT SUM(actual_cost)::float AS total_actual,
+            COUNT(*)::int          AS jobs
        FROM inspections
       WHERE ${inspectionWhere(filters, actualBag)}`,
     actualBag.values
@@ -213,6 +230,7 @@ async function fetchCostSummary(filters = {}) {
       total_actual > 0
         ? Number((((total_projected - total_actual) / total_actual) * 100).toFixed(1))
         : null,
+    jobs: num(actual.rows[0]?.jobs),
   };
 }
 
@@ -356,6 +374,86 @@ async function fetchCostBreakdown(filters = {}) {
   return { byCategory, byBlock, byContractor };
 }
 
+// [{ id, closed_at, block, category, lift, contractor, actual_cost }] — the
+// job-level rows behind every aggregate, newest close first. The dashboard's
+// drill-down table, CSV export, monthly trend, repair-vs-replace watchlist and
+// contractor price benchmarks are all derived from these rows, so this is the
+// one place the filters and the row shape have to agree.
+//
+// closed_at is formatted as YYYY-MM-DD in SQL rather than shipped as a
+// timestamp: the client groups and compares these values as plain strings
+// (month keys, date-range bounds), and a raw timestamp would re-introduce
+// timezone drift on the way through JSON.
+//
+// contractor is NULL for a record closed without an assignment (an in-house
+// fix); it is labelled rather than dropped so the row still totals correctly.
+// lift stays NULL for estate defects that are not tied to a lift — the
+// watchlist skips those rows rather than inventing an asset for them.
+async function fetchCostJobs(filters = {}) {
+  const bag = paramBag();
+  const { rows } = await query(
+    `SELECT i.id,
+            to_char(i.closed_at, 'YYYY-MM-DD') AS closed_at,
+            i.location_block                   AS block,
+            i.category,
+            l.lift_code                        AS lift,
+            COALESCE(c.name, 'Unassigned')     AS contractor,
+            i.actual_cost::float               AS actual_cost
+       FROM inspections i
+       LEFT JOIN lifts l       ON l.id = i.lift_id
+       LEFT JOIN contractors c ON c.id = i.contractor_id
+      WHERE ${inspectionWhere(filters, bag, 'i.')}
+      ORDER BY i.closed_at DESC`,
+    bag.values
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    closed_at: r.closed_at,
+    block: r.block,
+    category: r.category,
+    lift: r.lift,
+    contractor: r.contractor,
+    actual_cost: num(r.actual_cost),
+  }));
+}
+
+// { blocks, categories, contractors: [{ id, name }] } for the filter bar.
+//
+// Options are drawn from the costed rows themselves, not from the full
+// reference tables: an option that cannot match anything would send the admin
+// to an empty dashboard and leave them wondering which of the two is broken.
+// No filters are applied — the dropdowns must not narrow themselves out of the
+// values needed to undo the current selection.
+async function fetchCostFilterOptions() {
+  // No filters, so no bound values — inspectionWhere still supplies the single
+  // definition of "a costed row" that every other query here uses.
+  const costed = inspectionWhere({}, paramBag());
+  const costedPrefixed = inspectionWhere({}, paramBag(), 'i.');
+
+  const blocks = await query(
+    `SELECT DISTINCT location_block AS value
+       FROM inspections WHERE ${costed} ORDER BY value`
+  );
+  const categories = await query(
+    `SELECT DISTINCT category AS value
+       FROM inspections WHERE ${costed} ORDER BY value`
+  );
+  const contractors = await query(
+    `SELECT DISTINCT c.id, c.name
+       FROM inspections i
+       JOIN contractors c ON c.id = i.contractor_id
+      WHERE ${costedPrefixed}
+      ORDER BY c.name`
+  );
+
+  return {
+    blocks: blocks.rows.map((r) => r.value),
+    categories: categories.rows.map((r) => r.value),
+    contractors: contractors.rows.map((r) => ({ id: r.id, name: r.name })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
@@ -419,14 +517,39 @@ async function getCostTrends(req, res, next) {
   }
 }
 
+// GET /api/admin/costs/jobs?startDate&endDate&block&category&liftId&contractorId
+async function getCostJobs(req, res, next) {
+  try {
+    const { filters, error } = parseFilters(req.query);
+    if (error) return validationError(res, error);
+
+    res.json({ data: await fetchCostJobs(filters) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/admin/costs/filter-options — takes no parameters.
+async function getCostFilterOptions(req, res, next) {
+  try {
+    res.json(await fetchCostFilterOptions());
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   TREND_MONTHS_DEFAULT,
   getCostSummary,
   getCostBreakdown,
   getCostTrends,
+  getCostJobs,
+  getCostFilterOptions,
   fetchCostSummary,
   fetchCostBreakdown,
   fetchCostTrends,
+  fetchCostJobs,
+  fetchCostFilterOptions,
   parseFilters,
   projectionsSuppressed,
 };

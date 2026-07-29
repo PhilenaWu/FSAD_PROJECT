@@ -63,19 +63,17 @@ import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import {
   getCostFilterOptions,
   getCostSummary,
-  getCostByCategory,
-  getCostByContractor,
-  getCostTrend,
-  getCostJobs,
+  getCostAnalytics,
   getLiftWatchlist,
-  getContractorBenchmarks,
   buildInsights,
   LIFT_REPLACEMENT_REVIEW_COST,
 } from '../services/costService';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Filler, Legend, ChartTooltip);
 
-const FILTER_KEYS = ['from', 'to', 'block', 'category', 'contractor'];
+// `contractorId` holds the contractor's UUID — the backend filters on the
+// foreign key, not on a display name that could change.
+const FILTER_KEYS = ['from', 'to', 'block', 'category', 'contractorId'];
 
 // "$18,240.50" — SGD operational maintenance costs.
 const fmtMoney = (n) =>
@@ -329,37 +327,46 @@ export default function AdminCostPage() {
   const categoryChartRef = useRef(null);
   const trendChartRef = useRef(null);
 
-  const fetchAll = useCallback(async () => {
+  // `isStale` lets the effect below disown a request whose filters have since
+  // changed. Without it, a slow request for the old filters can resolve after
+  // a fast one for the new filters and repaint the page with figures that
+  // contradict the filter bar — the reader has no way to tell.
+  const fetchAll = useCallback(async (isStale = () => false) => {
     if (dateRangeInvalid) return; // hold the last good data; the filter bar shows the error
     setLoading(true);
     setFetchFailed(false);
     const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
     try {
-      const [s, cat, con, tr, jb, lf, bm] = await Promise.all([
+      // Three requests: the KPI aggregates, everything derived from the
+      // filtered job rows, and the watchlist's lifetime rows.
+      const [s, an, lf] = await Promise.all([
         getCostSummary(params),
-        getCostByCategory(params),
-        getCostByContractor(params),
-        getCostTrend(params),
-        getCostJobs(params),
+        getCostAnalytics(params),
         getLiftWatchlist(params),
-        getContractorBenchmarks(params),
       ]);
+      if (isStale()) return;
       setSummary(s);
-      setByCategory(cat.data);
-      setByContractor(con.data);
-      setTrend(tr);
-      setJobs(jb.data);
+      setByCategory(an.byCategory);
+      setByContractor(an.byContractor);
+      setTrend(an.trend);
+      setJobs(an.jobs);
+      setBenchmarks(an.benchmarks);
       setLifts(lf.data);
-      setBenchmarks(bm.data);
     } catch {
+      if (isStale()) return;
       setFetchFailed(true);
     } finally {
-      setLoading(false);
+      // A superseded request must not clear the spinner the newer one raised.
+      if (!isStale()) setLoading(false);
     }
   }, [filters, dateRangeInvalid]);
 
   useEffect(() => {
-    fetchAll();
+    let superseded = false;
+    fetchAll(() => superseded);
+    return () => {
+      superseded = true;
+    };
   }, [fetchAll]);
 
   // Dropdown options — once per visit; failures just leave them empty.
@@ -441,13 +448,13 @@ export default function AdminCostPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const clearAdornment = (key) =>
+  const clearAdornment = (key, label = key) =>
     filters[key] ? (
       <InputAdornment position="end" sx={{ mr: 2 }}>
         <IconButton
           size="small"
           edge="end"
-          aria-label={`Clear ${key} filter`}
+          aria-label={`Clear ${label} filter`}
           onClick={() => clearFilter(key)}
         >
           <CloseIcon fontSize="small" />
@@ -561,7 +568,9 @@ export default function AdminCostPage() {
           severity="error"
           sx={{ mb: 3 }}
           action={
-            <Button color="inherit" size="small" onClick={fetchAll}>
+            // Wrapped: onClick would otherwise hand the click event to
+            // fetchAll's first parameter.
+            <Button color="inherit" size="small" onClick={() => fetchAll()}>
               Retry
             </Button>
           }
@@ -703,13 +712,13 @@ export default function AdminCostPage() {
             <InputLabel>Contractor</InputLabel>
             <Select
               label="Contractor"
-              value={filters.contractor}
-              onChange={setFilter('contractor')}
-              endAdornment={clearAdornment('contractor')}
+              value={filters.contractorId}
+              onChange={setFilter('contractorId')}
+              endAdornment={clearAdornment('contractorId', 'contractor')}
             >
               <MenuItem value="">All contractors</MenuItem>
               {filterOptions.contractors.map((c) => (
-                <MenuItem key={c} value={c}>{c}</MenuItem>
+                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
               ))}
             </Select>
           </FormControl>

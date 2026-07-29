@@ -1,19 +1,16 @@
-// UC-011 admin cost analytics data layer. The aggregation itself lives in
-// small pure functions (exported for unit tests) that take raw job rows —
-// shaped like the backend's inspections + ai_predictions records — so every
-// filter, chart, and KPI is genuinely computed. When the /api/admin/costs
-// endpoints (task 5.19a) land, only the async wrappers at the bottom swap
-// their data source; the returned shapes already match HLD §6.10.
-import { MOCK_COST_JOBS, MOCK_ACTIVE_PREDICTIONS } from '../mocks/costMocks';
+// UC-011 admin cost analytics data layer. Every figure on the dashboard comes
+// from the database through /api/admin/costs/*: the money totals are SQL
+// aggregates, and the derived analytics below (grouping, monthly trend,
+// projection, watchlist, benchmarks, insights) are pure functions run over the
+// job rows the server returns — server-filtered, never client-invented.
+import api from './api';
 
 // A lift whose lifetime maintenance spend crosses this is flagged for a
-// repair-vs-replace review (watchlist panel). Demo policy figure.
-export const LIFT_REPLACEMENT_REVIEW_COST = 8000;
-
-const delay = (data) =>
-  new Promise((resolve) => setTimeout(() => resolve(data), 250));
-
-const sum = (rows, key) => rows.reduce((acc, r) => acc + r[key], 0);
+// repair-vs-replace review (watchlist panel). Policy figure, not a DB value:
+// a lift replacement runs well into six figures, so the trigger is set at the
+// point where cumulative repair spend is worth putting next to that number —
+// roughly two to three years of heavy rectification on one lift.
+export const LIFT_REPLACEMENT_REVIEW_COST = 60000;
 
 // "2026-01" + 1 → "2026-02". Pure string/int math — no Date, no timezone.
 export function addMonth(month, n = 1) {
@@ -28,56 +25,28 @@ export function addMonth(month, n = 1) {
 // Pure aggregation (unit-tested in costService.test.js)
 // ---------------------------------------------------------------------------
 
-// Filters: { from, to } as YYYY-MM-DD (applied to closed_at, inclusive), plus
-// exact-match block / category / contractor. Empty values are ignored.
-export function filterRows(rows, { from, to, block, category, contractor } = {}) {
-  return rows.filter(
-    (j) =>
-      (!from || j.closed_at >= from) &&
-      (!to || j.closed_at <= to) &&
-      (!block || j.block === block) &&
-      (!category || j.category === category) &&
-      (!contractor || j.contractor === contractor)
-  );
-}
-
-// Summary: total actual (filtered), projected exposure (active predictions
-// matching the block/category filters), and spend movement — the filtered
-// window's spend vs the equally long window immediately before it (default
-// window: last 90 days). The prior window ends the day BEFORE the current one
-// starts so a job closed on the boundary date is never counted twice.
-export function summarize(rows, predictions, filters = {}) {
-  const jobs = filterRows(rows, filters);
-
-  const matching = predictions.filter(
-    (p) =>
-      (!filters.block || p.block === filters.block) &&
-      (!filters.category || p.category === filters.category)
-  );
-
+// The two windows the spend-movement tile compares, as { from, to } pairs of
+// YYYY-MM-DD dates.
+//
+// `current` is the filtered range; with no range set it is the trailing 90
+// days, so the tile still reports recent movement on the default all-time
+// view. `prior` is the equally long window immediately before it, ending the
+// day BEFORE `current.from` — a job closed on the boundary date must never
+// count in both, which would show as movement that did not happen.
+export function comparisonWindows({ from, to } = {}) {
   const msPerDay = 86_400_000;
   const iso = (d) => d.toISOString().slice(0, 10);
-  const to = filters.to ? new Date(`${filters.to}T00:00:00Z`) : new Date();
-  const from = filters.from
-    ? new Date(`${filters.from}T00:00:00Z`)
-    : new Date(to.getTime() - 90 * msPerDay);
-  const windowMs = Math.max(to - from, msPerDay);
-  const priorFrom = new Date(from.getTime() - windowMs);
-  const priorTo = new Date(from.getTime() - msPerDay); // day before `from`
 
-  const windowActual = sum(filterRows(rows, { ...filters, from: iso(from), to: iso(to) }), 'actual_cost');
-  const priorActual = sum(filterRows(rows, { ...filters, from: iso(priorFrom), to: iso(priorTo) }), 'actual_cost');
-  const variance_pct =
-    priorActual > 0
-      ? Math.round(((windowActual - priorActual) / priorActual) * 1000) / 10
-      : null;
+  const end = to ? new Date(`${to}T00:00:00Z`) : new Date();
+  const start = from ? new Date(`${from}T00:00:00Z`) : new Date(end.getTime() - 90 * msPerDay);
+  const windowMs = Math.max(end - start, msPerDay);
 
   return {
-    total_actual: sum(jobs, 'actual_cost'),
-    total_projected: sum(matching, 'estimated_cost'),
-    variance_pct,
-    jobs: jobs.length,
-    prior_actual: priorActual,
+    current: { from: iso(start), to: iso(end) },
+    prior: {
+      from: iso(new Date(start.getTime() - windowMs)),
+      to: iso(new Date(start.getTime() - msPerDay)),
+    },
   };
 }
 
@@ -389,60 +358,97 @@ export function buildInsights({ summary, byCategory = [], byContractor = [], mov
 }
 
 // ---------------------------------------------------------------------------
-// Public API — async wrappers the page calls; each mirrors one backend
-// endpoint (or, for lifts/movers, a planned extension of the cost controller).
+// Public API — every call goes to /api/admin/costs/* (admin-only; the shared
+// `api` instance attaches the Supabase bearer token).
 // ---------------------------------------------------------------------------
 
+// The page's URL filter keys → the API's query parameters. Empty values are
+// dropped so an untouched control never narrows the query.
+function toParams({ from, to, block, category, contractorId } = {}) {
+  const params = {};
+  if (from) params.startDate = from;
+  if (to) params.endDate = to;
+  if (block) params.block = block;
+  if (category) params.category = category;
+  if (contractorId) params.contractorId = contractorId;
+  return params;
+}
+
+// GET /api/admin/costs/filter-options → { blocks, categories, contractors }
+// Dropdown options come from the costed rows themselves — nothing hardcoded.
 export async function getCostFilterOptions() {
-  return delay({
-    blocks: [...new Set(MOCK_COST_JOBS.map((j) => j.block))].sort(),
-    categories: [...new Set(MOCK_COST_JOBS.map((j) => j.category))].sort(),
-    contractors: [...new Set(MOCK_COST_JOBS.map((j) => j.contractor))].sort(),
-  });
+  const res = await api.get('/api/admin/costs/filter-options');
+  return res.data;
 }
 
-// GET /api/admin/costs/summary
+// GET /api/admin/costs/jobs → the job-level rows behind every aggregate.
+async function fetchJobRows(filters) {
+  const res = await api.get('/api/admin/costs/jobs', { params: toParams(filters) });
+  return res.data.data;
+}
+
+// KPI tiles. Total spend, job count and projected exposure are SQL aggregates;
+// the movement tile needs a second window, so the same endpoint is asked for
+// the prior period — and, when no date range is set, for the trailing 90 days
+// the movement is measured over (see comparisonWindows).
 export async function getCostSummary(filters = {}) {
-  return delay(summarize(MOCK_COST_JOBS, MOCK_ACTIVE_PREDICTIONS, filters));
+  const { current, prior } = comparisonWindows(filters);
+  const dated = Boolean(filters.from || filters.to);
+
+  const base = toParams(filters);
+  const summaryFor = async (params) =>
+    (await api.get('/api/admin/costs/summary', { params })).data;
+  const over = (window) => ({ ...base, startDate: window.from, endDate: window.to });
+
+  const [overall, currentTotals, priorTotals] = await Promise.all([
+    summaryFor(base),
+    dated ? null : summaryFor(over(current)),
+    summaryFor(over(prior)),
+  ]);
+
+  // With a date range set the filtered total IS the current window's total.
+  const windowActual = dated ? overall.total_actual : currentTotals.total_actual;
+  const priorActual = priorTotals.total_actual;
+
+  return {
+    total_actual: overall.total_actual,
+    total_projected: overall.total_projected,
+    jobs: overall.jobs,
+    prior_actual: priorActual,
+    variance_pct:
+      priorActual > 0
+        ? Math.round(((windowActual - priorActual) / priorActual) * 1000) / 10
+        : null,
+  };
 }
 
-// GET /api/admin/costs/by-category
-export async function getCostByCategory(filters = {}) {
-  return delay({ data: groupTotals(filterRows(MOCK_COST_JOBS, filters), 'category') });
+// Everything derived from the filtered job rows, off a single fetch: the
+// drill-down table and CSV rows, the category and contractor breakdowns, the
+// monthly trend with its projection and backtest, the top-mover callout, and
+// the contractor price benchmarks.
+export async function getCostAnalytics(filters = {}) {
+  const rows = await fetchJobRows(filters);
+  const trendData = buildTrend(rows);
+
+  return {
+    jobs: rows,
+    byCategory: groupTotals(rows, 'category'),
+    byContractor: groupTotals(rows, 'contractor'),
+    trend: {
+      data: trendData,
+      forecast: forecastNext(trendData),
+      backtest: backtestForecast(trendData),
+      top_mover: topMover(rows),
+    },
+    benchmarks: contractorBenchmarks(rows),
+  };
 }
 
-// GET /api/admin/costs/by-contractor
-export async function getCostByContractor(filters = {}) {
-  return delay({ data: groupTotals(filterRows(MOCK_COST_JOBS, filters), 'contractor') });
-}
-
-// GET /api/admin/costs/trend — plus the client-side next-month projection and
-// top-mover callout derived from the same filtered rows.
-export async function getCostTrend(filters = {}) {
-  const rows = filterRows(MOCK_COST_JOBS, filters);
-  const data = buildTrend(rows);
-  return delay({
-    data,
-    forecast: forecastNext(data),
-    backtest: backtestForecast(data),
-    top_mover: topMover(rows),
-  });
-}
-
-// Job-level rows for the drill-down table / CSV export.
-export async function getCostJobs(filters = {}) {
-  const data = [...filterRows(MOCK_COST_JOBS, filters)].sort((a, b) =>
-    b.closed_at.localeCompare(a.closed_at)
-  );
-  return delay({ data });
-}
-
-// Lifetime spend per lift for the repair-vs-replace watchlist.
+// Lifetime spend per lift for the repair-vs-replace watchlist. The date
+// filters are deliberately dropped: a replacement decision looks at the lift's
+// whole life, not the window on screen (stated on the panel). The block filter
+// still applies.
 export async function getLiftWatchlist(filters = {}) {
-  return delay({ data: buildLiftWatchlist(MOCK_COST_JOBS, filters) });
-}
-
-// Per-contractor price-vs-peers flags for the contractor table.
-export async function getContractorBenchmarks(filters = {}) {
-  return delay({ data: contractorBenchmarks(filterRows(MOCK_COST_JOBS, filters)) });
+  const rows = await fetchJobRows({ block: filters.block });
+  return { data: buildLiftWatchlist(rows, { block: filters.block }) };
 }

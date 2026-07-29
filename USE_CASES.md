@@ -23,7 +23,7 @@
 | UC-008 | Broadcast notifications | Manager | — | Zoe | ✅ |
 | UC-009 | Monthly report + annual archive | System | 7 | Davian | 🔶 |
 | UC-010 | Contractor rectification portal | Contractor | 5 | Zoe | ✅ |
-| UC-011 | Admin cost analytics | Admin | — | Davian (BE) / Hasini (FE) | 🔶 **FE only — backend never built** |
+| UC-011 | Admin cost analytics | Admin | — | Davian (BE) / Hasini (FE) | ✅ |
 | UC-012 | Vendor account lifecycle | Admin | — | Davian (BE) / Hasini (FE) | ✅ |
 | UC-013 | Paper-form OCR prefill | Inspector | 3 | Mahdiya | 🆕 |
 | UC-014 | Auto-notify the lift company | System | 4 | Davian | 🆕 |
@@ -288,9 +288,9 @@ Monthly (built): GitHub Actions calls `GET /api/reports/generate`; pdfkit render
 
 ---
 
-## UC-011 — Admin cost analytics 🔶 **frontend only**
+## UC-011 — Admin cost analytics ✅
 
-**Actor:** Admin · **Owner:** Davian (backend — **not built**) / Hasini (frontend — built)
+**Actor:** Admin · **Owner:** Davian (backend) / Hasini (frontend)
 **Client requirements:** R17 ("Statistic / report") · 4D data-driven decision making
 **Preconditions:** Caller is authenticated with `role = 'admin'`.
 **Postcondition:** No state change — read-only.
@@ -318,45 +318,30 @@ KPI tiles (total actual, total projected, variance %), cost by category, cost pe
 
 | Case | Behaviour |
 |---|---|
-| Manager (not admin) opens the page | `403 FORBIDDEN` from the API; UI redirects (COST-T02) |
+| Manager (not admin) opens the page | `403 FORBIDDEN` from every `/api/admin/costs/*` route; the page also renders an "administrators only" alert client-side. As in UC-005, the UI guard is convenience — the enforcement is the server's |
 | Fewer than 3 complete months of history | Forecast returns `null` — too thin to fit; the chart shows history only, no invented projection |
 | No prior window to compare | `variance_pct` is `null`; the tile shows "no prior data" |
 | A category has no peer contractor with ≥2 jobs | No benchmark flag emitted rather than a misleading comparison against a single job |
 | Month with zero actual spend | Skipped in the backtest — percentage error against zero is undefined |
 | Filter result empty | Panels render empty states; export disabled |
 
-> **Open gap — the backend does not exist.** There is no `adminController.js`, no
-> `routes/admin.js`, and no `/api/admin/costs/*` route mounted anywhere. The page
-> is fully functional but reads `frontend/src/mocks/costMocks.js` through
-> `costService.js`, which never imports `api` — every figure on the Admin Cost
-> Dashboard is hardcoded demo data.
->
-> **Rubric impact (A2, "fully integrated React + Node + DB system").** This is the
-> only screen in the project that does not touch the database. The aggregation
-> logic (`summarize`, `groupTotals`, `buildTrend`, `forecastNext`,
-> `buildLiftWatchlist`, `contractorBenchmarks`) is real, pure and unit-tested, so
-> the work is not wasted — but until the endpoints exist the page cannot be
-> presented as integrated.
->
-> **To close:** Davian builds `GET /api/admin/costs/{summary,by-category,by-contractor,trend}`
-> per HLD §9, `requireRole('admin')`; Hasini then replaces the seven mock wrappers
-> at the bottom of `costService.js` with `api.get` calls — the pure functions above
-> them do not change. Until then UC-011 must not be described as built, and the
-> demo must either say "demo data" out loud or the backend must land first.
+**Data path — no mock source.** `adminController.js` + `routes/admin.js` serve
+`GET /api/admin/costs/{summary,breakdown,trends,jobs,filter-options}` under
+`requireRole('admin')`, and `costService.js` calls them through `api`. The money
+totals and the job count are SQL aggregates; the pure functions (`groupTotals`,
+`buildTrend`, `forecastNext`, `backtestForecast`, `topMover`,
+`buildLiftWatchlist`, `contractorBenchmarks`, `buildInsights`) run over the
+server-filtered rows `/costs/jobs` returns. `mocks/costMocks.js` has been deleted.
 
-> **Open gap — the backend does not exist.** There is no `adminController.js`, no
-> `routes/admin.js`, and no `/api/admin/costs/*` route mounted anywhere. The page
-> is fully functional but reads `frontend/src/mocks/costMocks.js` through
-> `costService.js`, which never imports `api` — every figure on the Admin Cost
-> Dashboard is hardcoded demo data. The aggregation logic (`summarize`,
-> `groupTotals`, `buildTrend`, `forecastNext`, `buildLiftWatchlist`,
-> `contractorBenchmarks`) is real, pure, and unit-tested (33 tests), so the swap
-> is confined to the async wrappers at the bottom of `costService.js`.
->
-> **To close:** Davian builds `GET /api/admin/costs/{summary,by-category,by-contractor,trend}`
-> per HLD §9, `requireRole('admin')`; Hasini then replaces the seven mock wrappers
-> with `api.get` calls. Until then UC-011 must not be described as built, and the
-> demo must either say "demo data" out loud or the backend must land first.
+**Cost history.** Migration `034_seed_lift_cost_history.sql` seeds 199 closed
+lift rectifications across the trailing 13 months, dated relative to
+`CURRENT_DATE`, so every panel has real rows: 12 complete months for the
+forecast and its walk-forward backtest, lift-linked spend for the
+repair-vs-replace watchlist, and a prior window for the spend-movement tile.
+Monthly totals drift gently upward, per-lift lifetime spend is spread across the
+review threshold, roughly two thirds close inside the 72-hour SLA so the UC-005
+dashboard is not distorted, and a few jobs are major overhauls that the
+drill-down table flags as outliers.
 
 ---
 

@@ -54,7 +54,7 @@ let dbRows;
 
 function resetDbRows() {
   dbRows = {
-    summaryActual: [{ total_actual: 3000 }],
+    summaryActual: [{ total_actual: 3000, jobs: 4 }],
     summaryProjected: [{ total_projected: 3600 }],
     byCategory: [
       { category: 'Doors', actual: 2000, projected: 2400 },
@@ -73,7 +73,7 @@ function resetDbRows() {
     // What Postgres returns once a filter narrows the same query — fewer rows,
     // smaller sums, lower counts. Used to prove filtered numbers reach the
     // response rather than the unfiltered set being served regardless.
-    summaryActualFiltered: [{ total_actual: 1200 }],
+    summaryActualFiltered: [{ total_actual: 1200, jobs: 2 }],
     summaryProjectedFiltered: [{ total_projected: 900 }],
     byContractorFiltered: [{ name: 'Otis Service SG', total: 1200, count: 2 }],
     // Six months as Postgres would return them: the series is gap-filled in
@@ -85,6 +85,34 @@ function resetDbRows() {
       { month: '2026-05', actual: 2000, projected: 0 },
       { month: '2026-06', actual: 2500, projected: 1200 },
       { month: '2026-07', actual: 800, projected: 2400 },
+    ],
+    // Job-level rows as Postgres returns them: closed_at already formatted,
+    // lift NULL for an estate defect not tied to a lift.
+    jobs: [
+      {
+        id: 'job-1',
+        closed_at: '2026-06-20',
+        block: '44A',
+        category: 'Doors',
+        lift: '44A-L1',
+        contractor: 'Otis Service SG',
+        actual_cost: 780,
+      },
+      {
+        id: 'job-2',
+        closed_at: '2026-05-11',
+        block: '44B',
+        category: 'Cleanliness',
+        lift: null,
+        contractor: 'Unassigned',
+        actual_cost: '90.00',
+      },
+    ],
+    optionBlocks: [{ value: '44A' }, { value: '44B' }],
+    optionCategories: [{ value: 'Cleanliness' }, { value: 'Doors' }],
+    optionContractors: [
+      { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'Otis Service SG' },
+      { id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', name: 'Schindler' },
     ],
   };
 }
@@ -110,6 +138,14 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/generate_series/i.test(sql)) {
     return { rows: dbRows.trends };
   }
+  // job rows — checked before the contractor join, which it also contains
+  if (/l\.lift_code/i.test(sql)) {
+    return { rows: dbRows.jobs };
+  }
+  // filter options — three DISTINCT selects
+  if (/DISTINCT location_block/i.test(sql)) return { rows: dbRows.optionBlocks };
+  if (/DISTINCT category/i.test(sql)) return { rows: dbRows.optionCategories };
+  if (/DISTINCT c\.id/i.test(sql)) return { rows: dbRows.optionContractors };
   // breakdown — the contractor join is checked before the generic UNION shape
   if (/JOIN contractors c/i.test(sql)) {
     return { rows: params.length ? dbRows.byContractorFiltered : dbRows.byContractor };
@@ -143,6 +179,8 @@ describe.each([
   ['/api/admin/costs/summary'],
   ['/api/admin/costs/breakdown'],
   ['/api/admin/costs/trends'],
+  ['/api/admin/costs/jobs'],
+  ['/api/admin/costs/filter-options'],
 ])('%s — access control', (path) => {
   test('401 without a token', async () => {
     const res = await request(app).get(path);
@@ -189,9 +227,14 @@ describe('GET /api/admin/costs/summary', () => {
 
     expect(res.status).toBe(200);
     // "exactly" — no extra keys leak into the contract Hasini codes against.
-    expect(Object.keys(res.body).sort()).toEqual(['total_actual', 'total_projected', 'variance_pct']);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'jobs',
+      'total_actual',
+      'total_projected',
+      'variance_pct',
+    ]);
     // 3000 actual, 3600 projected -> (3600-3000)/3000 = +20.0%
-    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20, jobs: 4 });
   });
 
   test('every value is a JavaScript Number, not a string', async () => {
@@ -199,6 +242,15 @@ describe('GET /api/admin/costs/summary', () => {
     expect(typeof res.body.total_actual).toBe('number');
     expect(typeof res.body.total_projected).toBe('number');
     expect(typeof res.body.variance_pct).toBe('number');
+    expect(typeof res.body.jobs).toBe('number');
+  });
+
+  test('the job count comes from the same WHERE as the total it describes', async () => {
+    await get();
+    const [actualSql] = mockQuery.mock.calls.find(([sql]) => /total_actual/i.test(sql));
+    // One statement, so the count can never describe a different row set than
+    // the sum — which is what the "N closed jobs" KPI caption claims.
+    expect(actualSql).toMatch(/COUNT\(\*\)::int\s+AS jobs/i);
   });
 
   test('sums closed inspections and active predictions only', async () => {
@@ -217,15 +269,15 @@ describe('GET /api/admin/costs/summary', () => {
   });
 
   test('NULL sums (no data at all) become 0 and variance_pct null', async () => {
-    dbRows.summaryActual = [{ total_actual: null }];
+    dbRows.summaryActual = [{ total_actual: null, jobs: 0 }];
     dbRows.summaryProjected = [{ total_projected: null }];
 
     const res = await get();
-    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null });
+    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null, jobs: 0 });
   });
 
   test('variance_pct is null when there is no actual spend to divide by', async () => {
-    dbRows.summaryActual = [{ total_actual: 0 }];
+    dbRows.summaryActual = [{ total_actual: 0, jobs: 0 }];
 
     const res = await get();
     expect(res.body.total_projected).toBe(3600);
@@ -241,7 +293,7 @@ describe('GET /api/admin/costs/summary', () => {
   });
 
   test('variance_pct is rounded to one decimal place', async () => {
-    dbRows.summaryActual = [{ total_actual: 3000 }];
+    dbRows.summaryActual = [{ total_actual: 3000, jobs: 4 }];
     dbRows.summaryProjected = [{ total_projected: 3712 }];
 
     const res = await get();
@@ -252,11 +304,11 @@ describe('GET /api/admin/costs/summary', () => {
   test('numeric strings from pg are coerced to Numbers', async () => {
     // Belt-and-braces: NUMERIC arrives as a string if a ::float cast is ever
     // dropped from the SQL. The contract must still hand Chart.js numbers.
-    dbRows.summaryActual = [{ total_actual: '3000.00' }];
+    dbRows.summaryActual = [{ total_actual: '3000.00', jobs: '4' }];
     dbRows.summaryProjected = [{ total_projected: '3600.00' }];
 
     const res = await get();
-    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20, jobs: 4 });
   });
 });
 
@@ -568,7 +620,7 @@ describe('GET /api/admin/costs/trends', () => {
 // Requirement: never hand the charts null or NaN where a cost is expected.
 describe('cost values are never null or NaN', () => {
   test('summary degrades non-numeric sums to 0 and keeps variance_pct safe', async () => {
-    dbRows.summaryActual = [{ total_actual: 'not-a-number' }];
+    dbRows.summaryActual = [{ total_actual: 'not-a-number', jobs: 'n/a' }];
     dbRows.summaryProjected = [{ total_projected: undefined }];
 
     const res = await request(app)
@@ -576,7 +628,7 @@ describe('cost values are never null or NaN', () => {
       .set('Authorization', 'Bearer admin-token');
 
     // no actual spend to divide by -> null, not Infinity or NaN
-    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null });
+    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null, jobs: 0 });
   });
 
   test('summary survives an empty result set from either aggregate', async () => {
@@ -588,7 +640,7 @@ describe('cost values are never null or NaN', () => {
       .set('Authorization', 'Bearer admin-token');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null });
+    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null, jobs: 0 });
   });
 
   test('breakdown degrades missing group costs to 0', async () => {
@@ -644,6 +696,7 @@ describe('filters — validation', () => {
     '/api/admin/costs/summary',
     '/api/admin/costs/breakdown',
     '/api/admin/costs/trends',
+    '/api/admin/costs/jobs',
   ];
 
   const BAD = [
@@ -659,6 +712,8 @@ describe('filters — validation', () => {
     ['startDate=2026-06-01&endDate=2026-05-01', /startDate must not be after endDate/],
     ['block=44A&block=44B', /block must be provided at most once/],
     [`block=${'x'.repeat(21)}`, /block must be at most 20 characters/],
+    ['category=Doors&category=Lift', /category must be provided at most once/],
+    [`category=${'x'.repeat(51)}`, /category must be at most 50 characters/],
   ];
 
   describe.each(PATHS)('%s', (path) => {
@@ -689,7 +744,7 @@ describe('filters — validation', () => {
     });
 
     test('unknown query params are ignored', async () => {
-      const res = await admin(`${path}?bogus=1&category=Doors`);
+      const res = await admin(`${path}?bogus=1&sortBy=cost`);
       expect(res.status).toBe(200);
     });
   });
@@ -865,12 +920,13 @@ describe('filters — sums and counts change with the filter', () => {
     const all = await admin('/api/admin/costs/summary');
     const filtered = await admin('/api/admin/costs/summary?block=44A');
 
-    expect(all.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    expect(all.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20, jobs: 4 });
     // 1200 actual vs 900 projected -> (900-1200)/1200 = -25.0%
     expect(filtered.body).toEqual({
       total_actual: 1200,
       total_projected: 900,
       variance_pct: -25,
+      jobs: 2,
     });
   });
 
@@ -904,19 +960,156 @@ describe('filters — sums and counts change with the filter', () => {
   });
 
   test('a filter matching nothing yields zeros, not nulls', async () => {
-    dbRows.summaryActualFiltered = [{ total_actual: null }];
+    dbRows.summaryActualFiltered = [{ total_actual: null, jobs: 0 }];
     dbRows.summaryProjectedFiltered = [{ total_projected: null }];
 
     const res = await admin('/api/admin/costs/summary?block=NOPE');
 
-    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null });
+    expect(res.body).toEqual({ total_actual: 0, total_projected: 0, variance_pct: null, jobs: 0 });
   });
 
   test('the unfiltered response is unchanged from Phase 2 (no regression)', async () => {
     const res = await admin('/api/admin/costs/summary');
 
-    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20 });
+    expect(res.body).toEqual({ total_actual: 3000, total_projected: 3600, variance_pct: 20, jobs: 4 });
     expect(actualSql()[1]).toEqual([]); // no params bound when nothing is filtered
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Job rows and filter options — the row-level source the dashboard's charts,
+// watchlist, benchmarks and CSV export are all derived from.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/admin/costs/jobs', () => {
+  const get = (qs = '') => admin(`/api/admin/costs/jobs${qs}`);
+  const jobsSql = () => mockQuery.mock.calls.find(([s]) => /l\.lift_code/i.test(s));
+
+  test('returns { data: [...] } with exactly the contract keys per row', async () => {
+    const res = await get();
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body)).toEqual(['data']);
+    expect(res.body.data).toHaveLength(2);
+    res.body.data.forEach((row) => {
+      expect(Object.keys(row).sort()).toEqual([
+        'actual_cost',
+        'block',
+        'category',
+        'closed_at',
+        'contractor',
+        'id',
+        'lift',
+      ]);
+    });
+  });
+
+  test('costs are Numbers and closed_at is a plain YYYY-MM-DD string', async () => {
+    const res = await get();
+
+    // The client groups these into months and compares them as strings; a
+    // timestamp here would re-introduce timezone drift on the month boundary.
+    expect(res.body.data[0].closed_at).toBe('2026-06-20');
+    expect(res.body.data.every((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.closed_at))).toBe(true);
+    // '90.00' from pg NUMERIC must arrive as a number for Chart.js
+    expect(res.body.data[1].actual_cost).toBe(90);
+    expect(res.body.data.every((r) => typeof r.actual_cost === 'number')).toBe(true);
+  });
+
+  test('a job with no lift keeps lift null rather than being dropped', async () => {
+    const res = await get();
+    // The watchlist skips these rows; the spend still counts everywhere else.
+    expect(res.body.data[1].lift).toBeNull();
+  });
+
+  test('selects only closed, costed rows, newest close first', async () => {
+    await get();
+    const [sql] = jobsSql();
+
+    expect(sql).toMatch(/FROM inspections i/i);
+    expect(sql).toMatch(/i\.status = 'Closed'/i);
+    expect(sql).toMatch(/i\.actual_cost IS NOT NULL/i);
+    expect(sql).toMatch(/ORDER BY i\.closed_at DESC/i);
+    // is_deleted is TRUE on every closed record — filtering it would zero the
+    // whole table (same reasoning as the summary query).
+    expect(sql).not.toMatch(/is_deleted/i);
+  });
+
+  test('joins are LEFT so an unassigned or non-lift job still returns', async () => {
+    await get();
+    const [sql] = jobsSql();
+
+    expect(sql).toMatch(/LEFT JOIN lifts l/i);
+    expect(sql).toMatch(/LEFT JOIN contractors c/i);
+    expect(sql).toMatch(/COALESCE\(c\.name, 'Unassigned'\)/i);
+  });
+
+  test('every filter is bound as a parameter, never interpolated', async () => {
+    await get(
+      `?startDate=2026-01-01&endDate=2026-06-30&block=44A&category=Doors&contractorId=${CONTRACTOR_ID}`
+    );
+    const [sql, params] = jobsSql();
+
+    expect(params).toEqual(['2026-01-01', '2026-06-30', '44A', 'Doors', CONTRACTOR_ID]);
+    expect(sql).toMatch(/i\.location_block = \$3/);
+    expect(sql).toMatch(/i\.category = \$4/);
+    expect(sql).toMatch(/i\.contractor_id = \$5::uuid/);
+    expect(sql).not.toMatch(/44A/); // the value itself never reaches the SQL text
+  });
+
+  test('an empty table yields an empty array, not an error', async () => {
+    dbRows.jobs = [];
+
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: [] });
+  });
+});
+
+describe('GET /api/admin/costs/filter-options', () => {
+  const get = () => admin('/api/admin/costs/filter-options');
+
+  test('returns blocks, categories and contractors with ids', async () => {
+    const res = await get();
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['blocks', 'categories', 'contractors']);
+    expect(res.body.blocks).toEqual(['44A', '44B']);
+    expect(res.body.categories).toEqual(['Cleanliness', 'Doors']);
+    // ids, because the backend filters on the foreign key, not the name
+    expect(res.body.contractors).toEqual([
+      { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'Otis Service SG' },
+      { id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', name: 'Schindler' },
+    ]);
+  });
+
+  test('options come from costed rows only — every option can match something', async () => {
+    await get();
+    const optionQueries = mockQuery.mock.calls
+      .map(([sql]) => sql)
+      .filter((sql) => /DISTINCT/i.test(sql));
+
+    expect(optionQueries).toHaveLength(3);
+    optionQueries.forEach((sql) => {
+      expect(sql).toMatch(/status = 'Closed'/i);
+      expect(sql).toMatch(/actual_cost IS NOT NULL/i);
+    });
+  });
+
+  test('takes no parameters and binds none', async () => {
+    await get();
+    const optionQueries = mockQuery.mock.calls.filter(([sql]) => /DISTINCT/i.test(sql));
+
+    optionQueries.forEach(([, params]) => expect(params ?? []).toEqual([]));
+  });
+
+  test('empty tables yield empty arrays', async () => {
+    dbRows.optionBlocks = [];
+    dbRows.optionCategories = [];
+    dbRows.optionContractors = [];
+
+    const res = await get();
+    expect(res.body).toEqual({ blocks: [], categories: [], contractors: [] });
   });
 });
 

@@ -48,7 +48,7 @@ Every sentence of the client brief mapped to a use case, an owner, and its curre
 | R14 | "Option to attach photo (limit to 100k per photo)" + "No photos on minor issue" | UC-001 | Philena | **Built** — 100 KB enforced client- and server-side; Minor defects reject a photo (`PHOTO_NOT_ALLOWED_FOR_MINOR`), Major/Critical require one |
 | R15 | "Lesser travelling time · save time on paperwork · use less paper" | outcome | — | Emergent from R1–R10 |
 | R16 | "Proper record, audit" · "Download as file every year" | UC-009 | Davian | **Partial** — monthly PDF built; annual export is new |
-| R17 | "Statistic / report" | UC-005 / UC-011 | Hasini / Davian | **UC-005 built** · **UC-011 frontend only — no `/api/admin/costs/*` backend exists; the page runs on `mocks/costMocks.js`** |
+| R17 | "Statistic / report" | UC-005 / UC-011 | Hasini / Davian | **Built** — both dashboards read live endpoints (`/api/analytics/*`, `/api/admin/costs/*`) |
 | R18 | "Admin / user control · add new equipment and users with rights" | UC-012 | Davian (BE) / Hasini (FE) | **Built** |
 | R19 | "Mimic data and stress test are required" | UC-016 | All | **Partial** — seed migrations `018`–`024` exist; stress test is new |
 | R20 | Paper-preferring inspectors can photograph a completed form instead of tapping | UC-013 | Mahdiya | **New** — not requested by the client; a deliberate adoption aid (§14) |
@@ -590,30 +590,49 @@ Re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift
 { "code": "EXPORT_FAILED", "message": "Export failed — please try again or use CSV." }
 ```
 
-### 9.4 Admin cost API reference (UC-011) — **specified, not yet built**
+### 9.4 Admin cost API reference (UC-011) — **built**
 
-> `requireRole('admin')` — a manager receives `403 FORBIDDEN` (COST-T02).
-> Query: `?from&to&block&category&contractor`.
-> **No route is mounted yet**; `AdminCostPage.jsx` currently reads
-> `mocks/costMocks.js`. Response shapes below are the contract the frontend
-> already consumes, so wiring is a swap of the async wrappers in `costService.js`.
+> Mounted at `/api/admin`, `requireRole('admin')` applied with `router.use` so
+> every route in the file is admin-only — a manager receives `403 FORBIDDEN`
+> (COST-T02). Shared optional query parameters, validated before any SQL runs:
+> `?startDate&endDate&block&category&liftId&contractorId` (dates are inclusive
+> `YYYY-MM-DD`; ids are UUIDs). `liftId` and `contractorId` zero the projected
+> series — `ai_predictions` carries neither column, and attributing estate-wide
+> exposure to one lift would invite the wrong conclusion.
 
 ```jsonc
 // GET /api/admin/costs/summary
-{ "total_actual": 18240.50, "total_projected": 7600.00,
-  "variance_pct": -12.3, "jobs": 37, "prior_actual": 20800.00 }
+{ "total_actual": 23920.00, "total_projected": 7968.71,
+  "variance_pct": -66.7, "jobs": 56 }
 
-// GET /api/admin/costs/by-category
-{ "data": [ { "category": "Doors", "actual_cost": 6200.00, "jobs": 12 } ] }
+// GET /api/admin/costs/breakdown
+{ "byCategory":   [ { "category": "Doors", "actual": 4453.00, "projected": 1200.00 } ],
+  "byBlock":      [ { "block": "44A", "actual": 6418.00, "projected": 1765.37 } ],
+  "byContractor": [ { "name": "Otis Elevator Co.", "total": 7815.00, "count": 18 } ] }
 
-// GET /api/admin/costs/by-contractor
-{ "data": [ { "contractor": "Otis Service SG", "actual_cost": 9800.00, "jobs": 14 } ] }
+// GET /api/admin/costs/trends?months=12
+{ "data": [ { "month": "2026-05", "actual": 6100.00, "projected": 0 } ] }
 
-// GET /api/admin/costs/trend
-{ "data": [ { "month": "2026-05", "actual_cost": 6100.00, "jobs": 9 } ] }
+// GET /api/admin/costs/jobs
+{ "data": [ { "id": "660789e7-…", "closed_at": "2026-07-28", "block": "88B",
+              "category": "Electrical", "lift": null,
+              "contractor": "Test Lift Co.", "actual_cost": 90.00 } ] }
+
+// GET /api/admin/costs/filter-options
+{ "blocks": ["44A","44B"], "categories": ["Doors","Electrical"],
+  "contractors": [ { "id": "c0000000-…", "name": "Otis Elevator Co." } ] }
 ```
 
-`variance_pct` is `null` when there is no prior window to compare against.
+`summary.variance_pct` is how far projected exposure sits above (+) or below (−)
+actual spend, `null` when there is no actual spend to divide by. The dashboard's
+"spend movement vs prior period" tile is a separate figure: the page asks
+`/costs/summary` for the preceding window of equal length and compares the two,
+showing "—" when the prior window had no spend.
+
+`/costs/jobs` returns `closed_at` pre-formatted as `YYYY-MM-DD` because the
+client groups and compares those values as strings; `lift` is `null` for a
+record not tied to a lift, and `contractor` reads `"Unassigned"` for a record
+closed without one, so no row is silently dropped from a total.
 
 ---
 

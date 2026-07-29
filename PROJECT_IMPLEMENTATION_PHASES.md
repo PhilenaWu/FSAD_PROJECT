@@ -139,17 +139,22 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | H.1 | Overdue + re-open columns on the scorecard | `ContractorScorecard.jsx`, `analyticsController.js` | **Done.** Overdue was already live. `avg_reopens` added — `hasReopenCount()` probes `information_schema` once and emits `NULL::float` until migration `026` exists, so the query is valid before and after it and begins averaging by itself |
 | H.2 | Section filter in analytics | `DashboardPage.jsx`, `analyticsController.js` | **Done.** `?section` adds an `EXISTS` over `checklist_results → checklist_items` scoped to `result = 'Defect'`. Correlates on `i.id` for prefixed callers, `inspections.id` otherwise. The dropdown hides itself when no sections are seeded |
 | H.3 | Annual export entry point | `ReportsArchivePage.jsx`, `reportService.js` | **Done.** Year picker derived from the listed reports (no extra endpoint), download button → `GET /api/reports/annual`. 404 surfaces as "not available yet"; the page never generates or emails anything |
-| H.4 | Tests | `tests/unit/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 210 backend, 45 frontend |
+| H.4 | Tests | `tests/unit/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 507 backend, 43 frontend |
 
-> **UC-011 is the one thing left in Hasini's area, and it is not hers to finish.**
-> `AdminCostPage.jsx` is complete but runs entirely on `mocks/costMocks.js` —
-> the `/api/admin/costs/*` endpoints in HLD §6.10 were never built, and there is
-> no `routes/admin.js` or `adminController.js` in the repo. `costService.js` is
-> already shaped for the swap: the pure aggregation functions stay, and only the
-> async wrappers at the bottom change to `api.get` calls. **This is Davian's
-> `5.19a`/`5.19b`.** Until it lands, UC-011 must not be presented as built —
-> demoing a cost dashboard on hardcoded rows is the single biggest credibility
-> risk in the Phase 5 scope.
+> **UC-011 is closed.** Davian's `5.19a`/`5.19b` landed `adminController.js` and
+> `routes/admin.js`; `costService.js` now calls `/api/admin/costs/*` through
+> `api` and `mocks/costMocks.js` has been deleted, along with the unused
+> `mocks/analyticsMocks.js` behind UC-005. Two endpoints were added for the
+> panels the original three did not cover — `/costs/jobs` (row-level: drill-down
+> table, CSV, trend, watchlist, benchmarks) and `/costs/filter-options` — plus a
+> `category` filter and a job count on `/costs/summary`. No screen in Hasini's
+> area reads a hardcoded dataset any more.
+>
+> Migration `034_seed_lift_cost_history.sql` supplies the cost history the
+> panels need — 199 closed lift rectifications over the trailing 13 months,
+> dated relative to `CURRENT_DATE`. This is a slice of the UC-016 mimic-data
+> brief (task 6.2) scoped to UC-011; the wider spot-check volume seed is still
+> Davian's.
 
 ### 5.5 Mahdiya — UC-013 OCR prefill
 
@@ -185,7 +190,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 
 ## 6. Test Matrix
 
-### 6.0 UC-005 / UC-011 coverage (Hasini) — 68 tests, all passing
+### 6.0 UC-005 / UC-011 coverage (Hasini) — all passing
 
 | ID | Test | Verifies |
 |---|---|---|
@@ -207,15 +212,18 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | PPT-T01/02 | `export/pptx` | Cloudinary URL returned; `EXPORT_FAILED` surfaces with CSV fallback |
 | PLG-T01…06 | `parseInspectionsCsv` | Valid rows, minimal header, wrong header, header-only, missing field named by row, non-numeric hours named by row |
 | PLG-T07…12 | Merge helpers | Heatmap increments without mutating the base; trends sort and skip dateless rows; SLA recomputes only on resolved rows |
-| COST-T01…04 | `summarize` | Totals, prior-window comparison, boundary date not double-counted, `null` variance with no prior spend |
+| COST-T01…04 | `comparisonWindows` | Prior window is the same length, ends the day before the current one (no double count), trailing 90 days when undated, open-ended `from` |
 | COST-T05…11 | `forecastNext` | Flat→flat with zero band, rising→damped, partial month excluded, clamps at zero, band widens with horizon, needs ≥3 months |
 | COST-T12…15 | `backtestForecast` | Zero error on flat history, **never peeks at future data**, skips zero-spend months, `null` when untestable |
 | COST-T16…18 | `topMover` | Largest month-on-month rise, ignores partial month, `null` when nothing rose |
 | COST-T19…21 | `contractorBenchmarks` | Flags above-peer pricing **within category only**, requires ≥2 own + ≥2 peer jobs and ≥15% deviation |
 | COST-T22…26 | `buildInsights` | Headline, ≥40% concentration rule, mover folding, watchlist urgency, silent with no jobs |
 | COST-T27…29 | `buildLiftWatchlist` | Lifetime spend per lift, `months_to_review` semantics, block filter applies but date filters deliberately do not |
+| COST-T30…36 | API wiring | Endpoint called, page filter keys → API parameter names, blanks dropped, one fetch feeds every panel, summary combines current + prior window, `null` movement with no prior spend, watchlist asks for lifetime rows |
+| ADM-T01…05 | `/costs/jobs` | Contract keys per row, `YYYY-MM-DD` close date and numeric cost, `null` lift kept, closed + costed only newest first, LEFT joins, every filter bound as a parameter |
+| ADM-T06…09 | `/costs/filter-options` | Blocks, categories, contractors **with ids**; options come from costed rows only; binds no parameters; empty tables yield empty arrays |
 
-Run: `npx jest tests/unit/analytics.test.js tests/unit/export.test.js` (23) and `npx vitest run` (45).
+Run: `npx jest` (507) and `npx vitest run` (50).
 
 
 

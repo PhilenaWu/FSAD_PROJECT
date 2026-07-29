@@ -39,7 +39,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const p = profiles[params[0]];
     return { rows: p ? [p] : [] };
   }
-  if (/AS total_actual/i.test(sql)) return { rows: [{ total_actual: 3000 }] };
+  if (/AS total_actual/i.test(sql)) return { rows: [{ total_actual: 3000, jobs: 4 }] };
   if (/AS total_projected/i.test(sql)) return { rows: [{ total_projected: 3600 }] };
   if (/JOIN contractors c/i.test(sql)) {
     return { rows: [{ name: 'Otis Service SG', total: 2000, count: 3 }] };
@@ -412,6 +412,7 @@ describe(`POST ${PATH} — behaviour`, () => {
       total_actual: 3000,
       total_projected: 3600,
       variance_pct: 20,
+      jobs: 4,
     });
     expect(costData.byCategory).toEqual([{ category: 'Doors', actual: 2000, projected: 2400 }]);
     expect(costData.byBlock).toEqual([{ block: '44A', actual: 2000, projected: 2400 }]);

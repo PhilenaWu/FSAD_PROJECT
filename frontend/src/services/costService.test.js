@@ -1,12 +1,12 @@
-// Tests for the UC-011 cost aggregation — filtering, summary/variance windows,
-// grouping, trend gap-fill, forecast, top mover, and the lift watchlist.
-// Run with `npm test` (vitest). Uses small fixed fixtures, not the demo mocks,
-// so expected values are hand-checkable.
-import { describe, expect, test } from 'vitest';
+// Tests for the UC-011 cost aggregation — comparison windows, grouping, trend
+// gap-fill, forecast, top mover, and the lift watchlist. These are the pure
+// functions the dashboard runs over the rows /api/admin/costs/jobs returns.
+// Run with `npm test` (vitest). Uses small fixed fixtures so expected values
+// are hand-checkable.
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   addMonth,
-  filterRows,
-  summarize,
+  comparisonWindows,
   groupTotals,
   buildTrend,
   forecastNext,
@@ -15,8 +15,18 @@ import {
   contractorBenchmarks,
   buildInsights,
   buildLiftWatchlist,
+  getCostSummary,
+  getCostAnalytics,
+  getLiftWatchlist,
+  getCostFilterOptions,
   LIFT_REPLACEMENT_REVIEW_COST,
 } from './costService';
+import api from './api';
+
+// The data layer is mocked at the axios instance, so these tests assert the
+// wiring — which endpoint is called, with which parameters, and that the
+// server's field names reach the page's field names.
+vi.mock('./api', () => ({ default: { get: vi.fn() } }));
 
 const JOBS = [
   { id: 1, closed_at: '2026-03-10', block: '44A', category: 'Doors',      lift: 'L1', contractor: 'Otis',      actual_cost: 100 },
@@ -25,49 +35,33 @@ const JOBS = [
   { id: 4, closed_at: '2026-06-01', block: '44B', category: 'Doors',      lift: null, contractor: 'Otis',      actual_cost: 400 },
 ];
 
-describe('filterRows', () => {
-  test('date range is inclusive on both ends', () => {
-    const rows = filterRows(JOBS, { from: '2026-04-05', to: '2026-04-20' });
-    expect(rows.map((r) => r.id)).toEqual([2, 3]);
+describe('comparisonWindows', () => {
+  test('the prior window is the same length, ending the day before the current one', () => {
+    const { current, prior } = comparisonWindows({ from: '2026-04-01', to: '2026-04-30' });
+    expect(current).toEqual({ from: '2026-04-01', to: '2026-04-30' });
+    // 29 days wide, so the prior window spans Mar 3 – Mar 31.
+    expect(prior).toEqual({ from: '2026-03-03', to: '2026-03-31' });
   });
 
-  test('block / category / contractor are exact matches; empty filters ignored', () => {
-    expect(filterRows(JOBS, { block: '44A' })).toHaveLength(2);
-    expect(filterRows(JOBS, { category: 'Doors', contractor: 'Otis' })).toHaveLength(3);
-    expect(filterRows(JOBS, {})).toHaveLength(4);
-  });
-});
-
-describe('summarize', () => {
-  const PREDICTIONS = [
-    { block: '44A', category: 'Doors', estimated_cost: 500 },
-    { block: '44B', category: 'Electrical', estimated_cost: 700 },
-  ];
-
-  test('totals actual over the filtered rows and projected over matching predictions', () => {
-    const s = summarize(JOBS, PREDICTIONS, { block: '44A' });
-    expect(s.total_actual).toBe(300); // jobs 1 + 2
-    expect(s.total_projected).toBe(500); // only the 44A prediction
-    expect(s.jobs).toBe(2);
+  test('a job closed on the window start date can never land in both windows', () => {
+    const { current, prior } = comparisonWindows({ from: '2026-04-05', to: '2026-05-04' });
+    expect(current.from).toBe('2026-04-05');
+    expect(prior.to).toBe('2026-04-04'); // strictly before the current window
   });
 
-  test('variance compares the window against the equally long prior window', () => {
-    // Window Apr 1–30 → jobs 2+3 = 500. Prior window Mar 1(ish)–Mar 31 → job 1 = 100.
-    const s = summarize(JOBS, [], { from: '2026-04-01', to: '2026-04-30' });
-    expect(s.prior_actual).toBe(100);
-    expect(s.variance_pct).toBe(400); // (500 - 100) / 100
+  test('with no date filter the window is the trailing 90 days', () => {
+    const { current, prior } = comparisonWindows({});
+    const days = (a, b) =>
+      (new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86_400_000;
+    expect(days(current.from, current.to)).toBe(90);
+    expect(days(prior.from, prior.to)).toBe(89); // 90 days, minus the shared boundary
+    expect(days(prior.to, current.from)).toBe(1);
   });
 
-  test('a job on the window start date is not double-counted into the prior window', () => {
-    // Window starts exactly on job 2's close date; prior window must end Apr 4.
-    const s = summarize(JOBS, [], { from: '2026-04-05', to: '2026-05-04' });
-    expect(s.total_actual).toBe(500); // jobs 2 + 3
-    expect(s.prior_actual).toBe(100); // job 1 only — job 2 excluded from prior
-  });
-
-  test('variance is null when the prior window had no spend', () => {
-    const s = summarize(JOBS, [], { from: '2026-03-01', to: '2026-03-31' });
-    expect(s.variance_pct).toBeNull();
+  test('an open-ended "from" still yields a comparable prior window', () => {
+    const { current, prior } = comparisonWindows({ from: '2026-04-01' });
+    expect(current.from).toBe('2026-04-01');
+    expect(prior.to).toBe('2026-03-31');
   });
 });
 
@@ -332,17 +326,19 @@ describe('buildInsights', () => {
 describe('buildLiftWatchlist', () => {
   test('sums lifetime spend per lift, skipping non-lift jobs', () => {
     const pct = Math.round((300 / LIFT_REPLACEMENT_REVIEW_COST) * 100);
+    // $300 lifetime, all of it in the last 6 complete months → $50/mo rate,
+    // so the months to the threshold follow from the threshold itself.
+    const months = Math.ceil((LIFT_REPLACEMENT_REVIEW_COST - 300) / 50);
     const lifts = buildLiftWatchlist(JOBS, { currentMonth: '2026-07' });
-    // L1: $300 lifetime, $300 in the last 6 complete months → $50/mo rate →
-    // (8000 − 300) / 50 = 154 months to the review threshold.
     expect(lifts).toEqual([
-      { lift: 'L1', block: '44A', actual_cost: 300, jobs: 2, pct_of_threshold: pct, months_to_review: 154 },
-      { lift: 'L2', block: '44B', actual_cost: 300, jobs: 1, pct_of_threshold: pct, months_to_review: 154 },
+      { lift: 'L1', block: '44A', actual_cost: 300, jobs: 2, pct_of_threshold: pct, months_to_review: months },
+      { lift: 'L2', block: '44B', actual_cost: 300, jobs: 1, pct_of_threshold: pct, months_to_review: months },
     ]);
   });
 
   test('months_to_review: 0 past the threshold, null with no recent spend', () => {
-    const past = [{ closed_at: '2026-01-05', block: '44A', category: 'Doors', lift: 'LX', contractor: 'Otis', actual_cost: 9000 }];
+    const over = LIFT_REPLACEMENT_REVIEW_COST + 1000;
+    const past = [{ closed_at: '2026-01-05', block: '44A', category: 'Doors', lift: 'LX', contractor: 'Otis', actual_cost: over }];
     expect(buildLiftWatchlist(past, { currentMonth: '2026-07' })[0].months_to_review).toBe(0);
     // Spend exists but none inside the 6-month rate window → no rate → null.
     const stale = [{ closed_at: '2025-06-05', block: '44A', category: 'Doors', lift: 'LY', contractor: 'Otis', actual_cost: 4000 }];
@@ -351,5 +347,151 @@ describe('buildLiftWatchlist', () => {
 
   test('applies the block filter but no date filters (lifetime by design)', () => {
     expect(buildLiftWatchlist(JOBS, { block: '44B', currentMonth: '2026-07' })).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// API wiring. Payloads below are the shapes the live endpoints actually
+// returned when run against the database, so a field rename on either side
+// breaks a test rather than a panel.
+// ---------------------------------------------------------------------------
+
+describe('API wiring', () => {
+  const SERVER_JOBS = [
+    {
+      id: '660789e7-66b9-46b2-a6de-a9dc4a93c027',
+      closed_at: '2026-07-28',
+      block: '88B',
+      category: 'Electrical',
+      lift: null,
+      contractor: 'Test Lift Co.',
+      actual_cost: 90,
+    },
+    {
+      id: '867b4d65-fc67-4832-a650-d7ee1d4d03cb',
+      closed_at: '2026-06-27',
+      block: '88B',
+      category: 'Lift',
+      lift: '44A-L1',
+      contractor: 'Otis Elevator Co.',
+      actual_cost: 660,
+    },
+  ];
+
+  beforeEach(() => {
+    api.get.mockReset();
+  });
+
+  test('filter options come from the endpoint, not from the rows', async () => {
+    api.get.mockResolvedValue({
+      data: { blocks: ['44A'], categories: ['Doors'], contractors: [{ id: 'c-1', name: 'Otis' }] },
+    });
+
+    const options = await getCostFilterOptions();
+    expect(api.get).toHaveBeenCalledWith('/api/admin/costs/filter-options');
+    expect(options.contractors[0]).toEqual({ id: 'c-1', name: 'Otis' });
+  });
+
+  test('page filter keys are translated to the API parameter names', async () => {
+    api.get.mockResolvedValue({ data: { data: [] } });
+
+    await getCostAnalytics({
+      from: '2026-01-01',
+      to: '2026-06-30',
+      block: '44A',
+      category: 'Doors',
+      contractorId: 'c-1',
+    });
+
+    expect(api.get).toHaveBeenCalledWith('/api/admin/costs/jobs', {
+      params: {
+        startDate: '2026-01-01',
+        endDate: '2026-06-30',
+        block: '44A',
+        category: 'Doors',
+        contractorId: 'c-1',
+      },
+    });
+  });
+
+  test('empty filters are dropped rather than sent as blanks', async () => {
+    api.get.mockResolvedValue({ data: { data: [] } });
+
+    await getCostAnalytics({ from: '', to: '', block: '44A', category: '', contractorId: '' });
+    expect(api.get).toHaveBeenCalledWith('/api/admin/costs/jobs', { params: { block: '44A' } });
+  });
+
+  test('every panel is derived from one fetch of the job rows', async () => {
+    api.get.mockResolvedValue({ data: { data: SERVER_JOBS } });
+
+    const a = await getCostAnalytics({});
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(a.jobs).toEqual(SERVER_JOBS);
+    // server `actual_cost` → the page's `actual_cost`, with a job count per group
+    expect(a.byCategory).toEqual([
+      { category: 'Lift', actual_cost: 660, jobs: 1 },
+      { category: 'Electrical', actual_cost: 90, jobs: 1 },
+    ]);
+    expect(a.byContractor).toEqual([
+      { contractor: 'Otis Elevator Co.', actual_cost: 660, jobs: 1 },
+      { contractor: 'Test Lift Co.', actual_cost: 90, jobs: 1 },
+    ]);
+    expect(a.trend.data).toEqual([
+      { month: '2026-06', actual_cost: 660, jobs: 1 },
+      { month: '2026-07', actual_cost: 90, jobs: 1 },
+    ]);
+    // two months of history is below the forecast's three-month floor
+    expect(a.trend.forecast).toBeNull();
+    expect(a.benchmarks).toEqual({});
+  });
+
+  test('the summary tile combines the filtered total with the prior window', async () => {
+    api.get.mockImplementation((_url, config) => {
+      // The prior window is the only call whose startDate is before 2026.
+      const prior = config.params.startDate < '2026-01-01';
+      return Promise.resolve({
+        data: prior
+          ? { total_actual: 1000, total_projected: 0, variance_pct: null, jobs: 2 }
+          : { total_actual: 1500, total_projected: 400, variance_pct: -73.3, jobs: 3 },
+      });
+    });
+
+    const s = await getCostSummary({ from: '2026-01-01', to: '2026-06-30' });
+
+    expect(s.total_actual).toBe(1500);
+    expect(s.total_projected).toBe(400);
+    expect(s.jobs).toBe(3);
+    expect(s.prior_actual).toBe(1000);
+    // (1500 - 1000) / 1000 = +50%, movement vs the prior period — NOT the
+    // endpoint's own variance_pct, which compares projected against actual.
+    expect(s.variance_pct).toBe(50);
+  });
+
+  test('spend movement is null when the prior window had no spend', async () => {
+    api.get.mockImplementation((_url, config) =>
+      Promise.resolve({
+        data: {
+          total_actual: config.params.startDate < '2026-01-01' ? 0 : 1500,
+          total_projected: 0,
+          variance_pct: null,
+          jobs: 3,
+        },
+      })
+    );
+
+    const s = await getCostSummary({ from: '2026-01-01', to: '2026-06-30' });
+    expect(s.variance_pct).toBeNull();
+  });
+
+  test('the watchlist asks for lifetime rows — block only, no dates', async () => {
+    api.get.mockResolvedValue({ data: { data: SERVER_JOBS } });
+
+    const { data } = await getLiftWatchlist({ from: '2026-06-01', to: '2026-06-30', block: '88B' });
+
+    expect(api.get).toHaveBeenCalledWith('/api/admin/costs/jobs', { params: { block: '88B' } });
+    // the lift-less row is skipped; the lift-linked one is ranked
+    expect(data).toHaveLength(1);
+    expect(data[0].lift).toBe('44A-L1');
   });
 });
