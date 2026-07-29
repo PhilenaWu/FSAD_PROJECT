@@ -271,6 +271,33 @@ GET   /api/admin/vendors/expiry-check       daily job (CRON_SECRET bearer, not J
   inspectors (alternating), so the close panel pre-selects an endorser instead
   of asking for one on every demo record. Scoped to `Demo:%` rows with a NULL
   `inspector_id`, so real spot-checks are untouched.
+- Migration `032` adds presentation-ready manager and resident logins (same
+  password). **Additive only** — the pre-existing developer accounts are left
+  active and untouched, so teammates keep working; deleting them would be
+  destructive anyway, since `inspections.resident_id` is `ON DELETE CASCADE`.
+
+### Demo logins
+
+All seeded accounts use the password `TempPass123!`.
+
+Staff addresses carry the role so the account is self-describing on screen;
+residents use personal-looking addresses, as they would in reality.
+
+| Role | Email | Name |
+|---|---|---|
+| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim |
+| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan |
+| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah |
+| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) |
+| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) |
+| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) |
+| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) |
+
+Admin is created manually — see `backend/SEED_ADMIN.md`.
+
+> Two vendor logins seeded by `022` (`marcus.tan@konemaint.com.sg`,
+> `priya.nair@kone-sg.com`) have no `auth.identities` row and **cannot sign in**;
+> use the two contractors listed above instead. Tracked against UC-012.
 - The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
   repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
   backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.

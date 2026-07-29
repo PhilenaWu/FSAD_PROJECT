@@ -15,6 +15,11 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   // True when /api/users/me actually failed (as opposed to not fetched yet).
   const [profileError, setProfileError] = useState(false);
+  // Distinguished from a generic failure: a suspended account authenticates
+  // with Supabase fine but is refused by /api/users/me (403 ACCOUNT_SUSPENDED).
+  // Without this the app fell through to resident chrome, so a suspended user
+  // saw a silently wrong workspace instead of being told why.
+  const [suspended, setSuspended] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Derived, not state: true from the instant a user exists until the profile
@@ -43,18 +48,22 @@ export function AuthProvider({ children }) {
     if (!user) {
       setProfile(null);
       setProfileError(false);
+      setSuspended(false);
       return;
     }
     let active = true;
     setProfile(null);
     setProfileError(false);
+    setSuspended(false);
     api
       .get('/api/users/me')
       .then((res) => {
         if (active) setProfile(res.data);
       })
-      .catch(() => {
-        if (active) setProfileError(true);
+      .catch((err) => {
+        if (!active) return;
+        setProfileError(true);
+        setSuspended(err.response?.data?.code === 'ACCOUNT_SUSPENDED');
       });
     return () => {
       active = false;
@@ -65,7 +74,7 @@ export function AuthProvider({ children }) {
   const login = (email, password) => signIn(email, password);
   const logout = () => signOut();
 
-  const value = { user, profile, profileLoading, loading, login, logout };
+  const value = { user, profile, profileLoading, suspended, loading, login, logout };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
