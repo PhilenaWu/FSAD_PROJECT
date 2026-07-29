@@ -1,7 +1,9 @@
 -- Migration: UC-012 demo data — realistic contracts and named account holders
 -- with working logins for the seeded contractors (016/018). Idempotent: auth
--- users are only created when the email doesn't exist yet, profile inserts are
--- ON CONFLICT DO NOTHING, so re-runs are safe.
+-- users are only created when the email doesn't exist yet, identity rows are
+-- backfilled for accounts that are missing one, and profile inserts are
+-- ON CONFLICT DO NOTHING, so re-runs are safe. Re-running this file repairs any
+-- seeded vendor login left without an auth.identities row.
 -- Demo password for every vendor login: TempPass123!
 DO $$
 DECLARE
@@ -56,15 +58,23 @@ BEGIN
          NOW(), '{"provider":"email","providers":["email"]}', '{}',
          NOW(), NOW(), '', '', '', '', '')
       RETURNING id INTO uid;
-
-      INSERT INTO auth.identities
-        (id, user_id, provider_id, provider, identity_data,
-         last_sign_in_at, created_at, updated_at)
-      VALUES
-        (gen_random_uuid(), uid, uid::text, 'email',
-         jsonb_build_object('sub', uid::text, 'email', rec.login, 'email_verified', true),
-         NOW(), NOW(), NOW());
     END IF;
+
+    -- Identity row, outside the branch above. GoTrue needs BOTH an auth.users
+    -- row and a matching auth.identities row to authenticate an email login;
+    -- creating it only alongside a fresh auth.users row meant that any account
+    -- surviving from a partial earlier run (auth.users present, identity never
+    -- written) could never sign in. Guarded so re-runs stay idempotent.
+    INSERT INTO auth.identities
+      (id, user_id, provider_id, provider, identity_data,
+       last_sign_in_at, created_at, updated_at)
+    SELECT gen_random_uuid(), uid, uid::text, 'email',
+           jsonb_build_object('sub', uid::text, 'email', rec.login, 'email_verified', true),
+           NOW(), NOW(), NOW()
+     WHERE NOT EXISTS (
+       SELECT 1 FROM auth.identities
+        WHERE user_id = uid AND provider = 'email'
+     );
 
     INSERT INTO users (id, email, full_name, role, job_title, status)
     VALUES (uid, rec.login, rec.holder, 'contractor', rec.title, rec.ustatus)

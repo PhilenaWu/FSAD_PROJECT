@@ -165,12 +165,15 @@ describe('calculateVelocity — SQL safety and correctness', () => {
     expect(sql).toMatch(/category = \$2/);
   });
 
-  test('deleted rows are excluded', async () => {
+  // Closed records must stay in both windows. is_deleted is TRUE on every Closed
+  // record (the two close paths are its only writers), so filtering it here hid
+  // all rectified history — the very thing velocity measures.
+  test('closed records are counted, not filtered out', async () => {
     const db = mockDb(5, 2);
     await calculateVelocity('44A', 'Lift', db, OPTS);
 
     const [sql] = db.query.mock.calls[0];
-    expect(sql).toMatch(/is_deleted = FALSE/);
+    expect(sql).not.toMatch(/is_deleted/);
   });
 
   test('the two 30-day windows are non-overlapping and half-open', async () => {
