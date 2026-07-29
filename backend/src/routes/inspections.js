@@ -63,6 +63,20 @@ router.post(
   inspectionController.create
 );
 
+// POST /api/inspections/ocr-prefill — UC-013: inspector scans a completed
+// paper form; returns a draft only (G18), never written to the DB. Uses the
+// 5 MB `upload` instance, not `uploadPhoto`'s 100 KB cap — a full-page form
+// scan needs far more resolution than a defect thumbnail to stay legible for
+// OCR. Keep above '/lift' — no route param clash, but grouped with the other
+// inspector-only lift-form endpoints.
+router.post(
+  '/ocr-prefill',
+  requireAuth,
+  requireRole('inspector'),
+  upload.single('form_photo'),
+  inspectionController.ocrPrefill
+);
+
 // POST /api/inspections/lift — inspector submits a lift spot-check
 // (multipart: lift_id + checklist JSON fields, plus optional per-defect-item
 // photos as `photo_<checklist_item_id>` file parts).

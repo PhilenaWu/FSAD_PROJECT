@@ -32,6 +32,16 @@ jest.mock('../../src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(async () => 'https://cloudinary.test/defects/mock.png'),
 }));
 
+// --- Mock: OpenAI service, partially. categoriseIncident/etc. keep running
+// for real (their own deterministic fallback, no API key in test env) since
+// other suites here exercise POST /api/inspections through them. Only
+// extractSpotCheckForm (UC-013 OCR) is replaced, so ocr-prefill tests don't
+// depend on a live OpenAI call.
+jest.mock('../../src/services/openaiService', () => ({
+  ...jest.requireActual('../../src/services/openaiService'),
+  extractSpotCheckForm: jest.fn(),
+}));
+
 // --- Mock: CV detection. detect() is fired fire-and-forget by the controller
 // (its resolved value isn't used), so a resolved no-op is enough. batchScan/
 // listDetections aren't exercised here but must exist as functions — app.js
@@ -724,6 +734,129 @@ describe('POST /api/inspections/lift', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+});
+
+// UC-013 M.2/M.3: paper-form OCR prefill. G18 — never touches
+// inspections/checklist_results/signatures; the response is a draft only.
+describe('POST /api/inspections/ocr-prefill', () => {
+  const openaiService = require('../../src/services/openaiService');
+
+  test('OCR-T01: 200 maps a clean scan onto the active template, in display_order', async () => {
+    openaiService.extractSpotCheckForm.mockResolvedValueOnce({
+      serviced_at: '2026-03-22',
+      serviced_at_confidence: 0.92,
+      form_lift_code: '44A-L1',
+      items: [
+        { result: 'Pass', remark: null, field_confidence: 0.95 },
+        { result: 'Defect', remark: 'Door sensor slow', field_confidence: 0.81 },
+      ],
+    });
+
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer inspector-token')
+      .attach('form_photo', PNG, 'form.png');
+
+    expect(res.status).toBe(200);
+    expect(res.body.serviced_at).toBe('2026-03-22');
+    expect(res.body.form_lift_code).toBe('44A-L1');
+    expect(res.body.items).toHaveLength(2); // item-3 is inactive, excluded
+    expect(res.body.items[0]).toMatchObject({
+      checklist_item_id: 'item-1',
+      display_order: 1,
+      result: 'Pass',
+    });
+    expect(res.body.items[1]).toMatchObject({
+      checklist_item_id: 'item-2',
+      display_order: 2,
+      result: 'Defect',
+      remark: 'Door sensor slow',
+    });
+    expect(res.body.unreadable_items).toEqual([]);
+    expect(res.body.disclaimer).toMatch(/must be confirmed/i);
+
+    // G18: nothing written to the DB — no inspection, checklist result, or signature.
+    expect(store.inspections).toHaveLength(0);
+    expect(store.checklist_results).toHaveLength(0);
+    expect(store.signatures).toHaveLength(0);
+
+    expect(openaiService.extractSpotCheckForm).toHaveBeenCalledWith(
+      'https://cloudinary.test/defects/mock.png',
+      ['Shaft walls free of cracks', 'Door sensor reopens']
+    );
+  });
+
+  test('OCR-T02: 200 flags unreadable items by their display_order', async () => {
+    openaiService.extractSpotCheckForm.mockResolvedValueOnce({
+      serviced_at: null,
+      serviced_at_confidence: 0,
+      items: [
+        { result: 'Pass', remark: null, field_confidence: 0.9 },
+        { result: 'unreadable', remark: null, field_confidence: 0.1 },
+      ],
+    });
+
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer inspector-token')
+      .attach('form_photo', PNG, 'form.png');
+
+    expect(res.status).toBe(200);
+    expect(res.body.serviced_at).toBeNull();
+    expect(res.body.unreadable_items).toEqual([2]); // item-2's display_order
+  });
+
+  test('422 OCR_UNREADABLE when the photo can\'t be parsed (no silent fallback)', async () => {
+    openaiService.extractSpotCheckForm.mockRejectedValueOnce(
+      new Error('OpenAI response was not valid JSON.')
+    );
+
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer inspector-token')
+      .attach('form_photo', PNG, 'form.png');
+
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('OCR_UNREADABLE');
+    expect(store.inspections).toHaveLength(0);
+  });
+
+  // A4: OpenAI down/misconfigured/over quota — distinct code so the client
+  // can disable the scan button rather than inviting a retry.
+  test('503 OCR_SERVICE_UNAVAILABLE when the service itself is down (A4)', async () => {
+    const err = new Error('OPENAI_API_KEY is not configured.');
+    err.serviceUnavailable = true;
+    openaiService.extractSpotCheckForm.mockRejectedValueOnce(err);
+
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer inspector-token')
+      .attach('form_photo', PNG, 'form.png');
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('OCR_SERVICE_UNAVAILABLE');
+    expect(store.inspections).toHaveLength(0);
+  });
+
+  test('400 VALIDATION_ERROR when form_photo is missing', async () => {
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(openaiService.extractSpotCheckForm).not.toHaveBeenCalled();
+  });
+
+  test('403 when the caller is not an inspector', async () => {
+    const res = await request(app)
+      .post('/api/inspections/ocr-prefill')
+      .set('Authorization', 'Bearer manager-token')
+      .attach('form_photo', PNG, 'form.png');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
   });
 });
 

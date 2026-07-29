@@ -304,6 +304,74 @@ async function createLiftInspection(req, res, next) {
   }
 }
 
+// POST /api/inspections/ocr-prefill — UC-013: inspector photographs a
+// completed paper form; OpenAI vision reads it into a draft the client can
+// prefill onto the same checklist form createLiftInspection expects. G18:
+// this never writes to inspections/checklist results/signatures — it only
+// returns a draft. The inspector still confirms every field and submits
+// through the normal POST /api/inspections/lift flow.
+async function ocrPrefill(req, res, next) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'form_photo is required.',
+      });
+    }
+
+    const activeItems = await checklistItemModel.findActive();
+    const image_url = await cloudinaryService.uploadImage(req.file.buffer, 'ocr-scans');
+
+    let draft;
+    try {
+      draft = await openaiService.extractSpotCheckForm(
+        image_url,
+        activeItems.map((tpl) => tpl.item_text)
+      );
+    } catch (err) {
+      // A4: OpenAI itself is down/misconfigured/over quota — distinct from a
+      // bad photo, so the client can disable the scan button instead of
+      // inviting a retry that will just fail again.
+      if (err.serviceUnavailable) {
+        return res.status(503).json({
+          code: 'OCR_SERVICE_UNAVAILABLE',
+          message: 'The form-scan service is temporarily unavailable.',
+        });
+      }
+      return res.status(422).json({
+        code: 'OCR_UNREADABLE',
+        message: `Could not read the form: ${err.message}`,
+      });
+    }
+
+    // Map the model's positional items back onto the real template ids —
+    // same order the prompt was built in, so index i is item i.
+    const items = draft.items.map((entry, i) => ({
+      checklist_item_id: activeItems[i].id,
+      section: activeItems[i].section,
+      item_text: activeItems[i].item_text,
+      display_order: activeItems[i].display_order,
+      result: entry.result,
+      remark: entry.remark,
+      field_confidence: entry.field_confidence,
+    }));
+    const unreadable_items = items
+      .filter((item) => item.result === 'unreadable')
+      .map((item) => item.display_order);
+
+    res.json({
+      serviced_at: draft.serviced_at,
+      serviced_at_confidence: draft.serviced_at_confidence,
+      form_lift_code: draft.form_lift_code,
+      items,
+      unreadable_items,
+      disclaimer: 'Draft only — every field must be confirmed before submitting.',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/inspections/my — the caller's own reports (resident complaints they
 // filed / lift inspections they performed). Wrapped as { data } per HLD §6.2.
 async function listMine(req, res, next) {
@@ -708,6 +776,7 @@ module.exports = {
   listForManager,
   listMine,
   listStatusBoard,
+  ocrPrefill,
   rejectRectification,
   updateInspection,
 };

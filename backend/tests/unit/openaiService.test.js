@@ -84,3 +84,164 @@ describe('generateRiskAlert', () => {
     expect(text).toMatch(/Block 44A/);
   });
 });
+
+describe('extractSpotCheckForm (UC-013)', () => {
+  const itemTexts = ['Motor room cleanliness - Any debris?', 'Bearings - Any abnormal noise?'];
+
+  test('OCR-T01: a clean mocked scan maps every item, in order', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: '2026-03-22',
+            serviced_at_confidence: 0.92,
+            form_lift_code: '44A-L1',
+            items: [
+              { result: 'Pass', remark: null, field_confidence: 0.95 },
+              { result: 'Defect', remark: 'Slight grinding noise', field_confidence: 0.81 },
+            ],
+          }),
+        },
+      }],
+    });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    expect(result.serviced_at).toBe('2026-03-22');
+    expect(result.form_lift_code).toBe('44A-L1');
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toEqual({ result: 'Pass', remark: null, field_confidence: 0.95 });
+    expect(result.items[1]).toEqual({
+      result: 'Defect', remark: 'Slight grinding noise', field_confidence: 0.81,
+    });
+    // M.6: never a severity or photo field, on any item.
+    expect(result.items[0]).not.toHaveProperty('severity');
+    expect(result.items[0]).not.toHaveProperty('photo_url');
+  });
+
+  test('OCR-T02: a partial scan keeps readable items and marks the rest unreadable', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: null,
+            serviced_at_confidence: 0,
+            items: [
+              { result: 'Pass', remark: null, field_confidence: 0.9 },
+              { result: 'unreadable', remark: null, field_confidence: 0.1 },
+            ],
+          }),
+        },
+      }],
+    });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    expect(result.serviced_at).toBeNull();
+    expect(result.items[0].result).toBe('Pass');
+    expect(result.items[1].result).toBe('unreadable');
+  });
+
+  test('sends the live item texts in the prompt and requests strict JSON', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: null, serviced_at_confidence: 0,
+            items: [
+              { result: 'Pass', remark: null, field_confidence: 0.9 },
+              { result: 'Pass', remark: null, field_confidence: 0.9 },
+            ],
+          }),
+        },
+      }],
+    });
+
+    await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    const call = mockCreate.mock.calls[0][0];
+    expect(call.response_format).toEqual({ type: 'json_object' });
+    const promptText = call.messages[0].content[0].text;
+    expect(promptText).toContain(itemTexts[0]);
+    expect(promptText).toContain(itemTexts[1]);
+    const imagePart = call.messages[0].content[1];
+    expect(imagePart).toEqual({ type: 'image_url', image_url: { url: 'https://example.com/form.jpg' } });
+  });
+
+  test('OCR-T03: throws when OPENAI_API_KEY is not configured (no silent fallback)', async () => {
+    mockConfig.OPENAI_API_KEY = undefined;
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toThrow(/OPENAI_API_KEY/);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // A4: no key configured is a service-unavailable condition, not a bad photo.
+  test('marks the no-key error as serviceUnavailable (A4)', async () => {
+    mockConfig.OPENAI_API_KEY = undefined;
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toMatchObject({ serviceUnavailable: true });
+  });
+
+  test('throws when the API call itself fails, marked serviceUnavailable (A4)', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockRejectedValueOnce(new Error('vision model overloaded'));
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toMatchObject({ message: 'vision model overloaded', serviceUnavailable: true });
+  });
+
+  test('throws when the model response is not valid JSON', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'not json at all' } }] });
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toThrow(/not valid JSON/);
+  });
+
+  test('throws when the items array length does not match the input', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: null, serviced_at_confidence: 0,
+            items: [{ result: 'Pass', remark: null, field_confidence: 0.9 }], // only 1, expected 2
+          }),
+        },
+      }],
+    });
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toThrow(/expected 2/);
+  });
+
+  test('an invalid per-item result falls back to "unreadable" rather than throwing', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: null, serviced_at_confidence: 0,
+            items: [
+              { result: 'Maybe', remark: null, field_confidence: 0.5 },
+              { result: 'Pass', remark: null, field_confidence: 0.9 },
+            ],
+          }),
+        },
+      }],
+    });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+    expect(result.items[0].result).toBe('unreadable');
+  });
+});

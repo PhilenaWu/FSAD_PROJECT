@@ -1,7 +1,9 @@
 // AI helpers for incidents. categoriseIncident is STUBBED so UC-001 works
 // without an API key. generateRiskAlert (UC-006) calls OpenAI to phrase a risk
 // alert and falls back to a deterministic, data-driven template when the key is
-// missing or the API errors (UC-006 E1: graceful degradation).
+// missing or the API errors (UC-006 E1: graceful degradation). extractSpotCheckForm
+// (UC-013) reads a photographed paper form via vision — unlike the others it has
+// no deterministic fallback, so it throws on any failure instead.
 'use strict';
 
 const config = require('../config/env');
@@ -236,9 +238,130 @@ async function generateExecutiveSummary(reportData) {
   }
 }
 
+/**
+ * Extract a completed spot-check form from a photographed image via OpenAI
+ * vision (UC-013). `itemTexts` is the live checklist template's item text, in
+ * `display_order` — the prompt is built from this, not a hardcoded copy of
+ * the 25 items, so a future checklist change needs no code change here. The
+ * response is positional: one result per input item, in the same order, so
+ * the caller (inspectionController, M.3) maps position -> real
+ * checklist_item_id itself rather than trusting the model to echo an id back.
+ *
+ * Severity and photos are never asked for or returned (M.6 — the client
+ * requires the inspector to deliberately tag those, not have them guessed).
+ *
+ * Unlike generateRiskAlert/generateExecutiveSummary, there is no sensible
+ * deterministic fallback for reading a photographed form — this throws on
+ * any failure (no key, API error, malformed response) so the caller can
+ * surface `422 OCR_UNREADABLE` (UC-013 Alt Flow A1) rather than silently
+ * fabricating form content.
+ *
+ * @param {string} imageUrl - Cloudinary URL of the photographed form.
+ * @param {string[]} itemTexts - checklist item text, in display_order.
+ * @returns {Promise<{
+ *   serviced_at: string|null,
+ *   serviced_at_confidence: number,
+ *   form_lift_code: string|null,
+ *   items: Array<{ result: 'Pass'|'Defect'|'unreadable', remark: string|null, field_confidence: number }>
+ * }>}
+ * @throws {Error} when OPENAI_API_KEY is unset, the API call fails, or the
+ *   response isn't valid, well-formed JSON matching the expected shape. Errors
+ *   from a down/misconfigured service (as opposed to a bad photo) carry
+ *   `err.serviceUnavailable = true` (UC-013 A4), so the controller can tell
+ *   them apart from A1's "unreadable image".
+ */
+async function extractSpotCheckForm(imageUrl, itemTexts) {
+  if (!config.OPENAI_API_KEY) {
+    const err = new Error('OCR prefill unavailable: OPENAI_API_KEY is not configured.');
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  // Lazy require so the no-key path (checked above) stays dependency-free,
+  // matching generateRiskAlert/generateExecutiveSummary.
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+
+  const numberedItems = itemTexts.map((text, i) => `${i + 1}. ${text}`).join('\n');
+  const prompt =
+    `This image is a completed, handwritten lift spot-check form. It has a ` +
+    `"Servicing Date" field, a lift/block identifier in the header, and a ` +
+    `checklist of ${itemTexts.length} numbered items, each ticked as Pass or ` +
+    `marked as a Defect with a handwritten remark.\n\n` +
+    `The checklist items, in order, are:\n${numberedItems}\n\n` +
+    `Read the form and return strict JSON, and nothing else, in exactly this shape:\n` +
+    `{\n` +
+    `  "serviced_at": "YYYY-MM-DD" or null if unreadable,\n` +
+    `  "serviced_at_confidence": a number from 0 to 1,\n` +
+    `  "form_lift_code": the lift or block code written in the header, or null if not visible,\n` +
+    `  "items": [\n` +
+    `    { "result": "Pass" | "Defect" | "unreadable", "remark": string or null, "field_confidence": a number from 0 to 1 }\n` +
+    `    ... exactly ${itemTexts.length} entries, one per numbered item above, in the same order\n` +
+    `  ]\n` +
+    `}\n\n` +
+    `Never guess a severity or invent a remark that isn't legible — mark a row "unreadable" and ` +
+    `use a low field_confidence instead of forcing a Pass/Defect you aren't confident about.`;
+
+  let resp;
+  try {
+    resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+      max_tokens: 2000,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+  } catch (err) {
+    // The API call itself failing (network, rate limit, quota) means the
+    // service is unavailable, not that the photo was bad.
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  const text = resp?.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error('OpenAI returned no content for the form scan.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('OpenAI response was not valid JSON.');
+  }
+
+  if (!Array.isArray(parsed.items) || parsed.items.length !== itemTexts.length) {
+    throw new Error(
+      `OpenAI response has ${parsed.items?.length ?? 0} items, expected ${itemTexts.length}.`
+    );
+  }
+
+  const RESULTS = ['Pass', 'Defect', 'unreadable'];
+  return {
+    serviced_at: typeof parsed.serviced_at === 'string' ? parsed.serviced_at : null,
+    serviced_at_confidence:
+      typeof parsed.serviced_at_confidence === 'number' ? parsed.serviced_at_confidence : 0,
+    form_lift_code: typeof parsed.form_lift_code === 'string' ? parsed.form_lift_code : null,
+    items: parsed.items.map((entry) => ({
+      result: RESULTS.includes(entry?.result) ? entry.result : 'unreadable',
+      remark: typeof entry?.remark === 'string' ? entry.remark : null,
+      field_confidence: typeof entry?.field_confidence === 'number' ? entry.field_confidence : 0,
+    })),
+  };
+}
+
 module.exports = {
   categoriseIncident,
   generateRiskAlert,
   generateExecutiveSummary,
   fallbackSummary,
+  extractSpotCheckForm,
 };

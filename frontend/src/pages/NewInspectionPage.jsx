@@ -9,6 +9,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Container,
   Divider,
@@ -20,10 +21,13 @@ import {
   RadioGroup,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
+import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import LocationCapture from '../components/LocationCapture';
 import SignaturePad from '../components/SignaturePad';
@@ -49,6 +53,14 @@ export default function NewInspectionPage() {
   const signaturePadRef = useRef(null); // paper form's "Checked by" box (G5)
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
+
+  // UC-013: paper-form OCR prefill.
+  const [scanning, setScanning] = useState(false);
+  const [ocrUnavailable, setOcrUnavailable] = useState(false); // A4
+  const [ocrError, setOcrError] = useState(null);
+  const [ocrSummary, setOcrSummary] = useState(null); // { read, total, needInput }
+  const [unreadableItemIds, setUnreadableItemIds] = useState(new Set()); // A2
+  const [liftMismatchWarning, setLiftMismatchWarning] = useState(null); // A3
 
   // Load the lift picker + checklist template once on mount.
   useEffect(() => {
@@ -86,8 +98,14 @@ export default function NewInspectionPage() {
     return [...bySection.entries()];
   }, [items]);
 
+  // Any manual touch — including an explicit "looks correct" confirm with an
+  // empty patch — counts as the inspector reviewing that field, so it clears
+  // the OCR "unconfirmed" mark (M.5).
   function setAnswer(itemId, patch) {
-    setAnswers((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...patch } }));
+    setAnswers((prev) => ({
+      ...prev,
+      [itemId]: { ...prev[itemId], ...patch, unconfirmed: false },
+    }));
   }
 
   // Attach/replace a defect photo. Object URLs are created here and revoked on
@@ -123,6 +141,84 @@ export default function NewInspectionPage() {
     setAnswers({});
     setGps(null);
     signaturePadRef.current?.clear();
+    setOcrError(null);
+    setOcrSummary(null);
+    setUnreadableItemIds(new Set());
+    setLiftMismatchWarning(null);
+    // ocrUnavailable is left as-is — it reflects real service state, not form state.
+  }
+
+  // UC-013 M.4: photograph/upload a completed paper form and prefill the
+  // checklist from it. Never supplies severity or a photo (M.6) — the
+  // inspector still adds those. G18: this is a draft only; nothing is saved
+  // until the inspector reviews and submits through the normal flow below.
+  async function handleScanForm(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setOcrError(null);
+    setLiftMismatchWarning(null);
+    setScanning(true);
+    try {
+      const formData = new FormData();
+      formData.append('form_photo', await compressImage(file));
+      const { data } = await api.post('/api/inspections/ocr-prefill', formData);
+
+      if (data.serviced_at) setServicedAt(data.serviced_at);
+
+      const unreadableIds = new Set();
+      setAnswers((prev) => {
+        const next = { ...prev };
+        for (const it of data.items) {
+          if (it.result === 'unreadable') {
+            unreadableIds.add(it.checklist_item_id);
+            continue; // A2: left blank, not guessed.
+          }
+          next[it.checklist_item_id] = {
+            ...next[it.checklist_item_id],
+            result: it.result,
+            remark: it.remark ?? '',
+            unconfirmed: true,
+            confidence: it.field_confidence,
+          };
+        }
+        return next;
+      });
+      setUnreadableItemIds(unreadableIds);
+      setOcrSummary({
+        read: data.items.length - unreadableIds.size,
+        total: data.items.length,
+        needInput: unreadableIds.size,
+      });
+
+      // A3: warn on a header/lift mismatch without touching the selection.
+      if (selectedLift && data.form_lift_code) {
+        const code = data.form_lift_code.trim().toLowerCase();
+        const liftCode = selectedLift.lift_code.toLowerCase();
+        const block = selectedLift.block_number.toLowerCase();
+        const matches = code.includes(liftCode) || liftCode.includes(code) || code.includes(block);
+        if (!matches) {
+          setLiftMismatchWarning(
+            `The scanned form looks like it's for "${data.form_lift_code}", not the ` +
+              `selected lift (${selectedLift.lift_code}). Your lift selection was kept — double-check before submitting.`
+          );
+        }
+      }
+    } catch (err) {
+      const code = err.response?.data?.code;
+      if (code === 'OCR_SERVICE_UNAVAILABLE') {
+        // A4: don't invite further retries — they'll fail the same way.
+        setOcrUnavailable(true);
+        setOcrError('OCR is temporarily unavailable — fill in the checklist manually.');
+      } else if (code === 'OCR_UNREADABLE') {
+        setOcrError("Couldn't read that photo — try a clearer shot of the form.");
+      } else {
+        setOcrError('Something went wrong scanning the form. Please try again.');
+      }
+    } finally {
+      setScanning(false);
+    }
   }
 
   async function handleSubmit(e) {
@@ -261,6 +357,55 @@ export default function NewInspectionPage() {
                   </Alert>
                 )}
 
+                {/* UC-013: prefer paper on site? Scan the completed form
+                    instead of ticking every item by hand. */}
+                <Stack spacing={1} alignItems="flex-start">
+                  <Tooltip
+                    title={ocrUnavailable ? 'OCR is temporarily unavailable — fill in the checklist manually.' : ''}
+                  >
+                    <span>
+                      <Button
+                        variant="outlined"
+                        component="label"
+                        size="small"
+                        disabled={scanning || ocrUnavailable}
+                        startIcon={
+                          scanning ? (
+                            <CircularProgress size={16} color="inherit" />
+                          ) : (
+                            <DocumentScannerOutlinedIcon />
+                          )
+                        }
+                      >
+                        {scanning ? 'Reading form…' : 'Scan a paper form'}
+                        <input type="file" accept="image/*" hidden onChange={handleScanForm} />
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  {ocrError && (
+                    <Alert severity="warning" sx={{ width: '100%' }} onClose={() => setOcrError(null)}>
+                      {ocrError}
+                    </Alert>
+                  )}
+                </Stack>
+
+                {/* Step 6 banner — persists for the rest of the session as a
+                    caution, since the inspector is signing for these answers. */}
+                {ocrSummary && (
+                  <Alert severity="info">
+                    Draft from a scanned form — check every answer. You are signing for this.{' '}
+                    {ocrSummary.needInput > 0
+                      ? `(${ocrSummary.read} of ${ocrSummary.total} read — ${ocrSummary.needInput} need your input.)`
+                      : `(All ${ocrSummary.total} items read.)`}
+                  </Alert>
+                )}
+
+                {liftMismatchWarning && (
+                  <Alert severity="warning" onClose={() => setLiftMismatchWarning(null)}>
+                    {liftMismatchWarning}
+                  </Alert>
+                )}
+
                 <TextField
                   select
                   label="Lift"
@@ -336,15 +481,47 @@ export default function NewInspectionPage() {
                       <Stack divider={<Divider />} spacing={2}>
                         {sectionItems.map((item) => {
                           const a = answers[item.id] ?? {};
+                          // M.5: every OCR-prefilled field is marked unconfirmed
+                          // until the inspector edits or explicitly confirms it.
+                          const isUnconfirmed = a.unconfirmed === true;
+                          const lowConfidence = isUnconfirmed && a.confidence != null && a.confidence < 0.8;
+                          const isUnreadable = unreadableItemIds.has(item.id);
                           return (
-                            <Box key={item.id}>
+                            <Box
+                              key={item.id}
+                              sx={
+                                isUnconfirmed
+                                  ? { borderLeft: 3, borderColor: 'warning.main', pl: 1.5 }
+                                  : undefined
+                              }
+                            >
                               <Stack
                                 direction={{ xs: 'column', sm: 'row' }}
                                 justifyContent="space-between"
                                 alignItems={{ xs: 'flex-start', sm: 'center' }}
                                 spacing={1}
                               >
-                                <Typography variant="body2">{item.item_text}</Typography>
+                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                                  <Typography variant="body2">{item.item_text}</Typography>
+                                  {isUnreadable && (
+                                    <Chip label="Unreadable — please check" size="small" color="warning" variant="outlined" />
+                                  )}
+                                  {lowConfidence && (
+                                    <Chip label="Please check" size="small" color="warning" variant="outlined" />
+                                  )}
+                                  {isUnconfirmed && (
+                                    <Tooltip title="Looks correct — confirm">
+                                      <IconButton
+                                        size="small"
+                                        color="warning"
+                                        aria-label="Confirm this field"
+                                        onClick={() => setAnswer(item.id, {})}
+                                      >
+                                        <CheckCircleOutlineIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                </Stack>
                                 <RadioGroup
                                   row
                                   value={a.result ?? ''}
