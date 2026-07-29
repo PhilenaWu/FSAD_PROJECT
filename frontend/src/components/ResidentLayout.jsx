@@ -46,7 +46,10 @@ const NAV_BY_ROLE = {
     { label: 'Status board', to: '/status-board', icon: GridViewOutlinedIcon },
   ],
   inspector: [
-    { label: 'New inspection', to: '/inspections/new', icon: AssignmentOutlinedIcon },
+    { label: 'New inspection', to: '/inspections/new', icon: AddCircleOutlineIcon },
+    // UC-003 calls this "My inspections" for inspectors; same page as the
+    // resident's "My reports", scoped to whoever is signed in.
+    { label: 'My inspections', to: '/my-reports', icon: AssignmentOutlinedIcon },
   ],
 };
 

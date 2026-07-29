@@ -974,9 +974,50 @@ Closes a record with a mandatory closing remark, dual e-signature, and optional 
 
 ---
 
-#### POST /api/inspections/:id/rating
+---
+
+### 6.2a My Reports (UC-003 — the originator's own view)
+
+> Mounted at `/api/my-reports`, separate from the manager-facing `/api/inspections`
+> routes. Every route here is scoped to the caller: a record belonging to someone
+> else returns `404 NOT_FOUND`, never `403`, so the endpoint never confirms the
+> existence of a record it will not show. The originator's *list* of live records
+> stays on `GET /api/inspections/my` (§6.2).
+
+#### GET /api/my-reports/history
+**Auth:** `resident` | `inspector`  
+The caller's closed records, most recently closed first. Closing soft-deletes a
+record (`is_deleted = TRUE`) for the 5-year audit trail, which removes it from
+`GET /api/inspections/my`; this is where it goes.
+
+**Response 200:** *(same row shape as `/api/inspections/my`, all with `is_deleted: true`)*
+
+---
+
+#### GET /api/my-reports/:id
+**Auth:** `resident` | `inspector`  
+Full detail for one of the caller's own records, live or closed: the row plus
+`history` (audit trail, newest first, with actor names) and `checklist_results`
+(joined to `checklist_items` for section and item text — resolved regardless of
+`active`, so a retired template item still renders).
+
+**Error 404:**
+```json
+{ "code": "NOT_FOUND", "message": "Report not found." }
+```
+
+---
+
+#### POST /api/my-reports/:id/rating
 **Auth:** `resident`  
-Submits a satisfaction rating on a resolved complaint (UC-003).
+Submits a satisfaction rating on a finished complaint (UC-003).
+
+Ratable statuses are **`Resolved` and `Closed`**. `Closed` is included
+deliberately: the workflow runs Assigned → Acknowledged → Rectified → Closed and
+only reaches `Resolved` if a manager sets it by hand, so gating on `Resolved`
+alone would mean most reports could never be rated at all. A rating is the
+resident's opinion of the outcome, not a state transition — it writes no
+`inspection_history` row, so the append-only audit trail is unaffected.
 
 **Request:**
 ```json
@@ -989,6 +1030,10 @@ Submits a satisfaction rating on a resolved complaint (UC-003).
 **Error 409 — already rated:**
 ```json
 { "code": "ALREADY_RATED", "message": "You have already submitted a rating for this record." }
+```
+**Error 409 — work not finished:**
+```json
+{ "code": "INVALID_STATE", "message": "This report can be rated once the work is done." }
 ```
 
 ---
@@ -1558,6 +1603,7 @@ drops the parsed rows.
 | Cron endpoint protection | `cronGuard.js` middleware validates `Authorization: Bearer <CRON_SECRET>` |
 | CORS | `cors({ origin: process.env.FRONTEND_URL, credentials: true })` |
 | Socket.IO CORS | `new Server(httpServer, { cors: { origin: process.env.FRONTEND_URL } })` |
+| Socket.IO room membership | Role rooms (`manager-room`, `admin-room`, `inspector-team`, `contractor-{user_id}`, `block-{n}`) are joined **server-side on connect** from the handshake profile. The one room a client may request, `insp-{id}` (UC-003), is authorised in `canJoinRecordRoom()` against `resident_id`/`inspector_id` before the join — a room name from the client is a request, never a grant |
 | Rate limiting | `express-rate-limit`: 100 req/15 min per IP on auth routes |
 | Input validation | All request bodies validated with `joi` or `zod` before controller |
 | Error format | All errors return `{ code: "ERROR_CODE", message: "Human-readable" }` |
@@ -1573,6 +1619,7 @@ drops the parsed rows.
 | `NOT_FOUND` | 404 | Resource does not exist |
 | `DUPLICATE_SUBMISSION` | 409 | Duplicate record detected |
 | `ALREADY_RATED` | 409 | Satisfaction rating already submitted |
+| `INVALID_STATE` | 409 | Action not allowed from the record's current status |
 | `EMAIL_ALREADY_EXISTS` | 400 | Registration email conflict |
 | `SERVER_ERROR` | 500 | Unhandled internal error |
 

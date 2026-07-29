@@ -195,9 +195,9 @@ Phase 1: Foundation (critical path — blocks everything)
 |---|------|---------|-------|
 | Z.1 | Implement `SocketContext.jsx` | `src/context/SocketContext.jsx` | Initialises the Socket.IO client connection using `VITE_API_URL`; exposes `socket`, `joinRoom(roomId)`, `leaveRoom(roomId)` via context |
 | Z.2 | Implement manager-room join logic | `src/context/SocketContext.jsx` | On login, if `user.role === 'manager'`, call `socket.emit('join', 'manager-room')` |
-| Z.3 | Wire Socket.IO live update into `MyReportsPage.jsx` | `src/pages/MyReportsPage.jsx` | On opening a record detail, `joinRoom('insp-{id}')`; listen for `status_update` → update status + audit log without reload |
+| Z.3 | Wire Socket.IO live update into `MyReportsPage.jsx` | `src/pages/MyReportsPage.jsx` | On opening a record detail, `joinRoom('insp-{id}')`; listen for `status_update` → update status + audit log without reload. The server authorises the join (`canJoinRecordRoom`), and `insp-{id}` is added to the emit rooms in `inspectionController` — without it an inspector originator receives nothing, since `inspector-team` carries no status events |
 | Z.4 | Handle reconnection on network drop | `src/context/SocketContext.jsx` | Show "Live updates paused — reconnecting…" banner; auto-retry every 5 s |
-| Z.5 | Satisfaction rating submission | `src/pages/MyReportsPage.jsx` | On `Resolved`, render 1–5 star rating; call `POST /inspections/:id/rating`; disable after submit (UC-003 Alt B) |
+| Z.5 | Satisfaction rating submission | `src/pages/MyReportsPage.jsx` | 1–5 star rating on a finished report; calls `POST /my-reports/:id/rating`; read-only after submit (UC-003 Alt B). **Ratable on `Resolved` *and* `Closed`** — the workflow closes records without ever passing through `Resolved`, so closed reports stay readable in a "Past reports" section (`GET /my-reports/history`) and can still be rated there |
 | Z.6 | Empty state for no records | `src/pages/MyReportsPage.jsx` | Empty `GET /inspections/my` → `<EmptyState>` with shortcut to UC-001 |
 | Z.7 | Socket.IO test verification | Browser DevTools | Confirm `status_update` received cross-tab; screenshot as test evidence |
 

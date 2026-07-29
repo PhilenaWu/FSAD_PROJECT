@@ -303,7 +303,9 @@ async function updateInspection(req, res, next) {
     // Real-time push; a socket hiccup must never fail the HTTP update.
     try {
       socketService.emitToRooms(
-        ['manager-room', `block-${inspection.location_block}`],
+        // insp-{id}: the originator's own room (UC-003) — a resident's block room
+        // is too broad and an inspector isn't in one at all.
+        ['manager-room', `block-${inspection.location_block}`, `insp-${inspection.id}`],
         'status_update',
         {
           id: inspection.id,
@@ -430,7 +432,12 @@ async function closeInspection(req, res, next) {
       // admin-room included: a close carries actual_cost, which the UC-011
       // cost dashboard watches for its live-update prompt.
       socketService.emitToRooms(
-        ['manager-room', 'admin-room', `block-${inspection.location_block}`],
+        [
+          'manager-room',
+          'admin-room',
+          `block-${inspection.location_block}`,
+          `insp-${inspection.id}`,
+        ],
         'status_update',
         { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
       );

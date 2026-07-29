@@ -598,10 +598,11 @@ describe('PATCH /api/inspections/:id', () => {
       note: 'Lift specialist to attend',
     });
 
-    // Live update pushed to managers + the block's residents.
+    // Live update pushed to managers, the block's residents, and the record's
+    // own room — the originator's live channel (UC-003).
     const socketService = require('../../src/services/socketService');
     expect(socketService.emitToRooms).toHaveBeenCalledWith(
-      ['manager-room', 'block-44A'],
+      ['manager-room', 'block-44A', `insp-${id}`],
       'status_update',
       expect.objectContaining({ id, status: 'Assigned' })
     );
