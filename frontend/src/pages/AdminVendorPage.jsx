@@ -1,7 +1,7 @@
 // UC-012 Vendor Accounts page (admin). Onboard external vendors, list them by
 // soonest-expiring contract, and renew or suspend with confirmation dialogs.
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Link as RouterLink, Navigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -36,6 +36,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
+import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined';
 import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import SearchIcon from '@mui/icons-material/Search';
@@ -259,6 +260,18 @@ export default function AdminVendorPage() {
   const expiringSoon = vendors.filter(
     (v) => v.status === 'active' && v.days_until_expiry !== null
       && v.days_until_expiry >= 0 && v.days_until_expiry <= 30
+  );
+
+  // Inline date sanity checks (VND-T02 mirrored client-side). The server's
+  // INVALID_CONTRACT_DATES check remains the enforcement; these save the
+  // round-trip and put the error on the field that caused it.
+  const contractDatesInvalid = Boolean(
+    form.contract_start && form.contract_end && form.contract_end < form.contract_start
+  );
+  // A renewal must extend the contract — an end date on or before the current
+  // one (when there is one) is not a renewal.
+  const renewDateInvalid = Boolean(
+    renewDate && renewTarget?.contract_end && renewDate <= renewTarget.contract_end.slice(0, 10)
   );
 
   // Track whether the admin has typed in the login-email field themselves;
@@ -602,6 +615,17 @@ export default function AdminVendorPage() {
                           <HistoryOutlinedIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
+                      {/* UC-012 → UC-011: the cost dashboard filtered to this
+                          vendor is the evidence for the renewal decision. */}
+                      <Tooltip title="View this vendor's costs on the cost dashboard">
+                        <IconButton
+                          size="small"
+                          component={RouterLink}
+                          to={`/admin/costs?contractorId=${v.id}`}
+                        >
+                          <PaidOutlinedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                       <Button
                         size="small"
                         onClick={() => { setRenewDate(defaultRenewDate(v.contract_end)); setRenewDoc(null); setRenewTarget(v); }}
@@ -653,6 +677,8 @@ export default function AdminVendorPage() {
                     value={form.contract_start} onChange={setField('contract_start')} />
                   <TextField label="Contract end" type="date" required fullWidth
                     InputLabelProps={{ shrink: true }}
+                    error={contractDatesInvalid}
+                    helperText={contractDatesInvalid ? 'Contract end must be on or after the start' : ''}
                     value={form.contract_end} onChange={setField('contract_end')} />
                 </Stack>
 
@@ -701,7 +727,7 @@ export default function AdminVendorPage() {
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setFormOpen(false)} disabled={busy}>Cancel</Button>
-              <Button type="submit" variant="contained" disabled={busy}>
+              <Button type="submit" variant="contained" disabled={busy || contractDatesInvalid}>
                 {busy ? 'Onboarding…' : 'Onboard'}
               </Button>
             </DialogActions>
@@ -718,6 +744,8 @@ export default function AdminVendorPage() {
             <Stack spacing={2}>
               <TextField label="New contract end" type="date" required fullWidth
                 InputLabelProps={{ shrink: true }}
+                error={renewDateInvalid}
+                helperText={renewDateInvalid ? 'Must be after the current contract end' : ''}
                 value={renewDate} onChange={(e) => setRenewDate(e.target.value)} />
               <Button component="label" variant="outlined">
                 {renewDoc ? renewDoc.name : 'Attach new contract document (optional)'}
@@ -732,7 +760,7 @@ export default function AdminVendorPage() {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setRenewTarget(null)} disabled={busy}>Cancel</Button>
-            <Button variant="contained" onClick={handleRenew} disabled={busy || !renewDate}>
+            <Button variant="contained" onClick={handleRenew} disabled={busy || !renewDate || renewDateInvalid}>
               Renew
             </Button>
           </DialogActions>

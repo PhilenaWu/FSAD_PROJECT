@@ -134,6 +134,38 @@ describe('AdminVendorPage — filters', () => {
     expect(screen.getByText('sorted by a column')).toBeInTheDocument();
   });
 
+  test('a renewal date on or before the current contract end is rejected inline', async () => {
+    renderPage();
+
+    // Open the renew dialog for a row with contract_end 2027-08-01.
+    await screen.findByText('Healthy Hoists');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Renew' })[0]);
+
+    const dateField = await screen.findByLabelText(/New contract end/i);
+    // Default suggestion (+1 year) is valid, so Renew starts enabled.
+    const renewButton = screen.getAllByRole('button', { name: 'Renew' }).at(-1);
+    expect(renewButton).toBeEnabled();
+
+    // A date before the current end is not a renewal — inline error, no request.
+    await userEvent.clear(dateField);
+    await userEvent.type(dateField, '2026-01-01');
+    expect(screen.getByText('Must be after the current contract end')).toBeInTheDocument();
+    expect(renewButton).toBeDisabled();
+  });
+
+  test('each row links to the cost dashboard filtered to that vendor', async () => {
+    renderPage();
+
+    await screen.findByText('Healthy Hoists');
+    const links = screen.getAllByRole('link', {
+      name: /View this vendor's costs/i,
+    });
+    expect(links[0]).toHaveAttribute(
+      'href',
+      expect.stringMatching(/^\/admin\/costs\?contractorId=v-/)
+    );
+  });
+
   test('the row cap shows the first 10 until All is chosen', async () => {
     const many = Array.from({ length: 14 }, (_, i) =>
       vendor({ name: `Vendor ${String(i).padStart(2, '0')}`, days_until_expiry: i })
