@@ -43,6 +43,12 @@ describe('parseInspectionsCsv', () => {
       parseInspectionsCsv('block,category,resolution_time_hours\n44A,Lift,soon')
     ).toThrow(/Row 2: resolution_time_hours must be a number/);
   });
+
+  test('rejects a malformed date, naming the row', () => {
+    expect(() =>
+      parseInspectionsCsv('block,category,date\n44A,Lift,13/01/2026')
+    ).toThrow(/Row 2: date must be YYYY-MM-DD/);
+  });
 });
 
 describe('mergeHeatmap', () => {

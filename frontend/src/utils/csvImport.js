@@ -42,6 +42,10 @@ export function parseInspectionsCsv(text) {
     if (row.resolution_time_hours != null && Number.isNaN(row.resolution_time_hours)) {
       throw new Error(`Row ${n + 2}: resolution_time_hours must be a number.`);
     }
+    // A malformed date would otherwise plot a garbage trend point silently.
+    if (row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
+      throw new Error(`Row ${n + 2}: date must be YYYY-MM-DD.`);
+    }
     return row;
   });
 }

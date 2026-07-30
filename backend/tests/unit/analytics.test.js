@@ -302,6 +302,19 @@ describe('?section filter', () => {
     expect(sql).not.toMatch(/checklist_results/i);
   });
 
+  test('the KPI summary honours the section filter like every other panel', async () => {
+    mockQuery.mockClear();
+    const res = await asManager(
+      request(app).get('/api/analytics/summary').query({ section: 'A — Motor Room' })
+    );
+
+    expect(res.status).toBe(200);
+    const [sql, params] = mockQuery.mock.calls.find(([s]) => /AS open_count/i.test(s));
+    expect(sql).toMatch(/EXISTS/i);
+    expect(sql).toMatch(/JOIN checklist_items/i);
+    expect(params).toContain('A — Motor Room');
+  });
+
   test('joins against the prefixed alias on the scorecard query', async () => {
     mockQuery.mockClear();
     await asManager(

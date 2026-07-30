@@ -82,10 +82,11 @@ async function hasReopenCount() {
 
 // KPI summary with movement: current values plus % change vs the prior
 // 30-day window (created in the last 30 days vs the 30 before that).
-// Respects the block/category filters; the date filters are ignored here
+// Respects the block/category/section filters — the KPI row must move with
+// the filter bar like every other panel. The date filters are ignored here
 // because the deltas define their own two windows.
-async function fetchSummary({ block, category } = {}) {
-  const { where, params } = buildFilters({ block, category });
+async function fetchSummary({ block, category, section } = {}) {
+  const { where, params } = buildFilters({ block, category, section });
   const and = where ? `${where} AND` : 'WHERE';
 
   const { rows } = await query(
