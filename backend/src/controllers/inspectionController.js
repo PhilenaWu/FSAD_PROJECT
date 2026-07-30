@@ -566,15 +566,17 @@ async function updateInspection(req, res, next) {
     // Assigning a contractor: verify it exists, and apply the UC-002 defaults —
     // status moves to Assigned and the 14-day rectification deadline starts.
     let assignedContractorEmail = null;
+    let assignedContractorUserId = null;
     if (contractor_id !== undefined) {
       const { rows } = await query(
-        'SELECT id, contact_email FROM contractors WHERE id = $1',
+        'SELECT id, contact_email, user_id FROM contractors WHERE id = $1',
         [contractor_id]
       );
       if (rows.length === 0) {
         return res.status(404).json({ code: 'NOT_FOUND', message: 'Contractor not found.' });
       }
       assignedContractorEmail = rows[0].contact_email;
+      assignedContractorUserId = rows[0].user_id;
       if (changes.status === undefined) changes.status = 'Assigned';
       if (changes.target_deadline === undefined) changes.target_deadline = deadlineIn14Days();
     }
@@ -597,18 +599,23 @@ async function updateInspection(req, res, next) {
 
     // Real-time push; a socket hiccup must never fail the HTTP update.
     try {
-      socketService.emitToRooms(
-        // insp-{id}: the originator's own room (UC-003) — a resident's block room
-        // is too broad and an inspector isn't in one at all.
-        ['manager-room', `block-${inspection.location_block}`, `insp-${inspection.id}`],
-        'status_update',
-        {
-          id: inspection.id,
-          status: inspection.status,
-          priority: inspection.priority,
-          updated_at: inspection.updated_at,
-        }
-      );
+      // insp-{id}: the originator's own room (UC-003) — a resident's block room
+      // is too broad and an inspector isn't in one at all.
+      const rooms = ['manager-room', `block-${inspection.location_block}`, `insp-${inspection.id}`];
+      // D.5 — on assignment the contractor's own room gets the event too, so
+      // their inbox refreshes instead of waiting for a manual reload. Keyed by
+      // the account holder's users.id (contractors.user_id resolved above), NOT
+      // the contractors row id: config/socket.js joins `contractor-${user.id}`.
+      // A vendor with no linked login has no room; the assignment still stands.
+      if (assignedContractorUserId) {
+        rooms.push(`contractor-${assignedContractorUserId}`);
+      }
+      socketService.emitToRooms(rooms, 'status_update', {
+        id: inspection.id,
+        status: inspection.status,
+        priority: inspection.priority,
+        updated_at: inspection.updated_at,
+      });
     } catch {
       // Socket not initialised (e.g. tests) or emit failed — ignore.
     }
@@ -933,14 +940,24 @@ async function rejectRectification(req, res, next) {
       });
     }
 
-    // Live push — best-effort, never fails the rejection (G13). The contractor
-    // room is included so their inbox refreshes with the reason (Zoe's Z.3).
+    // Resolved before the push so the contractor's room can be included in it;
+    // the durable notification further down reuses the same lookup.
+    const rejectAssignee = await contractorRecipient(inspection.contractor_id);
+
+    // Live push — best-effort, never fails the rejection (G13). D.5 — the
+    // contractor's own room is included, so their inbox stops showing the work
+    // as accepted the moment it is sent back rather than on the next reload.
+    // Keyed by the account holder's users.id, not the contractors row id.
     try {
-      socketService.emitToRooms(
-        ['manager-room', `block-${inspection.location_block}`],
-        'status_update',
-        { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
-      );
+      const rooms = ['manager-room', `block-${inspection.location_block}`];
+      if (rejectAssignee) {
+        rooms.push(...rejectAssignee.scope.rooms);
+      }
+      socketService.emitToRooms(rooms, 'status_update', {
+        id: inspection.id,
+        status: inspection.status,
+        updated_at: inspection.updated_at,
+      });
     } catch {
       // Socket not initialised (e.g. tests) — ignore.
     }
@@ -972,9 +989,8 @@ async function rejectRectification(req, res, next) {
     }
 
     // The contractor has to redo the work, so they are the one party who must
-    // see the reason. The status_update above does not reach their room, so this
-    // notification is how it gets there.
-    const rejectAssignee = await contractorRecipient(inspection.contractor_id);
+    // see the reason. The status_update above now reaches their room too, but
+    // this is the durable copy — it survives them being offline.
     if (rejectAssignee) {
       await notificationService.notifyEvent({
         event_type: 'rectification_rejected',
