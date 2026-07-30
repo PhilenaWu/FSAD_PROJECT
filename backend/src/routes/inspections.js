@@ -89,6 +89,9 @@ router.post(
 );
 
 // GET /api/inspections — manager triage queue with ?status=&category=&block=.
+// `status` accepts a comma-separated list, so the queue's status-group tabs
+// ("Needs action" = Open,Pending Assignment) are one request. `?archived=true`
+// returns closed records instead — the history view.
 // Inspectors may also read this (read-only): they use it filtered to
 // status=Rectified to review completed work before the manager's joint close.
 router.get(

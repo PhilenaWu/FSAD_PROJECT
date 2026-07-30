@@ -267,14 +267,23 @@ async function findByOriginator(userId) {
   return result.rows;
 }
 
-// Manager triage queue (UC-002): all non-deleted records, optionally filtered,
-// most urgent first (highest AI priority score, then newest).
-async function findAllForManager({ status, category, block } = {}) {
-  const where = ['is_deleted = FALSE'];
-  const params = [];
-  if (status) {
-    params.push(status);
-    where.push(`status = $${params.length}`);
+// Manager triage queue (UC-002), and — with archived: true — the closed-record
+// history view. `status` may be a single value or a comma-separated list, so
+// the queue's status-group tabs ("Needs action" = Open,Pending Assignment) can
+// be expressed as one filter while single-status drill-through links still work.
+//
+// Archived records are ordered by when they closed, since priority score is
+// meaningless once the work is done; the live queue stays most-urgent-first.
+async function findAllForManager({ status, category, block, archived = false } = {}) {
+  const params = [archived];
+  const where = [`is_deleted = $${params.length}`];
+
+  const statuses = (Array.isArray(status) ? status : String(status ?? '').split(','))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (statuses.length > 0) {
+    params.push(statuses);
+    where.push(`status = ANY($${params.length})`);
   }
   if (category) {
     params.push(category);
@@ -285,10 +294,14 @@ async function findAllForManager({ status, category, block } = {}) {
     where.push(`location_block = $${params.length}`);
   }
 
+  const orderBy = archived
+    ? 'closed_at DESC NULLS LAST, created_at DESC'
+    : 'ai_priority_score DESC NULLS LAST, created_at DESC';
+
   const result = await query(
     `SELECT * FROM inspections
      WHERE ${where.join(' AND ')}
-     ORDER BY ai_priority_score DESC NULLS LAST, created_at DESC`,
+     ORDER BY ${orderBy}`,
     params
   );
   return result.rows;

@@ -196,14 +196,26 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.checklist_results.push(row);
     return { rows: [row] };
   }
-  // manager queue: SELECT * FROM inspections WHERE is_deleted = FALSE [AND ...]
+  // manager queue / history: SELECT * FROM inspections WHERE is_deleted = $1 [AND ...]
+  // $1 is the archived flag — false for the live queue, true for the history
+  // view. `status = ANY($n)` carries the queue tab's status group.
   if (/SELECT \* FROM inspections\s+WHERE is_deleted/i.test(sql)) {
-    let rows = store.inspections.filter((i) => !i.is_deleted);
-    // Apply whichever filters appear in the SQL, in param order.
+    const archived = params[0] === true;
+    let rows = store.inspections.filter((i) => Boolean(i.is_deleted) === archived);
+    // Multi-status tab filter.
+    const anyMatch = /status = ANY\(\$(\d+)\)/i.exec(sql);
+    if (anyMatch) {
+      const wanted = params[Number(anyMatch[1]) - 1];
+      rows = rows.filter((i) => wanted.includes(i.status));
+    }
+    // Remaining scalar filters (category, location_block), in param order.
     for (const [, field, idx] of sql.matchAll(/(\w+) = \$(\d+)/g)) {
+      if (field === 'is_deleted') continue; // already applied above
       rows = rows.filter((i) => i[field] === params[Number(idx) - 1]);
     }
-    rows = [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
+    rows = archived
+      ? [...rows].sort((a, b) => String(b.closed_at ?? '').localeCompare(String(a.closed_at ?? '')))
+      : [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
     return { rows };
   }
   // detail history: SELECT ... FROM inspection_history h LEFT JOIN users ...
@@ -1109,6 +1121,64 @@ describe('GET /api/inspections (manager queue)', () => {
       .get('/api/inspections')
       .set('Authorization', 'Bearer resident-token');
     expect(res.status).toBe(403);
+  });
+
+  // The queue's status-group tabs send their whole group as one ?status= list.
+  test('200 ?status= accepts a comma-separated group', async () => {
+    const openId = await seedComplaint('Still open');
+    const assignedId = await seedComplaint('Being worked on');
+    await request(app)
+      .patch(`/api/inspections/${assignedId}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Acknowledged' });
+
+    // "Needs action" tab.
+    const needsAction = await request(app)
+      .get('/api/inspections?status=Open,Pending Assignment')
+      .set('Authorization', 'Bearer manager-token');
+    expect(needsAction.body.data.map((r) => r.id)).toEqual([openId]);
+
+    // "In progress" tab.
+    const inProgress = await request(app)
+      .get('/api/inspections?status=Assigned,Acknowledged,On Hold')
+      .set('Authorization', 'Bearer manager-token');
+    expect(inProgress.body.data.map((r) => r.id)).toEqual([assignedId]);
+
+    // A single status still works — drill-through links are unaffected.
+    const single = await request(app)
+      .get('/api/inspections?status=Acknowledged')
+      .set('Authorization', 'Bearer manager-token');
+    expect(single.body.data.map((r) => r.id)).toEqual([assignedId]);
+  });
+
+  // Closed records are archived out of the live queue and only reachable via
+  // the history view — that separation is the whole point of the two pages.
+  test('200 ?archived=true returns closed records, and only those', async () => {
+    const openId = await seedComplaint('Stays open');
+    const toClose = await seedComplaint('Will be closed');
+    await request(app)
+      .patch(`/api/inspections/${toClose}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Rectified' });
+    await request(app)
+      .post(`/api/inspections/${toClose}/close`)
+      .set('Authorization', 'Bearer manager-token')
+      .field('closing_remark', 'Verified fixed on site by the technician.')
+      .field('endorser_role', 'inspector')
+      .field('endorser_id', 'ins-1')
+      .attach('manager_signature', PNG, 'm.png')
+      .attach('endorser_signature', PNG, 'e.png');
+
+    const live = await request(app)
+      .get('/api/inspections')
+      .set('Authorization', 'Bearer manager-token');
+    expect(live.body.data.map((r) => r.id)).toEqual([openId]);
+
+    const history = await request(app)
+      .get('/api/inspections?archived=true')
+      .set('Authorization', 'Bearer manager-token');
+    expect(history.body.data.map((r) => r.id)).toEqual([toClose]);
+    expect(history.body.data[0].is_deleted).toBe(true);
   });
 
   // Inspectors read this endpoint (read-only) to review completed work

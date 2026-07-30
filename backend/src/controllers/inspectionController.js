@@ -400,7 +400,12 @@ async function listStatusBoard(req, res, next) {
 async function listForManager(req, res, next) {
   try {
     const { status, category, block } = req.query;
-    const data = await inspectionModel.findAllForManager({ status, category, block });
+    // ?archived=true switches to the closed-record history view. Anything else
+    // (absent, 'false') keeps the default live queue.
+    const archived = req.query.archived === 'true';
+    const data = await inspectionModel.findAllForManager({
+      status, category, block, archived,
+    });
     res.json({ data, total: data.length });
   } catch (err) {
     next(err);

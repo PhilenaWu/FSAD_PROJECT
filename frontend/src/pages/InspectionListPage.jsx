@@ -1,15 +1,19 @@
-// UC-002 manager triage queue. All inspections from GET /api/inspections,
-// most urgent first (AI priority score), with status/category/block filters
-// held in the URL so the dashboard heatmap can drill through to a pre-filtered
-// queue. Row click opens the detail/triage view.
+// UC-002 manager triage queue. Open inspections from GET /api/inspections,
+// most urgent first (AI priority score). Status-group tabs ("Needs action",
+// "In progress", "Awaiting endorsement") answer the question a manager opens
+// the queue to ask; category/block narrow within a tab. All of it lives in the
+// URL so the dashboard heatmap can drill through to a pre-filtered queue and a
+// filtered view stays bookmarkable. Row click opens the detail/triage view.
+// Closed records are archived and live on /inspections/history instead.
 // Inspectors also read this endpoint (backend allows it read-only) to review
 // completed work before the manager's joint close — always filtered to
-// status=Rectified and without the manual-review tab.
+// status=Rectified and without the tabs.
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router';
+import { Link as RouterLink, Navigate, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Container,
@@ -27,26 +31,23 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
-import { CATEGORIES } from '../utils/inspectionOptions';
+import { CATEGORIES, QUEUE_TABS } from '../utils/inspectionOptions';
 import ManualReviewQueue from '../components/cv/ManualReviewQueue';
 
-// Filterable statuses (migration 004 CHECK, minus 'Closed' — closed records are
-// archived with is_deleted = TRUE, so that filter could never return rows).
-const STATUSES = [
-  'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
-  'On Hold', 'Rectified', 'Resolved',
-];
+// The CV manual-review queue sits alongside the status-group tabs — it's
+// another bucket of work to look at, just sourced from cv_detections.
+const REVIEW_TAB = 'review';
 
 export default function InspectionListPage() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const isInspector = profile?.role === 'inspector';
 
-  const [tab, setTab] = useState(0); // 0 = Triage queue, 1 = Needs Manual Review (UC-007)
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -55,24 +56,35 @@ export default function InspectionListPage() {
   // pre-filtered queue (/inspections?block=44A&category=Lift) and so a filtered
   // view stays bookmarkable — same pattern as DashboardPage / AdminCostPage.
   const [searchParams, setSearchParams] = useSearchParams();
-  // Inspectors only ever see completed work awaiting their review.
-  const status = isInspector ? 'Rectified' : searchParams.get('status') ?? '';
+  const tab = searchParams.get('tab') ?? 'all';
   const category = searchParams.get('category') ?? '';
   const block = searchParams.get('block') ?? '';
 
+  // The tab owns the status filter: each one maps to a comma-separated list the
+  // API expands with `status = ANY(...)`. Inspectors bypass the tabs entirely —
+  // they only ever see completed work awaiting their review.
+  const status = isInspector
+    ? 'Rectified'
+    : (QUEUE_TABS.find((t) => t.key === tab)?.statuses ?? []).join(',');
+
   // Replace (not push) so back doesn't step through every dropdown change;
   // empty values are dropped to keep the URL clean.
-  const setFilter = (key) => (e) => {
+  const setParam = (key, value) => {
     const next = new URLSearchParams(searchParams);
-    if (e.target.value) {
-      next.set(key, e.target.value);
+    if (value) {
+      next.set(key, value);
     } else {
       next.delete(key);
     }
     setSearchParams(next, { replace: true });
   };
+  const setFilter = (key) => (e) => setParam(key, e.target.value);
+  // 'all' is the default, so it lives as an absent param rather than ?tab=all.
+  const setTab = (key) => setParam('tab', key === 'all' ? '' : key);
 
   useEffect(() => {
+    // The manual-review tab renders its own component with its own fetch.
+    if (tab === REVIEW_TAB) return undefined;
     let active = true;
     setLoading(true);
     const params = {};
@@ -96,7 +108,7 @@ export default function InspectionListPage() {
     return () => {
       active = false;
     };
-  }, [status, category, block]);
+  }, [tab, status, category, block]);
 
   // Block options come from the analytics filter-options endpoint (manager-only,
   // same gate as this page). Deriving them from `rows` collapsed the dropdown to
@@ -127,61 +139,78 @@ export default function InspectionListPage() {
         >
           <Box>
             <Typography variant="h5" component="h1" fontWeight={700}>
-              {isInspector ? 'Completed work' : tab === 0 ? 'Triage queue' : 'Needs Manual Review'}
+              {isInspector
+                ? 'Completed work'
+                : tab === REVIEW_TAB
+                ? 'Needs Manual Review'
+                : 'Triage queue'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {isInspector
                 ? 'Lift inspections with rectified defects, awaiting your review'
-                : tab === 0
-                ? 'Most urgent first — sorted by AI priority score'
-                : 'Low-confidence CV detections awaiting a manual call'}
+                : tab === REVIEW_TAB
+                ? 'Low-confidence CV detections awaiting a manual call'
+                : 'Open work, most urgent first — sorted by AI priority score'}
             </Typography>
           </Box>
 
-          {/* Filters — triage queue only; the review queue has no filters yet. */}
-          {tab === 0 && (
-            <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-              {!isInspector && (
+          <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
+            {/* Filters narrow within a tab; the tab chooses which statuses. The
+                review queue has no filters yet. */}
+            {tab !== REVIEW_TAB && (
+              <>
                 <TextField
-                  select size="small" label="Status" value={status}
-                  onChange={setFilter('status')} sx={{ minWidth: 150 }}
+                  select size="small" label="Category" value={category}
+                  onChange={setFilter('category')} sx={{ minWidth: 150 }}
                 >
                   <MenuItem value="">All</MenuItem>
-                  {STATUSES.map((s) => (
-                    <MenuItem key={s} value={s}>{s}</MenuItem>
+                  {CATEGORIES.map((c) => (
+                    <MenuItem key={c} value={c}>{c}</MenuItem>
                   ))}
                 </TextField>
-              )}
-              <TextField
-                select size="small" label="Category" value={category}
-                onChange={setFilter('category')} sx={{ minWidth: 150 }}
+                <TextField
+                  select size="small" label="Block" value={block}
+                  onChange={setFilter('block')} sx={{ minWidth: 110 }}
+                >
+                  <MenuItem value="">All</MenuItem>
+                  {blockOptions.map((b) => (
+                    <MenuItem key={b} value={b}>{b}</MenuItem>
+                  ))}
+                </TextField>
+              </>
+            )}
+            {/* Closed records live on their own page — out of the way unless
+                the manager asks for them. */}
+            {!isInspector && (
+              <Button
+                component={RouterLink}
+                to="/inspections/history"
+                size="small"
+                color="inherit"
+                startIcon={<HistoryOutlinedIcon />}
               >
-                <MenuItem value="">All</MenuItem>
-                {CATEGORIES.map((c) => (
-                  <MenuItem key={c} value={c}>{c}</MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                select size="small" label="Block" value={block}
-                onChange={setFilter('block')} sx={{ minWidth: 110 }}
-              >
-                <MenuItem value="">All</MenuItem>
-                {blockOptions.map((b) => (
-                  <MenuItem key={b} value={b}>{b}</MenuItem>
-                ))}
-              </TextField>
-            </Stack>
-          )}
+                History
+              </Button>
+            )}
+          </Stack>
         </Stack>
 
         {!isInspector && (
-          <Tabs value={tab} onChange={(e, v) => setTab(v)} sx={{ mb: 3 }}>
-            <Tab label="Triage queue" />
-            <Tab label="Needs Manual Review" />
+          <Tabs
+            value={tab}
+            onChange={(e, v) => setTab(v)}
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{ mb: 3 }}
+          >
+            {QUEUE_TABS.map((t) => (
+              <Tab key={t.key} value={t.key} label={t.label} />
+            ))}
+            <Tab value={REVIEW_TAB} label="Needs Manual Review" />
           </Tabs>
         )}
 
-        {tab === 0 ? (
+        {tab !== REVIEW_TAB ? (
           loading ? (
             <Stack alignItems="center" sx={{ py: 6 }}>
               <CircularProgress />

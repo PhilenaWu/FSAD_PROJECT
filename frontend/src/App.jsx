@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import ReportIssuePage from './pages/ReportIssuePage'
 import InspectionListPage from './pages/InspectionListPage'
 import InspectionDetailPage from './pages/InspectionDetailPage'
+import InspectionHistoryPage from './pages/InspectionHistoryPage'
 import MyReportsPage from './pages/MyReportsPage'
 import NewInspectionPage from './pages/NewInspectionPage'
 import StatusBoardPage from './pages/StatusBoardPage'
@@ -33,6 +34,8 @@ function App() {
           <Route path="/status-board" element={<StatusBoardPage />} />
           <Route path="/inspections/new" element={<NewInspectionPage />} />
           <Route path="/inspections" element={<InspectionListPage />} />
+          {/* Ahead of /:id so 'history' isn't captured as an inspection id. */}
+          <Route path="/inspections/history" element={<InspectionHistoryPage />} />
           <Route path="/inspections/:id" element={<InspectionDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
