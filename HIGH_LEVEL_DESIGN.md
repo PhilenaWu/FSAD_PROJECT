@@ -61,8 +61,8 @@ Daniel Koh's slide 2 is the spine of the system. Nothing in the product exists o
 
 | Step (client's words) | Actor | Portal | System effect | `inspections.status` |
 |---|---|---|---|---|
-| **1.** "LMS staff plan the schedule according to monthly lift servicing schedule" | Inspector | Inspector | Inspector picks the lift and records the contractor's **`servicing_date`** on the form header | *(pre-record)* |
-| **2.** "Lift technician completed servicing" | Contractor | *(off-system)* | Captured as the `servicing_date` the inspector enters — we do not schedule the LC's work | *(pre-record)* |
+| **1.** "LMS staff plan the schedule according to monthly lift servicing schedule" | Inspector | Inspector | Inspector picks the lift and records the contractor's **`serviced_at`** on the form header | *(pre-record)* |
+| **2.** "Lift technician completed servicing" | Contractor | *(off-system)* | Captured as the `serviced_at` the inspector enters — we do not schedule the LC's work | *(pre-record)* |
 | **3.** "LMS staff inspect the site on next/following day and fill the inspection report" | Inspector | Inspector | UC-001: 25-item checklist, per-item Pass/Defect + severity + remark + photo, GPS, inspector e-signature | `Open` → `Pending Assignment` (≥1 defect) or `Closed` (0 defects, auto-filed) |
 | **4.** "Finding on report (defect) will be informed to lift servicing supervisor for rectification" | System → Contractor | — | **UC-014 auto-email** to `contractors.contact_email` + Socket.IO to `contractor-{user_id}`; manager confirms/reassigns in UC-002; 14-day deadline starts | `Pending Assignment` → `Assigned` |
 | **5.** "Lift technician rectify the defects within 2 weeks" | Contractor | Contractor | UC-010: acknowledge → per-item completion photo + remark → contractor e-signature. Partial saves allowed; `On Hold` pauses the clock | `Assigned` → `Acknowledged` → `Rectified` |
@@ -97,7 +97,7 @@ The single most important property of this system is that a record **hands off c
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ INSPECTOR PORTAL                    /inspections/new                         │
-│  pick lift → servicing_date → GPS → 25-item checklist (A/B/C)               │
+│  pick lift → serviced_at → GPS → 25-item checklist (A/B/C)               │
 │  per defect: severity + remark + photo(≤100KB, Major/Critical only)          │
 │  sign form  ─────────────────────────────────────────────► SUBMIT            │
 └───────────────┬──────────────────────────────────┬──────────────────────────┘
@@ -235,10 +235,10 @@ This section exists so that a marker can hold the sample form next to the app an
 
 | Paper field | System field |
 |---|---|
-| TOWN COUNCIL | `inspections.town_council` — defaults from `TOWN_COUNCIL_NAME` env, editable |
+| TOWN COUNCIL | `lifts.town_council` — auto-filled from the selected lift, read-only |
 | LIFT COMPANY | derived: `lifts.contractor_id → contractors.name` (read-only on the form) |
 | BLOCK/LIFT | `inspections.lift_id → lifts.block_number + lifts.lift_code` (e.g. "44A / 44A-L1") |
-| ADDRESS | `inspections.address` — auto-filled from the selected lift, GPS-assisted, editable |
+| ADDRESS | `lifts.address` — auto-filled from the selected lift, read-only |
 
 ### 7.2 Checklist body — 25 items, three sections
 
@@ -278,7 +278,7 @@ The paper's **√ / X** column maps to `checklist_results.result` ∈ `Pass` | `
 
 | Paper field | System field | Written when |
 |---|---|---|
-| Servicing Date | `inspections.servicing_date` | UC-001 submit (step 1/2) |
+| Servicing Date | `inspections.serviced_at` | UC-001 submit (step 1/2) |
 | Date of spot checking | `inspections.created_at` | UC-001 submit (step 3) |
 | Checked by | `inspections.inspector_id → users.full_name` | UC-001 submit |
 | Signature (left block) | `signatures` row, `signer_role = 'inspector'` | **UC-001 submit** |
@@ -291,7 +291,7 @@ The paper's **√ / X** column maps to `checklist_results.result` ∈ `Pass` | `
 
 | Paper note | Enforcement |
 |---|---|
-| "Spot-Checks shall be performed during contractor's scheduled servicing date" | `servicing_date` is **mandatory**; UI warns if `date_of_spot_check − servicing_date > 1 day` (the client's "next/following day"), but does not block — the inspector may override with a remark |
+| "Spot-Checks shall be performed during contractor's scheduled servicing date" | `serviced_at` is **mandatory**; UI warns if `date_of_spot_check − serviced_at > 1 day` (the client's "next/following day"), but does not block — the inspector may override with a remark |
 | "lift contractors are required to clear the defects … within 2 weeks" | `target_deadline` defaults to `NOW() + 14 days` (migration `025`); overdue chase emails at D−3 and D+0; SLA compliance measured against it |
 
 ---
@@ -339,18 +339,21 @@ closed_at · created_at · updated_at
 
 ### 8.2 New migrations required
 
-**`026_add_paper_form_fields.sql`** — closes R13 and §7.1/7.3 gaps.
-
-```sql
-ALTER TABLE inspections
-  ADD COLUMN IF NOT EXISTS servicing_date        DATE,
-  ADD COLUMN IF NOT EXISTS address               VARCHAR(255),
-  ADD COLUMN IF NOT EXISTS town_council          VARCHAR(120),
-  ADD COLUMN IF NOT EXISTS defect_email_sent_at  TIMESTAMP,   -- UC-014 idempotency
-  ADD COLUMN IF NOT EXISTS reopen_count          INTEGER NOT NULL DEFAULT 0;
-
-CREATE INDEX IF NOT EXISTS idx_inspections_servicing_date ON inspections(servicing_date);
-```
+> **As-built note.** This section was written before implementation and the
+> delivered migrations differ — both in numbering and in where two columns
+> landed. The authoritative list is below; `backend/migrations/` is the source
+> of truth.
+>
+> | Planned | Delivered | Difference |
+> |---|---|---|
+> | `026_add_paper_form_fields` | `027_add_serviced_at_to_inspections.sql` | Column is **`inspections.serviced_at`**, not `servicing_date` |
+> | (same) | `028_add_town_council_address_to_lifts.sql` | **`lifts.town_council` / `lifts.address`**, not on `inspections` — they are properties of the lift, constant per block, so storing them per inspection would duplicate the same value on every record and let two checks of one lift disagree. Shown read-only on the form, auto-filled from the lift |
+> | (same) | `031_add_reopen_count_to_inspections.sql` | Split into its own migration |
+> | (same) | *not built* | `defect_email_sent_at` — waits on UC-014 (D.3) |
+> | `027_reseed_checklist_paper_form` | `026_seed_spot_check_checklist.sql` | Numbering swapped with the above |
+>
+> The `idx_inspections_servicing_date` index was not created: the column is
+> queried only via a single record, never ranged over.
 
 **`027_reseed_checklist_paper_form.sql`** — replaces the 10 placeholder items with the 25 real ones.
 
@@ -467,7 +470,7 @@ Accepts a photo of a completed paper form; returns a **draft** the inspector mus
 // Response 200
 {
   "confidence": "medium",
-  "header": { "block_lift": "886/A", "servicing_date": "2026-03-22",
+  "header": { "block_lift": "886/A", "serviced_at": "2026-03-22",
               "address": "Woodlands Dr 63" },
   "items": [
     { "checklist_item_id": "…", "section": "A — Motor Room", "display_order": 1,
@@ -747,7 +750,7 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 
 | # | Guard rail | Enforcement |
 |---|---|---|
-| **G1** | A spot-check cannot be submitted without `servicing_date`, `lift_id`, and a result for **all 25 active items** | 400 `INCOMPLETE_CHECKLIST` listing the missing `display_order` values — ✅ **enforced**; also rejects ids outside the active template |
+| **G1** | A spot-check cannot be submitted without `serviced_at`, `lift_id`, and a result for **all 25 active items** | 400 `INCOMPLETE_CHECKLIST` listing the missing `display_order` values — ✅ **enforced**; also rejects ids outside the active template |
 | **G2** | A `Defect` result must carry a `severity` | 400 `SEVERITY_REQUIRED` — ✅ **enforced** |
 | **G3** | `Major`/`Critical` defects require a photo; `Minor` defects **must not** carry one (client: "No photos on minor issue") | 400 `PHOTO_REQUIRED_FOR_SEVERITY` / `PHOTO_NOT_ALLOWED_FOR_MINOR` — ✅ **enforced**, and mirrored in the form (the photo control only appears for Major/Critical) |
 | **G4** | Every photo is compressed to ≤100 KB client-side; the server rejects anything larger | 400 `PHOTO_TOO_LARGE` (multer limit) — ✅ **enforced** on both photo routes (spot-check + resident complaint); signature parts are exempt, they are not photos |
@@ -826,7 +829,7 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 
 1. **UC-013 OCR is an adoption aid, not a requirement.** The client asked for a digital form that *replaces* paper, not one that photographs it. UC-013 exists because older inspectors may prefer to fill paper on site and digitise afterwards. It is therefore **prefill-and-confirm only** — handwriting recognition on ticks and cursive remarks is not reliable enough to submit unattended, and the inspector's e-signature (G5) is what makes the record valid. If UC-013 slips, nothing in the client brief is unmet.
 
-2. **We do not schedule the lift company's servicing.** Step 1 of the workflow ("LMS staff plan the schedule according to monthly lift servicing schedule") stays a Town Council planning activity; we capture its output as `servicing_date`. Building a servicing scheduler is out of scope.
+2. **We do not schedule the lift company's servicing.** Step 1 of the workflow ("LMS staff plan the schedule according to monthly lift servicing schedule") stays a Town Council planning activity; we capture its output as `serviced_at`. Building a servicing scheduler is out of scope.
 
 3. **The joint inspection (step 6) is modelled as a co-signature, not a second site visit workflow.** Both signatures are captured on one device at one time, which is what the paper form does.
 

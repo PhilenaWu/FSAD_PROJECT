@@ -150,7 +150,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/INSERT INTO inspections/i.test(sql) && /inspector_id/i.test(sql)) {
     const [
       inspector_id, lift_id, title, location_block, contractor_id,
-      serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
+      status, serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
     ] = params;
     const now = new Date().toISOString();
     const row = {
@@ -162,7 +162,8 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       gps_lng: gps_lng ?? null,
       gps_accuracy_m: gps_accuracy_m ?? null,
       gps_captured_at: gps_captured_at ?? null,
-      status: 'Open',
+      // Branch A ('Pending Assignment') or Branch B ('Open', then auto-closed).
+      status,
       category: 'Uncategorised',
       priority: 'Medium',
       is_deleted: false,
@@ -694,15 +695,19 @@ describe('POST /api/inspections/lift', () => {
     expect(store.signatures[0].signer_role).toBe('inspector');
   });
 
-  test('201 with a defect keeps the contractor and stays open for triage', async () => {
+  test('201 with a defect lands as Pending Assignment, awaiting triage', async () => {
     const res = await submitLift(validChecklist);
 
     expect(res.status).toBe(201);
-    expect(res.body.status).not.toBe('Closed');
+    // UC-001 step 11 Branch A — not the table's generic 'Open' default.
+    expect(res.body.status).toBe('Pending Assignment');
     expect(res.body.is_deleted).toBe(false);
     // Derived from the lift, since there is defect work to assign.
     expect(res.body.contractor_id).toBe('con-1');
     expect(store.history.some((h) => h.action === 'Filed — no defects')).toBe(false);
+    // The opening audit row records the status it actually landed in.
+    const created = store.history.find((h) => h.action === 'Created');
+    expect(created.new_status).toBe('Pending Assignment');
   });
 
   // --- G5: the "Checked by" signature ------------------------------------
@@ -1505,7 +1510,7 @@ describe('POST /api/inspections/:id/close', () => {
     // The audit trail the archive exists to preserve is all still there.
     expect(res.body.checklist_results).toHaveLength(2);
     expect(res.body.signatures.length).toBeGreaterThanOrEqual(2);
-    expect(res.body.history.some((h) => h.action === 'Closed')).toBe(true);
+    expect(res.body.history.some((h) => h.action === 'Jointly Endorsed & Closed')).toBe(true);
   });
 
   // findById stays filtered on is_deleted, so the mutation guards are unmoved
@@ -1536,8 +1541,8 @@ describe('POST /api/inspections/:id/close', () => {
     expect(store.signatures.map((s) => s.signer_role).sort()).toEqual(['inspector', 'manager']);
     expect(store.signatures.find((s) => s.signer_role === 'manager').signer_id).toBe('mgr-1');
 
-    // 'Closed' audit row written.
-    expect(store.history.some((h) => h.action === 'Closed')).toBe(true);
+    // UC-015 audit row written under its documented name.
+    expect(store.history.some((h) => h.action === 'Jointly Endorsed & Closed')).toBe(true);
 
     // Both signatures uploaded to the /signatures folder.
     const cloudinaryService = require('../../src/services/cloudinaryService');

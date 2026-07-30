@@ -101,9 +101,8 @@ async function notifyEvent({ event_type, scope, message, urgency = 'Informationa
 //     after its 429 retries is still invisible to everyone. Left alone because
 //     it needs a call site inside the model, not a controller.
 //
-// Not a notification problem, but blocking UC-010 Alt A: there is no `Resumed`
-// path anywhere in the backend, so a record placed On Hold never comes off it
-// and G11's deadline extension is unimplemented (Z.2).
+// (UC-010 Alt A / G11 is no longer a gap: inspectionModel.resumeByContractor
+// writes `Resumed` and extends target_deadline by the held duration.)
 //
 // TEST GAP — the trigger call sites above are not covered. notifications.test.js
 // covers the delivery seam (notifyEvent, scope resolution, the inbox, the

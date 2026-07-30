@@ -468,7 +468,26 @@ Every state transition appends an `inspection_history` row carrying actor, actio
 
 **Required actions (completeness check):** `Created` · `Defect Alert Sent` · `Filed — no defects` · `Assigned` · `Reassigned` · `Acknowledged` · `Work Progress Saved` · `On Hold — {reason}` · `Resumed` · `Rectified & Signed` · `Rectification Rejected` · `Overdue Reminder Sent` · `Priority Escalated` · `Jointly Endorsed & Closed`.
 
-**Status:** `Created`, `Filed — no defects` and `Rectification Rejected` are now written. Still missing: `Created` on the resident-complaint path, `Reassigned` (a reassign logs as `Assigned`), `Resumed` (no resume path exists), and `Jointly Endorsed & Closed` (close logs `'Closed'`). `On Hold — {reason}` logs the action as `On Hold` with the reason in `note`.
+**Status — 11 of 14 written.** Verified against `backend/src/`:
+
+| Action | State |
+|---|---|
+| `Created` | ✅ on the spot-check path; **not yet** on the resident-complaint path |
+| `Filed — no defects` | ✅ |
+| `Assigned` | ✅ |
+| `Acknowledged` | ✅ |
+| `Work Progress Saved` | ✅ |
+| `On Hold — {reason}` | ✅ logged as `On Hold`, reason in `note` |
+| `Resumed` | ✅ `resumeByContractor` also extends `target_deadline` by the held duration (G11) |
+| `Rectified & Signed` | ✅ |
+| `Rectification Rejected` | ✅ |
+| `Priority Escalated` | ✅ (fall-through label when a PATCH changes neither contractor nor status) |
+| `Jointly Endorsed & Closed` | ✅ |
+| `Reassigned` | ❌ a reassign still logs as `Assigned` |
+| `Defect Alert Sent` | ❌ blocked on UC-014 (D.3) |
+| `Overdue Reminder Sent` | ❌ blocked on the overdue chase (D.7) |
+
+`Status Updated` is also written but is not in the required list above.
 
 **Extension:** add the four new actions (`Defect Alert Sent`, `Filed — no defects`, `Rectification Rejected`, `Overdue Reminder Sent`) and assert the full set in tests.
 

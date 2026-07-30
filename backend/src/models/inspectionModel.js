@@ -117,16 +117,22 @@ async function createLiftInspection(data) {
   try {
     await client.query('BEGIN');
 
+    // UC-001 step 11 Branch A: a spot-check that found defects lands in the
+    // manager's queue as 'Pending Assignment', not the table's generic 'Open'
+    // default — the defects are known, they just have no contractor committed
+    // to them yet. The zero-defect branch below moves straight to 'Closed', so
+    // this status is only ever the resting state for a defect-bearing check.
     const inspectionResult = await client.query(
       `INSERT INTO inspections (
          source_type, inspector_id, lift_id, title, location_block,
-         contractor_id, source_flag, serviced_at, gps_lat, gps_lng,
+         contractor_id, source_flag, status, serviced_at, gps_lat, gps_lng,
          gps_accuracy_m, gps_captured_at
        )
-       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector', $6, $7, $8, $9, $10)
+       VALUES ('lift_inspection', $1, $2, $3, $4, $5, 'Inspector', $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         inspector_id, lift_id, title, location_block, contractor_id,
+        has_defects ? 'Pending Assignment' : 'Open',
         serviced_at, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at,
       ]
     );
@@ -542,7 +548,8 @@ async function updateByManager(id, changes, actorId, note) {
 
 // Close a record (UC-004): set the closing fields + computed resolution time,
 // archive it (is_deleted = TRUE for the 5-year audit trail), store the dual
-// endorsement signatures, and write a 'Closed' audit row — all atomically.
+// endorsement signatures, and write a 'Jointly Endorsed & Closed' audit row —
+// all atomically.
 // `signatures` is an array of { signer_role, signer_id, image_url }.
 // Returns the updated row, or undefined if the id isn't a live record.
 async function closeInspection(id, { closing_remark, actual_cost, signatures }, actorId) {
@@ -587,7 +594,9 @@ async function closeInspection(id, { closing_remark, actual_cost, signatures }, 
          inspection_id, actor_id, action, previous_status, new_status, note
        )
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, actorId, 'Closed', before.status, 'Closed', closing_remark]
+      // UC-015 names this action 'Jointly Endorsed & Closed' — it records the
+      // dual endorsement, not just the status change (new_status carries that).
+      [id, actorId, 'Jointly Endorsed & Closed', before.status, 'Closed', closing_remark]
     );
 
     await client.query('COMMIT');
