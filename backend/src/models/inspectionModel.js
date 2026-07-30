@@ -300,10 +300,15 @@ async function findAllForManager({ status, category, block } = {}) {
 // its signatures, and, for a CV-linked record (UC-007), the underlying
 // cv_detections row (bounding_box/defect_class/confidence) so the frontend can
 // draw the overlay — null when this record has no cv_detection_id.
-// Returns undefined when the id doesn't match a live record.
+// Returns undefined only when the id doesn't exist at all — unlike findById,
+// this deliberately has NO is_deleted filter, so a closed/archived record is
+// still viewable (there was previously no way to see one anywhere in the
+// app). findById itself stays filtered: it backs the close/markReviewed
+// mutation guards, which must keep rejecting an already-archived record.
 // Note: the reporter is identified by block/unit only — no resident-name join.
 async function findDetailById(id) {
-  const inspection = await findById(id);
+  const result = await query('SELECT * FROM inspections WHERE id = $1', [id]);
+  const inspection = result.rows[0];
   if (!inspection) return undefined;
 
   const history = await query(

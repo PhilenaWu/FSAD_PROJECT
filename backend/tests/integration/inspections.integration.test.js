@@ -264,7 +264,15 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     const row = store.cv_detections.find((d) => d.id === params[0]);
     return { rows: row ? [row] : [] };
   }
-  // updateByManager row lock: SELECT * FROM inspections WHERE id = $1 ... FOR UPDATE
+  // findDetailById's parent-row fetch: no is_deleted predicate, so an archived
+  // record is still viewable. Must precede the filtered branch below, which
+  // matches the same prefix but backs the mutation guards.
+  if (/SELECT \* FROM inspections WHERE id = \$1$/i.test(sql.trim())) {
+    const row = store.inspections.find((i) => i.id === params[0]);
+    return { rows: row ? [{ ...row }] : [] };
+  }
+  // findById + updateByManager row lock: ... WHERE id = $1 AND is_deleted = FALSE
+  // [FOR UPDATE]. Keeps filtering — these back the close/markReviewed guards.
   // Return a copy — Postgres returns a snapshot, and the UPDATE branch below
   // mutates the stored object in place.
   if (/SELECT \* FROM inspections WHERE id/i.test(sql)) {
@@ -1283,6 +1291,45 @@ describe('POST /api/inspections/:id/close', () => {
     if (!extra.omitEndorserSig) req.attach('endorser_signature', PNG, 'insp.png');
     return req;
   }
+
+  // An archived record must stay viewable — closing it used to make the detail
+  // page 404, leaving no way to see a closed record anywhere in the app.
+  test('a closed record is still readable via GET /:id, with its full payload', async () => {
+    const create = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+    const id = create.body.id;
+    for (const r of store.checklist_results) {
+      if (r.inspection_id === id && r.result === 'Defect') {
+        r.rectified = true;
+        r.completion_photo_url = 'https://cloudinary.test/defects/done.png';
+      }
+    }
+    await rectify(id);
+    expect((await closeRecord(id)).status).toBe(200);
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.is_deleted).toBe(true);
+    expect(res.body.status).toBe('Closed');
+    // The audit trail the archive exists to preserve is all still there.
+    expect(res.body.checklist_results).toHaveLength(2);
+    expect(res.body.signatures.length).toBeGreaterThanOrEqual(2);
+    expect(res.body.history.some((h) => h.action === 'Closed')).toBe(true);
+  });
+
+  // findById stays filtered on is_deleted, so the mutation guards are unmoved
+  // by the detail-view relaxation above.
+  test('409/404 — an already-closed record cannot be closed again', async () => {
+    const id = await seedRectified('Double close attempt');
+    expect((await closeRecord(id)).status).toBe(200);
+
+    const again = await closeRecord(id);
+
+    expect(again.status).toBe(404);
+    expect(again.body.code).toBe('NOT_FOUND');
+  });
 
   test('200 closes with remark + dual signatures, computes fields, archives', async () => {
     const id = await seedRectified('Lift button stuck at L3');

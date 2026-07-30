@@ -145,6 +145,12 @@ export default function InspectionDetailPage() {
   const [reviewing, setReviewing] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState(null);
 
+  // A closed record (manual close or the G6 zero-defect auto-file) is archived
+  // and read-only: the triage form and close panel would otherwise render as
+  // live-looking controls that 404 on submit, since the backend's mutation
+  // guards independently reject an already-archived record.
+  const archived = inspection?.is_deleted === true;
+
   // Defect rows drive the endorsement panel; `outstandingItems` mirrors the
   // server's G8 gate so the manager sees what blocks the close before trying.
   const defectResults = useMemo(
@@ -306,8 +312,9 @@ export default function InspectionDetailPage() {
         severity: 'success',
         message: 'Record closed and archived — it has left the active queue. Returning…',
       });
-      // The record now 404s on this page and is gone from all active lists, so
-      // take the manager back to the queue rather than stranding them here.
+      // The record is gone from all active lists (though this page still opens
+      // it read-only), so take the manager back to the queue rather than
+      // leaving them on a form that no longer applies.
       setTimeout(() => navigate('/inspections'), 1600);
     } catch (err) {
       setCloseFeedback({
@@ -395,6 +402,12 @@ export default function InspectionDetailPage() {
           <Alert severity="error">Could not load this inspection.</Alert>
         ) : (
           <Stack spacing={3}>
+            {archived && (
+              <Alert severity="info">
+                This record is closed and archived — read only.
+              </Alert>
+            )}
+
             {/* Stretch (default) keeps the two cards equal height on desktop. */}
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={3}>
               {/* Left: the record — flex column so fallbacks can fill the space. */}
@@ -516,8 +529,40 @@ export default function InspectionDetailPage() {
                 )}
               </Paper>
 
-              {/* Right: triage form — manager-only, inspectors are read-only */}
-              {!isInspector && (
+              {/* Right: triage form — manager-only, inspectors are read-only.
+                  Archived records render a static summary instead: PATCHing a
+                  closed record 404s server-side, so an editable form here
+                  would look live but fail silently on submit. */}
+              {!isInspector && archived && (
+                <Paper elevation={1} sx={{ p: 3, borderRadius: 3, flex: 1, width: '100%' }}>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 2 }}>
+                    Triage (archived)
+                  </Typography>
+                  <Stack spacing={1.5}>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Status
+                      </Typography>
+                      <Typography variant="body2">{inspection.status}</Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Priority
+                      </Typography>
+                      <Typography variant="body2">{inspection.priority}</Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Contractor
+                      </Typography>
+                      <Typography variant="body2">
+                        {contractors.find((c) => c.id === inspection.contractor_id)?.name ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </Paper>
+              )}
+              {!isInspector && !archived && (
               <Paper
                 elevation={1}
                 component="form"
@@ -747,8 +792,10 @@ export default function InspectionDetailPage() {
 
             {/* Close record (UC-004) — terminal action, visually distinct from
                 the triage card: outlined with the error accent, not elevated.
-                Manager-only; inspectors are read-only here. */}
-            {!isInspector && (
+                Manager-only; inspectors are read-only here. Hidden once
+                archived — the record is already closed, and closing it again
+                would 404 server-side. */}
+            {!isInspector && !archived && (
             <Paper
               variant="outlined"
               component="form"
