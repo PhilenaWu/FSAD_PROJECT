@@ -389,6 +389,24 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
       .send({ contract_end: '2028-06-30' });
     expect(res.status).toBe(404);
   });
+
+  // A renewal must EXTEND the contract. Comparing only against contract_start
+  // used to let a direct API call silently shorten an active contract — the UI
+  // disabled the button, but the server accepted it.
+  test('400 INVALID_CONTRACT_DATES — a date on or before the current contract_end is not a renewal', async () => {
+    state.vendorRow = {
+      id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1',
+      contract_start: '2026-01-01', contract_end: '2027-01-01',
+    };
+    for (const contract_end of ['2026-06-01', '2027-01-01']) {
+      const res = await request(app)
+        .post('/api/admin/vendors/ctr-1/renew')
+        .set('Authorization', 'Bearer admin-token')
+        .send({ contract_end });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_CONTRACT_DATES');
+    }
+  });
 });
 
 describe('POST /api/admin/vendors/:id/suspend (early termination)', () => {

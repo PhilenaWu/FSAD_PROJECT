@@ -132,9 +132,12 @@ describe('AdminCostPage', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('—')).toBeInTheDocument();
-    expect(screen.getByText(/not shown per contractor/)).toBeInTheDocument();
-    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+    // Scope to the tile itself — a bare '—' can legitimately appear elsewhere.
+    const label = await screen.findByText('Projected exposure');
+    const tile = within(label.closest('.MuiPaper-root'));
+    expect(tile.getByText('—')).toBeInTheDocument();
+    expect(tile.getByText(/not shown per contractor/)).toBeInTheDocument();
+    expect(tile.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
   test('an empty result renders empty states and disables the exports', async () => {

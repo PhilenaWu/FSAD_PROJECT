@@ -60,7 +60,7 @@ function buildFilters({ from, to, block, category, section }, columnPrefix = '')
   };
 }
 
-// `inspections.reopen_count` arrives with the paper-form migration (026). The
+// `inspections.reopen_count` arrives with migration 031. The
 // scorecard reports average re-opens once it exists and NULL before then, so
 // this file works either side of that migration without a code change.
 // Cached after the first lookup — the schema cannot change mid-process.
@@ -227,7 +227,7 @@ async function fetchContractorScorecard(filters) {
   const assignedClause = 'i.contractor_id IS NOT NULL';
   const fullWhere = where ? `${where} AND ${assignedClause}` : `WHERE ${assignedClause}`;
 
-  // NULL until migration 026 adds the column; the table renders "—" for it.
+  // NULL until migration 031 adds the column; the table renders "—" for it.
   const avgReopens = (await hasReopenCount())
     ? 'ROUND(AVG(i.reopen_count)::numeric, 2)::float'
     : 'NULL::float';

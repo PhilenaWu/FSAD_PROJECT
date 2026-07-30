@@ -167,9 +167,15 @@ async function renew(req, res, next) {
     if (!vendor) {
       return next(httpError(404, 'NOT_FOUND', 'Vendor not found.'));
     }
-    if (vendor.contract_start && new Date(contract_end) <= new Date(vendor.contract_start)) {
+    // A renewal must EXTEND the contract: compare against the current
+    // contract_end when one exists (comparing only against contract_start let a
+    // direct API call silently shorten an active contract), falling back to
+    // contract_start for a vendor with no end date yet. Mirrors the UI's
+    // renewDateInvalid guard — but the server is the enforcement.
+    const currentBound = vendor.contract_end ?? vendor.contract_start;
+    if (currentBound && new Date(contract_end) <= new Date(currentBound)) {
       return next(httpError(400, 'INVALID_CONTRACT_DATES',
-        'Contract end date must be after start date.'));
+        'A renewal must extend the contract — the new end date must be after the current one.'));
     }
 
     // Optional replacement contract document (HLD §6.12) — keeps the old URL

@@ -778,13 +778,16 @@ export default function DashboardPage() {
           <Panel title={<>Issue trend{previewChip}</>} subtitle={`Reports per ${trendGranularity}, ${periodLabel}`}>
             {loading ? (
               chartSkeleton
-            ) : (
+            ) : (showExisting && trends.length) || (showImported && importedTrend?.length) ? (
               <Box sx={{ height: 300 }}>
                 <TrendLineChart
                   data={showExisting ? trends : null}
                   imported={showImported ? importedTrend : null}
                 />
               </Box>
+            ) : (
+              // A6: an empty result renders its own info state, never a bare axis.
+              <Alert severity="info">No records match the current filters.</Alert>
             )}
           </Panel>
         </Grid>
@@ -816,7 +819,14 @@ export default function DashboardPage() {
       {/* Contractor scorecard (5.13a) */}
       <Box sx={{ mb: 3 }}>
         <Panel title="Contractor scorecard" subtitle={`Assigned jobs, ${periodLabel}`}>
-          {loading ? <Skeleton variant="rounded" height={160} /> : <ContractorScorecard rows={scorecard} />}
+          {loading ? (
+            <Skeleton variant="rounded" height={160} />
+          ) : scorecard.length ? (
+            <ContractorScorecard rows={scorecard} />
+          ) : (
+            // A6: no assigned jobs in this view — say so instead of an empty table.
+            <Alert severity="info">No assigned jobs match the current filters.</Alert>
+          )}
         </Panel>
       </Box>
 

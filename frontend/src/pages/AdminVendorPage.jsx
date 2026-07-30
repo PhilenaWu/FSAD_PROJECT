@@ -265,8 +265,9 @@ export default function AdminVendorPage() {
   // Inline date sanity checks (VND-T02 mirrored client-side). The server's
   // INVALID_CONTRACT_DATES check remains the enforcement; these save the
   // round-trip and put the error on the field that caused it.
+  // <= matches the server: a zero-length same-day contract is rejected too.
   const contractDatesInvalid = Boolean(
-    form.contract_start && form.contract_end && form.contract_end < form.contract_start
+    form.contract_start && form.contract_end && form.contract_end <= form.contract_start
   );
   // A renewal must extend the contract — an end date on or before the current
   // one (when there is one) is not a renewal.
@@ -409,7 +410,9 @@ export default function AdminVendorPage() {
               Contractor logins are tied to their contract period
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1}>
+          {/* flexWrap: the two icon buttons overflow a 375 px viewport side by
+              side — let the second drop to its own line instead. */}
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ rowGap: 1 }}>
             <Tooltip title="Runs the same check the nightly job performs: suspends any vendor whose contract has lapsed">
               <Button
                 variant="outlined"
@@ -678,7 +681,7 @@ export default function AdminVendorPage() {
                   <TextField label="Contract end" type="date" required fullWidth
                     InputLabelProps={{ shrink: true }}
                     error={contractDatesInvalid}
-                    helperText={contractDatesInvalid ? 'Contract end must be on or after the start' : ''}
+                    helperText={contractDatesInvalid ? 'Contract end must be after the start' : ''}
                     value={form.contract_end} onChange={setField('contract_end')} />
                 </Stack>
 
@@ -699,7 +702,7 @@ export default function AdminVendorPage() {
                     setLoginEmailTouched(true);
                     setForm((f) => ({ ...f, login_email: e.target.value }));
                   }} />
-                <Stack direction="row" spacing={1} alignItems="flex-start">
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
                   <TextField label="Vendor password (admin-set)" required fullWidth
                     helperText="This credential is managed by EM Services — record it and share it with the vendor securely"
                     value={form.login_password} onChange={setField('login_password')} />

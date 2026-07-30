@@ -213,6 +213,7 @@ overdue count drills through to `/inspections?contractor=<name>&overdue=true`.
 | 403 | `FORBIDDEN` | Authenticated but not a manager |
 | 400 | `VALIDATION_ERROR` | Bad `views` list on the PPTX export |
 | 500 | `EXPORT_FAILED` | Deck build/upload failed — UI falls back to CSV |
+| 500 | `SERVER_ERROR` | Any unhandled failure, via the central error handler |
 
 ### Setup / demo data
 

@@ -202,7 +202,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 - **No prior-period data** → `new_records_change_pct` is `null` and the KPI shows "no prior data" rather than a fabricated 0% or a division by zero.
 - **Nothing closed yet** → SLA percentage is 0 with `total_resolved: 0`, not `NaN`.
 - **A job acknowledged but never rectified** → `avg_rectification_days` is `NULL`, rendered `—`.
-- **`reopen_count` column absent** (pre-migration `026`) → `avg_reopens` is `NULL`, rendered `—`; the controller probes `information_schema` once and begins averaging by itself once the column exists.
+- **`reopen_count` column absent** (pre-migration `031`) → `avg_reopens` is `NULL`, rendered `—`; the controller probes `information_schema` once and begins averaging by itself once the column exists.
 - **Trend gap periods** → interior days/weeks/months with no data are filled with 0 so the line does not silently skip quiet periods. (This is client-side bucketing — `utils/trendBuckets.js` — not the SQL: `/analytics/trends` returns only the days that have rows.)
 
 Chart.js heatmap (block × category), trend line, SLA gauge, contractor scorecard, and a ranked priority queue — all responding to **block / category / form section / date-range** filters. Heatmap cells drill through to a filtered `/inspections`. Exports: client-side CSV, and `POST /api/export/pptx` for a PowerPoint deck of the current filtered view (the client's weekly-meeting pain point). **Data Playground:** an Import CSV control blends hypothetical rows (`block,category[,date][,resolution_time_hours]`) into the charts client-side with a Combined / Existing only / Imported only toggle; ≤1 MB and ≤5,000 rows; nothing is persisted and exports always use real data.
@@ -211,9 +211,9 @@ Chart.js heatmap (block × category), trend line, SLA gauge, contractor scorecar
 
 **Overdue is measured against the paused clock (G11).** A record counts as overdue only when `target_deadline` has passed *and* its status is not `On Hold`, `Rectified`, `Resolved` or `Closed`. Held work — the contractor is waiting on site access or a part — does not accrue overdue time, matching both G11 and the overdue-chase job, which skips held records. Were the dashboard to count them, it would accuse a contractor of lateness the system never chased them for. Soft-deleted records are excluded on the same basis as `open_count`.
 
-**The priority queue's frequency term counts open records only.** `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, where frequency is 10 points per *open* record sharing the same block + category, capped at 100. Counting resolved history would rank a block that used to have problems as urgently as one that has them now; long-run recurrence is UC-006's velocity analysis, not this score's job. `avg_reopens` is NULL — rendered `—` — until migration `026` adds `inspections.reopen_count`; the controller probes `information_schema` once and starts averaging automatically when the column appears, so it needs no code change at that point.
+**The priority queue's frequency term counts open records only.** `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, where frequency is 10 points per *open* record sharing the same block + category, capped at 100. Counting resolved history would rank a block that used to have problems as urgently as one that has them now; long-run recurrence is UC-006's velocity analysis, not this score's job. `avg_reopens` is NULL — rendered `—` — until migration `031` adds `inspections.reopen_count`; the controller probes `information_schema` once and starts averaging automatically when the column appears, so it needs no code change at that point.
 
-**Form-section filter (R17 — "Statistic / report").** Answers "which part of the lift fails most" by narrowing every chart to inspections carrying at least one **Defect** in a given section of the paper form. Resolved through `checklist_results → checklist_items.section`, and the dropdown is populated from `checklist_items` itself — so the re-seed to the real 25 paper items (migration `027`) changes the options with no frontend or query change. Matching on Pass rows too would select nearly every inspection and say nothing, so the subquery is scoped to `result = 'Defect'`.
+**Form-section filter (R17 — "Statistic / report").** Answers "which part of the lift fails most" by narrowing every chart to inspections carrying at least one **Defect** in a given section of the paper form. Resolved through `checklist_results → checklist_items.section`, and the dropdown is populated from `checklist_items` itself — so the re-seed to the real 25 paper items (migration `026`) changes the options with no frontend or query change. Matching on Pass rows too would select nearly every inspection and say nothing, so the subquery is scoped to `result = 'Defect'`.
 
 **Annual archive entry point (R16).** The Reports Archive page offers a year picker — derived from the periods already listed, so no extra endpoint is needed to populate it — and a **Download annual archive** button calling `GET /api/reports/annual?year=YYYY` (Davian's D.8). Until that endpoint ships it returns 404, which the page reports as *"Annual archive is not available yet"* rather than a generic failure.
 
@@ -363,8 +363,8 @@ drill-down table flags as outliers.
 ### Main flow
 
 1. Admin opens `/admin/vendors` — vendors listed **soonest-expiring first**, each with a days-until-expiry chip (red expired, amber ≤30 days).
-2. **Onboard:** company details, contact email, account-holder name/title, access reason, contract start/end, and an **optional** contract document uploaded to Cloudinary `/contracts` for reference. Creates the `contractors` row plus a linked `contractor` login.
-3. **Renew:** extends `contract_end`; reactivates the account if it was auto-suspended.
+2. **Onboard:** company details, contact email, account-holder name/title, access reason, contract start/end, and an **optional** contract document uploaded to Cloudinary `/contracts` for reference. The same form sets the login credentials: a login email (auto-suggested from the holder's name + the company's email domain, editable) and an admin-set password with a Generate button. Creates the `contractors` row plus a linked `contractor` login.
+3. **Renew:** extends `contract_end` (the server rejects a date that does not extend the current contract), optionally replacing the stored contract document; reactivates the account if it was auto-suspended.
 4. **Suspend:** early termination — sets `users.status = 'suspended'` immediately.
 5. **Edit details:** contact email, brands serviced, account-holder name/title, access reason. Contract dates change only via Renew, and the login email is immutable — it is the account's identity.
 5a. **Cost evidence:** each row links to `/admin/costs?contractorId=…` — the UC-011 dashboard filtered to that vendor, the evidence behind a renew-or-suspend decision.
@@ -382,7 +382,7 @@ drill-down table flags as outliers.
 
 | Case | Code |
 |---|---|
-| `contract_end` before `contract_start` | `400 INVALID_CONTRACT_DATES` (VND-T02); also caught inline on the form before any request is sent |
+| `contract_end` on or before `contract_start` (a zero-length contract counts) | `400 INVALID_CONTRACT_DATES` (VND-T02); also caught inline on the form before any request is sent |
 | Renewal date on or before the current `contract_end` | Inline field error; the Renew button disables — a non-extension is not a renewal |
 | Login email already registered | `409 EMAIL_ALREADY_EXISTS`, **no rows created** (VND-T03) |
 | Suspended vendor attempts to log in | `403 ACCOUNT_SUSPENDED` (VND-T05) |

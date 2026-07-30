@@ -166,6 +166,17 @@ describe('DashboardPage — data and failure states', () => {
     expect(screen.getByText('61')).toBeInTheDocument();
   });
 
+  test('every panel renders its own info state on an empty result — never a bare axis (A6)', async () => {
+    // beforeEach already mocks heatmap/trends/scorecard/queue as empty.
+    renderPage();
+
+    // Heatmap and trend both use the same wording; the scorecard names jobs.
+    const noRecords = await screen.findAllByText('No records match the current filters.');
+    expect(noRecords.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('No assigned jobs match the current filters.')).toBeInTheDocument();
+    expect(screen.getByText('No open records match the current filters.')).toBeInTheDocument();
+  });
+
   test('a 0% movement shows a neutral "no change", not a green improvement arrow', async () => {
     getSummary.mockResolvedValue({
       open_count: 79, overdue_count: 61, avg_resolution_hours: 91.8,

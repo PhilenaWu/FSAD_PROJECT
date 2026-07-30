@@ -501,8 +501,7 @@ Generates the client's "download as file every year" archive: a single PDF of ev
 | Code | HTTP | Cause |
 |---|---|---|
 | `UNAUTHORIZED` | 401 | Missing, malformed or expired Supabase access token |
-| `FORBIDDEN` | 403 | Authenticated but `role != 'manager'` |
-| `ACCOUNT_SUSPENDED` | 403 | Profile `status = 'suspended'` |
+| `FORBIDDEN` | 403 | Authenticated but `role != 'manager'`, or the profile is suspended — `requireRole` rejects both the same way; the distinct `ACCOUNT_SUSPENDED` code is returned only by `GET /api/users/me`, which the frontend calls at login |
 | `SERVER_ERROR` | 500 | Unhandled failure; central `errorHandler` shape |
 
 #### `GET /api/analytics/filter-options`
@@ -562,7 +561,7 @@ With nothing closed yet: `{ "compliant_count": 0, "total_resolved": 0, "sla_perc
 ```
 
 `avg_rectification_days` is `null` until a job has been both acknowledged and rectified.
-`avg_reopens` is `null` until migration `026` adds `inspections.reopen_count`; the controller probes `information_schema` once and begins averaging automatically.
+`avg_reopens` is `null` until migration `031` adds `inspections.reopen_count`; the controller probes `information_schema` once and begins averaging automatically.
 
 #### `GET /api/analytics/priority-queue`
 
@@ -779,7 +778,7 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 | Token | Frontend obtains the access token via `getAccessToken()` (`lib/auth.js`) and sends `Authorization: Bearer <token>` on REST and on the Socket.IO handshake |
 | Verification | `middleware/auth.js` verifies the Supabase token against the project JWKS locally, then loads the `users` profile row (keyed by the Supabase auth user id) to obtain `role`, `block_number`, `status` |
 | Authorisation | `requireRole(...)` over five roles. Contractor routes additionally scope to the caller's own `contractor_id` (G9); admin cost/vendor routes are `admin`-only |
-| Account status | `users.status = 'suspended'` → 403 `ACCOUNT_SUSPENDED` on every authenticated route (G16) |
+| Account status | `users.status = 'suspended'` → 403 on every role-gated route (G16). The distinct `ACCOUNT_SUSPENDED` code comes from `GET /api/users/me` — the login-time profile fetch — so a suspended vendor learns why at sign-in; other routes reject with the generic `FORBIDDEN` |
 | Cron protection | `cronGuard.js` validates `Authorization: Bearer <CRON_SECRET>` |
 | Headers | `helmet()` |
 | CORS | `cors({ origin: FRONTEND_URL, credentials: true })`; Socket.IO CORS configured separately |
