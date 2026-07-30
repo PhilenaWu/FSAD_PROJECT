@@ -166,6 +166,17 @@ describe('DashboardPage — data and failure states', () => {
     expect(screen.getByText('61')).toBeInTheDocument();
   });
 
+  test('a 0% movement shows a neutral "no change", not a green improvement arrow', async () => {
+    getSummary.mockResolvedValue({
+      open_count: 79, overdue_count: 61, avg_resolution_hours: 91.8,
+      sla_percentage: 63.92, new_last_30: 60, new_prior_30: 60,
+      new_records_change_pct: 0, sla_threshold_hrs: 72,
+    });
+    renderPage();
+
+    expect(await screen.findByText(/no change vs prior 30 days/)).toBeInTheDocument();
+  });
+
   test('a failed load shows the retry banner, and Retry refetches', async () => {
     getSummary.mockRejectedValueOnce(new Error('backend down'));
     renderPage();

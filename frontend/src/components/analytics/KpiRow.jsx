@@ -4,11 +4,14 @@
 import { Grid2 as Grid, Paper, Stack, Typography } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import TrendingFlatIcon from '@mui/icons-material/TrendingFlat';
 
 function Tile({ label, value, sub, trend }) {
-  // trend: positive % = more new reports (bad → red), negative = fewer (good → green)
-  const TrendIcon = trend > 0 ? TrendingUpIcon : TrendingDownIcon;
-  const trendColor = trend > 0 ? 'error.main' : 'success.main';
+  // trend: positive % = more new reports (bad → red), negative = fewer (good →
+  // green), exactly 0 = flat and neutral — a green down-arrow on "0%" would
+  // claim an improvement that didn't happen.
+  const TrendIcon = trend > 0 ? TrendingUpIcon : trend < 0 ? TrendingDownIcon : TrendingFlatIcon;
+  const trendColor = trend > 0 ? 'error.main' : trend < 0 ? 'success.main' : 'text.secondary';
 
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%' }}>
@@ -22,8 +25,7 @@ function Tile({ label, value, sub, trend }) {
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: trendColor }}>
           <TrendIcon fontSize="small" />
           <Typography variant="caption" fontWeight={600}>
-            {trend > 0 ? '+' : ''}
-            {trend}% vs prior 30 days
+            {trend === 0 ? 'no change' : `${trend > 0 ? '+' : ''}${trend}%`} vs prior 30 days
           </Typography>
         </Stack>
       )}
