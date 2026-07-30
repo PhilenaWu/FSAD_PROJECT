@@ -575,10 +575,81 @@ Score = `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, wh
               "status": "Assigned", "ai_priority_score": 88,
               "created_at": "2026-06-22T09:15:00Z", "composite_score": 71.4 } ] }
 ```
+**Error 400 — remark too short:**
+```json
+{ "code": "VALIDATION_ERROR", "message": "Closing remark must be at least 10 characters." }
+```
+
+---
+
+---
+
+### 6.2a My Reports (UC-003 — the originator's own view)
+
+> Mounted at `/api/my-reports`, separate from the manager-facing `/api/inspections`
+> routes. Every route here is scoped to the caller: a record belonging to someone
+> else returns `404 NOT_FOUND`, never `403`, so the endpoint never confirms the
+> existence of a record it will not show. The originator's *list* of live records
+> stays on `GET /api/inspections/my` (§6.2).
+
+#### GET /api/my-reports/history
+**Auth:** `resident` | `inspector`  
+The caller's closed records, most recently closed first. Closing soft-deletes a
+record (`is_deleted = TRUE`) for the 5-year audit trail, which removes it from
+`GET /api/inspections/my`; this is where it goes.
+
+**Response 200:** *(same row shape as `/api/inspections/my`, all with `is_deleted: true`)*
+
+---
+
+#### GET /api/my-reports/:id
+**Auth:** `resident` | `inspector`  
+Full detail for one of the caller's own records, live or closed: the row plus
+`history` (audit trail, newest first, with actor names) and `checklist_results`
+(joined to `checklist_items` for section and item text — resolved regardless of
+`active`, so a retired template item still renders).
+
+**Error 404:**
+```json
+{ "code": "NOT_FOUND", "message": "Report not found." }
+```
+
+---
+
+#### POST /api/my-reports/:id/rating
+**Auth:** `resident`  
+Submits a satisfaction rating on a finished complaint (UC-003).
+
+Ratable statuses are **`Resolved` and `Closed`**. `Closed` is included
+deliberately: the workflow runs Assigned → Acknowledged → Rectified → Closed and
+only reaches `Resolved` if a manager sets it by hand, so gating on `Resolved`
+alone would mean most reports could never be rated at all. A rating is the
+resident's opinion of the outcome, not a state transition — it writes no
+`inspection_history` row, so the append-only audit trail is unaffected.
+
+**Request:**
+```json
+{ "rating": 4, "comment": "Fixed quickly, thank you!" }
+```
+**Response 200:**
+```json
+{ "id": "INC-7f3a...", "satisfaction_rating": 4, "satisfaction_comment": "Fixed quickly, thank you!" }
+```
+**Error 409 — already rated:**
+```json
+{ "code": "ALREADY_RATED", "message": "You have already submitted a rating for this record." }
+```
+**Error 409 — work not finished:**
+```json
+{ "code": "INVALID_STATE", "message": "This report can be rated once the work is done." }
+```
+
+---
 
 #### `POST /api/export/pptx` — **manager, admin**
 
 Re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift from the screen. Always uses database rows — never Data Playground preview rows.
+
 
 ```json
 // Request

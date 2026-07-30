@@ -3,7 +3,7 @@
 // the Supabase access token in the handshake so the backend can authenticate
 // and auto-join the user's role rooms. Exposes the live socket and a `connected`
 // flag for "reconnecting…" UI.
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import { getAccessToken } from '../lib/auth';
@@ -37,6 +37,9 @@ export function SocketProvider({ children }) {
       if (!active || !token) return;
       created = io(import.meta.env.VITE_API_URL, {
         auth: { token },
+        // UC-003 E1: retry a dropped connection every 5 s while the page shows
+        // the "live updates paused" banner.
+        reconnectionDelay: 5000,
       });
       created.on('connect', () => setConnected(true));
       created.on('disconnect', () => setConnected(false));
@@ -53,8 +56,20 @@ export function SocketProvider({ children }) {
     };
   }, [user?.id]);
 
+  // Per-record rooms (UC-003 `insp-{id}`), joined when a detail view opens and
+  // left when it closes. Role rooms are joined server-side on connect and need
+  // nothing here. The server re-checks membership — these are a request, not a
+  // grant. Reads socketRef so the identity stays stable across renders.
+  const joinRoom = useCallback((room) => {
+    socketRef.current?.emit('join', room);
+  }, []);
+
+  const leaveRoom = useCallback((room) => {
+    socketRef.current?.emit('leave', room);
+  }, []);
+
   return (
-    <SocketContext.Provider value={{ socket, connected }}>
+    <SocketContext.Provider value={{ socket, connected, joinRoom, leaveRoom }}>
       {children}
     </SocketContext.Provider>
   );

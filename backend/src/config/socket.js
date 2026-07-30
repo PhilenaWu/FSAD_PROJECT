@@ -12,6 +12,29 @@ const db = require('./db');
 // Single io instance for the process, set by initSocket() and read by getIO().
 let io = null;
 
+// Guards the client-supplied record id in canJoinRecordRoom below.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// May this user listen to this per-record room (UC-003 `insp-{id}`)? Room names
+// arrive from the client, so membership is decided here rather than trusted —
+// otherwise anyone could name a room and watch a stranger's complaint. Only
+// `insp-` rooms can be joined on request; role rooms are assigned on connect.
+//
+// The uuid shape check is not cosmetic: a malformed id reaches pg as an invalid
+// uuid and rejects, and this runs inside an async socket handler that nothing
+// awaits — an unhandled rejection there takes the whole process down.
+async function canJoinRecordRoom(room, userId) {
+  if (typeof room !== 'string' || !room.startsWith('insp-')) return false;
+  const id = room.slice(5);
+  if (!UUID_RE.test(id)) return false;
+
+  const { rows } = await db.query(
+    'SELECT 1 FROM inspections WHERE id = $1 AND (resident_id = $2 OR inspector_id = $2)',
+    [id, userId]
+  );
+  return rows.length > 0;
+}
+
 // Attach a Socket.IO server to the given HTTP server. CORS is locked to the one
 // allowed frontend origin, mirroring the Express CORS config in app.js.
 function initSocket(httpServer) {
@@ -61,6 +84,15 @@ function initSocket(httpServer) {
     if (role === 'inspector') socket.join('inspector-team');
     if (role === 'contractor') socket.join(`contractor-${id}`);
     if (role === 'resident' && block_number) socket.join(`block-${block_number}`);
+
+    // UC-003: an originator watching one record joins its per-record room so
+    // status changes reach them directly (a resident's block room is too broad,
+    // and an inspector has no status room at all).
+    socket.on('join', async (room) => {
+      if (await canJoinRecordRoom(room, id)) socket.join(room);
+    });
+
+    socket.on('leave', (room) => socket.leave(room));
   });
 
   return io;
@@ -75,4 +107,4 @@ function getIO() {
   return io;
 }
 
-module.exports = { initSocket, getIO };
+module.exports = { initSocket, getIO, canJoinRecordRoom };

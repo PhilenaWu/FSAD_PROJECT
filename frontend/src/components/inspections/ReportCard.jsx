@@ -1,0 +1,230 @@
+// One report on the UC-003 "My reports" page — the summary line, the rating
+// control once the work is done, and the expandable detail (checklist + audit
+// timeline). Used for both live reports and closed ones in the history section;
+// the parent owns all state and passes it down.
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Collapse,
+  Divider,
+  Paper,
+  Rating,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
+import { groupBySection } from '../../utils/myReports';
+import { statusDisplay } from '../../utils/statusDisplay';
+import { timeAgo } from '../../utils/timeAgo';
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+export default function ReportCard({
+  report,
+  ratable,
+  expanded,
+  detail,
+  detailLoading,
+  detailError,
+  draft,
+  ratingBusy,
+  onToggle,
+  onRetryDetail,
+  onDraftChange,
+  onSubmitRating,
+}) {
+  const display = statusDisplay(report.status);
+  const panelId = `report-detail-${report.id}`;
+
+  return (
+    <Paper elevation={2} sx={{ p: { xs: 2.5, sm: 3 }, borderRadius: 3 }}>
+      <Stack direction="row" spacing={2}>
+        {report.photo_url && (
+          <Box
+            component="img"
+            src={report.photo_url}
+            alt=""
+            sx={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 2, flexShrink: 0 }}
+          />
+        )}
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+            <Typography variant="subtitle1" fontWeight={700} sx={{ minWidth: 0 }}>
+              {report.title}
+            </Typography>
+            <Chip size="small" color={display.color} label={display.label} />
+          </Stack>
+          <Typography variant="body2" color="text.secondary" noWrap>
+            {report.category} · Block {report.location_block}
+            {report.location_unit ? ` #${report.location_unit}` : ''} ·{' '}
+            {formatDate(report.created_at)}
+          </Typography>
+
+          {report.satisfaction_rating ? (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+              <Rating size="small" value={report.satisfaction_rating} readOnly />
+              <Typography variant="caption" color="text.secondary">
+                Rating submitted — thank you.
+              </Typography>
+            </Stack>
+          ) : (
+            ratable && (
+              <Stack spacing={1} sx={{ mt: 1.5 }}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Rating
+                    size="small"
+                    value={draft.value}
+                    onChange={(_, value) => onDraftChange({ ...draft, value })}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    How was the resolution?
+                  </Typography>
+                </Stack>
+                {draft.value ? (
+                  <Stack direction="row" spacing={1} alignItems="flex-start">
+                    <TextField
+                      size="small"
+                      fullWidth
+                      placeholder="Add a comment (optional)"
+                      value={draft.comment}
+                      onChange={(e) => onDraftChange({ ...draft, comment: e.target.value })}
+                    />
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled={ratingBusy}
+                      onClick={onSubmitRating}
+                    >
+                      Submit
+                    </Button>
+                  </Stack>
+                ) : null}
+              </Stack>
+            )
+          )}
+
+          <Button
+            size="small"
+            sx={{ mt: 1, px: 0 }}
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-controls={panelId}
+          >
+            {expanded ? 'Hide details' : 'View details'}
+          </Button>
+        </Box>
+      </Stack>
+
+      <Collapse in={expanded} unmountOnExit>
+        <Box id={panelId}>
+          <Divider sx={{ my: 2 }} />
+          {detailLoading ? (
+            <Stack alignItems="center" sx={{ py: 3 }}>
+              <CircularProgress size={24} />
+            </Stack>
+          ) : detailError ? (
+            <Alert
+              severity="error"
+              action={
+                <Button size="small" onClick={onRetryDetail}>
+                  Retry
+                </Button>
+              }
+            >
+              Could not load the details for this report.
+            </Alert>
+          ) : detail ? (
+            <Stack spacing={2}>
+              {detail.description && <Typography variant="body2">{detail.description}</Typography>}
+
+              {detail.closing_remark && (
+                <Alert severity="success" icon={false}>
+                  <Typography variant="subtitle2" fontWeight={700}>
+                    How it was resolved
+                  </Typography>
+                  <Typography variant="body2">{detail.closing_remark}</Typography>
+                </Alert>
+              )}
+
+              {detail.checklist_results?.length > 0 && (
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+                    Checklist
+                  </Typography>
+                  <Stack spacing={1.5}>
+                    {groupBySection(detail.checklist_results).map(([section, items]) => (
+                      <Box key={section}>
+                        <Typography variant="caption" color="text.secondary">
+                          {section}
+                        </Typography>
+                        {items.map((item) => (
+                          <Stack
+                            key={item.id}
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            sx={{ mt: 0.5 }}
+                          >
+                            <Chip
+                              size="small"
+                              label={item.severity ?? item.result}
+                              color={item.result === 'Defect' ? 'warning' : 'success'}
+                              variant={item.result === 'Defect' ? 'filled' : 'outlined'}
+                            />
+                            <Typography variant="body2" sx={{ minWidth: 0 }}>
+                              {item.item_text}
+                              {item.remark ? ` — ${item.remark}` : ''}
+                            </Typography>
+                          </Stack>
+                        ))}
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+                  Progress
+                </Typography>
+                {detail.history.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No updates yet — your report is waiting to be reviewed.
+                  </Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {detail.history.map((h) => (
+                      <Box key={h.id}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {h.action}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {h.actor_name ? `${h.actor_name} · ` : ''}
+                          {timeAgo(h.created_at)}
+                        </Typography>
+                        {h.note && (
+                          <Typography variant="body2" color="text.secondary">
+                            {h.note}
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+            </Stack>
+          ) : null}
+        </Box>
+      </Collapse>
+    </Paper>
+  );
+}

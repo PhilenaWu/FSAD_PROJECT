@@ -9,6 +9,7 @@ const config = require('./config/env');
 const rateLimiter = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const inspectionRoutes = require('./routes/inspections');
+const myReportRoutes = require('./routes/myReports');
 const liftRoutes = require('./routes/lifts');
 const checklistItemRoutes = require('./routes/checklistItems');
 const contractorRoutes = require('./routes/contractors');
@@ -48,6 +49,7 @@ app.get('/health', (req, res) => {
 
 // Feature routes (more mounted here as they land).
 app.use('/api/inspections', inspectionRoutes);
+app.use('/api/my-reports', myReportRoutes);
 app.use('/api/lifts', liftRoutes);
 app.use('/api/checklist-items', checklistItemRoutes);
 app.use('/api/contractors', contractorRoutes);
