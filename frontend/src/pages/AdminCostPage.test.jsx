@@ -166,16 +166,18 @@ describe('AdminCostPage', () => {
     );
     renderPage();
 
-    const past = (await screen.findByText('44A-L1')).closest('tr');
-    expect(within(past).getByText('Review replacement')).toBeInTheDocument();
+    // Queried from the status chip outwards: lift codes also appear in the
+    // jobs table's Lift column, so the chip is the unambiguous anchor.
+    const past = (await screen.findByText('Review replacement')).closest('tr');
+    expect(within(past).getByText('44A-L1')).toBeInTheDocument();
     expect(within(past).getByText('now')).toBeInTheDocument();
 
-    const approaching = screen.getByText('44B-L1').closest('tr');
-    expect(within(approaching).getByText('Approaching review')).toBeInTheDocument();
+    const approaching = screen.getByText('Approaching review').closest('tr');
+    expect(within(approaching).getByText('44B-L1')).toBeInTheDocument();
     expect(within(approaching).getByText('~4 mo')).toBeInTheDocument();
 
-    const healthy = screen.getByText('45B-L1').closest('tr');
-    expect(within(healthy).getByText('Healthy')).toBeInTheDocument();
+    const healthy = screen.getByText('Healthy').closest('tr');
+    expect(within(healthy).getByText('45B-L1')).toBeInTheDocument();
   });
 
   test('a job with no recent spend shows a dash, never a fabricated date', async () => {
@@ -222,6 +224,136 @@ describe('AdminCostPage', () => {
 
     expect(screen.queryByText('$987,654.00')).not.toBeInTheDocument();
     expect(screen.getByText('$222,222.00')).toBeInTheDocument();
+  });
+
+  test('the jobs table shows the latest 10, and All reveals the rest', async () => {
+    // 14 jobs, newest first, each $100 apart so the sort is checkable.
+    const many = Array.from({ length: 14 }, (_, i) => ({
+      id: `job-${i}`,
+      closed_at: `2026-07-${String(28 - i).padStart(2, '0')}`,
+      block: '44A',
+      category: 'Doors',
+      lift: '44A-L1',
+      contractor: 'Otis Elevator Co.',
+      actual_cost: 100 + i,
+    }));
+    getCostAnalytics.mockResolvedValue(analytics({ jobs: many }));
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: /Latest 10/i })).toBeInTheDocument();
+    expect(screen.getByText('2026-07-28')).toBeInTheDocument();
+    expect(screen.queryByText('2026-07-15')).not.toBeInTheDocument(); // 14th row
+
+    await userEvent.click(screen.getByRole('button', { name: /All \(14\)/i }));
+    expect(screen.getByText('2026-07-15')).toBeInTheDocument();
+  });
+
+  test('sorting runs over every row, not just the ten on screen', async () => {
+    // The dearest job is the OLDEST, so it is outside the default ten-row
+    // window — sorting by cost has to reach it.
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      id: `job-${i}`,
+      closed_at: `2026-07-${String(24 - i).padStart(2, '0')}`,
+      block: '44A',
+      category: 'Doors',
+      lift: null,
+      contractor: 'Otis Elevator Co.',
+      actual_cost: 100 + i * 10,
+    }));
+    getCostAnalytics.mockResolvedValue(analytics({ jobs: many }));
+    renderPage();
+
+    // "Actual cost" is a sort label on the contractor table too; the "Closed"
+    // header is unique to the jobs table, so scope through it.
+    const jobsTable = (await screen.findByText('Closed')).closest('table');
+    await userEvent.click(within(jobsTable).getByRole('button', { name: /Actual cost/i }));
+    expect(screen.getByText('$210.00')).toBeInTheDocument(); // dearest, oldest row
+  });
+
+  test('a job with no lift renders a dash in the Lift column', async () => {
+    getCostAnalytics.mockResolvedValue(
+      analytics({ jobs: [{ ...analytics().jobs[0], lift: null }] })
+    );
+    renderPage();
+
+    const row = (await screen.findByText('2026-07-24')).closest('tr');
+    expect(within(row).getByText('—')).toBeInTheDocument();
+  });
+
+  test('the outlier filter narrows to jobs over twice their category average', async () => {
+    // Category average is 84163/72 ≈ $1,169, so only the $9,000 job is an outlier.
+    const rows = [
+      { ...analytics().jobs[0], id: 'normal', actual_cost: 1180 },
+      { ...analytics().jobs[0], id: 'big', closed_at: '2026-07-01', actual_cost: 9000 },
+    ];
+    getCostAnalytics.mockResolvedValue(analytics({ jobs: rows }));
+    renderPage();
+
+    const filter = await screen.findByRole('button', { name: /Outliers \(1\)/i });
+    expect(screen.getByText('$1,180.00')).toBeInTheDocument();
+
+    await userEvent.click(filter);
+    expect(screen.getByText('$9,000.00')).toBeInTheDocument();
+    expect(screen.queryByText('$1,180.00')).not.toBeInTheDocument();
+  });
+
+  test('the outlier filter is disabled when nothing qualifies', async () => {
+    renderPage();
+    expect(await screen.findByRole('button', { name: /Outliers \(0\)/i })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
+  });
+
+  test('the table category and contractor filters narrow the rows, not the charts', async () => {
+    const rows = [
+      { ...analytics().jobs[0], id: 'a', category: 'Doors', contractor: 'Otis Elevator Co.', actual_cost: 1180 },
+      { ...analytics().jobs[0], id: 'b', closed_at: '2026-07-20', category: 'Lift', contractor: 'KONE Pte Ltd', actual_cost: 1820 },
+    ];
+    getCostAnalytics.mockResolvedValue(analytics({ jobs: rows }));
+    renderPage();
+
+    expect(await screen.findByText('$1,180.00')).toBeInTheDocument();
+    expect(screen.getByText('$1,820.00')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText('Category'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Lift' }));
+
+    expect(screen.queryByText('$1,180.00')).not.toBeInTheDocument();
+    expect(screen.getByText('$1,820.00')).toBeInTheDocument();
+    // The KPI tiles keep the whole filtered period — these controls are local.
+    expect(screen.getByText('$268,600.00')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText('Contractor'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Otis Elevator Co.' }));
+    expect(screen.getByText(/No jobs match these table filters/)).toBeInTheDocument();
+  });
+
+  test('the Order control and the column headers drive one shared sort', async () => {
+    const rows = [
+      { ...analytics().jobs[0], id: 'cheap', closed_at: '2026-07-24', actual_cost: 100 },
+      { ...analytics().jobs[0], id: 'dear', closed_at: '2026-07-01', actual_cost: 9000 },
+    ];
+    getCostAnalytics.mockResolvedValue(analytics({ jobs: rows }));
+    renderPage();
+
+    // Default is newest first, so the cheap 24 Jul row leads.
+    const order = await screen.findByLabelText('Order');
+    expect(within(order.closest('.MuiFormControl-root')).getByText('Newest first')).toBeInTheDocument();
+
+    await userEvent.click(order);
+    await userEvent.click(await screen.findByRole('option', { name: 'Highest cost' }));
+
+    // Three tables share the page, so scope to the jobs one before reading
+    // its first data row.
+    const jobsTable = screen.getByText('Closed').closest('table');
+    const firstRow = within(jobsTable).getAllByRole('row')[1];
+    expect(within(firstRow).getByText('$9,000.00')).toBeInTheDocument();
+
+    // Clicking a column the shortcuts don't cover leaves the control honest
+    // rather than showing a stale order.
+    await userEvent.click(within(jobsTable).getByRole('button', { name: /Category/i }));
+    expect(screen.getByText('sorted by a column')).toBeInTheDocument();
   });
 
   test('a non-admin is refused the page outright', async () => {

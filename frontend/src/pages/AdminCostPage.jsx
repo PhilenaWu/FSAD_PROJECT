@@ -32,8 +32,9 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  TableSortLabel,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -53,6 +54,7 @@ import CategoryBarChart from '../components/cost/CategoryBarChart';
 import CostTrendChart from '../components/cost/CostTrendChart';
 import liftStatusChip from '../components/cost/liftStatusChip';
 import { fmtMoney } from '../components/cost/formatMoney';
+import useTableSort from '../components/common/useTableSort';
 import {
   getCostFilterOptions,
   getCostSummary,
@@ -66,6 +68,9 @@ import {
 // `contractorId` holds the contractor's UUID — the backend filters on the
 // foreign key, not on a display name that could change.
 const FILTER_KEYS = ['from', 'to', 'block', 'category', 'contractorId'];
+
+// How many job rows the drill-down table shows before "All" is chosen.
+const JOBS_PREVIEW_COUNT = 10;
 
 const isoDaysAgo = (days) =>
   new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -102,8 +107,18 @@ export default function AdminCostPage() {
   const [loading, setLoading] = useState(true);
   const [fetchFailed, setFetchFailed] = useState(false);
 
-  // Contractor table sort — cost-heaviest first by default.
-  const [sort, setSort] = useState({ key: 'actual_cost', dir: 'desc' });
+  // Both tables sort the same way — cost-heaviest first by default.
+  const contractorSort = useTableSort('actual_cost');
+  const jobsSort = useTableSort('closed_at');
+
+  // Job-table-only controls. These narrow what the table shows without
+  // touching the charts or the KPIs, the same way the manager dashboard's
+  // priority queue has its own view controls. The filter bar at the top of
+  // the page re-queries the server and moves everything; these do not.
+  const [jobsLimit, setJobsLimit] = useState(JOBS_PREVIEW_COUNT);
+  const [outliersOnly, setOutliersOnly] = useState(false);
+  const [jobsCategory, setJobsCategory] = useState('');
+  const [jobsContractor, setJobsContractor] = useState('');
 
   // UC-004 → UC-011 live link: a manager closing a job (which records the
   // actual_cost) prompts this dashboard to refresh.
@@ -272,27 +287,9 @@ export default function AdminCostPage() {
       </InputAdornment>
     ) : null;
 
-  const sortedContractors = useMemo(() => {
-    const rows = [...byContractor];
-    const { key, dir } = sort;
-    rows.sort((a, b) => {
-      const cmp = typeof a[key] === 'string' ? a[key].localeCompare(b[key]) : a[key] - b[key];
-      return dir === 'asc' ? cmp : -cmp;
-    });
-    return rows;
-  }, [byContractor, sort]);
-
-  const toggleSort = (key) =>
-    setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
-
-  const sortLabel = (key, label) => (
-    <TableSortLabel
-      active={sort.key === key}
-      direction={sort.key === key ? sort.dir : 'desc'}
-      onClick={() => toggleSort(key)}
-    >
-      {label}
-    </TableSortLabel>
+  const sortedContractors = useMemo(
+    () => contractorSort.sortRows(byContractor),
+    [byContractor, contractorSort]
   );
 
   // Per-category average job cost — flags outlier jobs (>2× category average)
@@ -301,6 +298,62 @@ export default function AdminCostPage() {
     () => Object.fromEntries(byCategory.map((c) => [c.category, c.jobs ? c.actual_cost / c.jobs : 0])),
     [byCategory]
   );
+
+  // A job billed at more than twice its category's average in the current
+  // view. The comparison is against the filtered aggregate, so narrowing the
+  // filters re-decides what counts as unusual.
+  const isOutlier = useCallback(
+    (job) => {
+      const avg = categoryAvg[job.category];
+      return avg > 0 && job.actual_cost > 2 * avg;
+    },
+    [categoryAvg]
+  );
+
+  // The job rows the table actually renders: table-local filters, then sort,
+  // then the row cap. Sorting before capping matters — otherwise "highest
+  // cost" would only ever sort the ten rows that happened to be newest.
+  const jobRows = useMemo(() => {
+    const filtered = jobs.filter(
+      (j) =>
+        (!jobsCategory || j.category === jobsCategory) &&
+        (!jobsContractor || j.contractor === jobsContractor) &&
+        (!outliersOnly || isOutlier(j))
+    );
+    return jobsSort.sortRows(filtered);
+  }, [jobs, jobsCategory, jobsContractor, outliersOnly, isOutlier, jobsSort]);
+
+  const visibleJobs = jobsLimit === Infinity ? jobRows : jobRows.slice(0, jobsLimit);
+  const outlierCount = useMemo(() => jobs.filter(isOutlier).length, [jobs, isOutlier]);
+  const jobsFiltered = Boolean(jobsCategory || jobsContractor || outliersOnly);
+
+  // Options come from the rows on screen, not the whole estate — an option
+  // that cannot match anything in the current view would be a dead end.
+  const jobCategories = useMemo(
+    () => [...new Set(jobs.map((j) => j.category))].sort(),
+    [jobs]
+  );
+  const jobContractors = useMemo(
+    () => [...new Set(jobs.map((j) => j.contractor))].sort(),
+    [jobs]
+  );
+
+  // The four orders worth a one-click shortcut. Column headers and this
+  // control share one sort state, so clicking either keeps the other honest.
+  const JOB_ORDERS = [
+    { label: 'Newest first', key: 'closed_at', dir: 'desc' },
+    { label: 'Oldest first', key: 'closed_at', dir: 'asc' },
+    { label: 'Highest cost', key: 'actual_cost', dir: 'desc' },
+    { label: 'Lowest cost', key: 'actual_cost', dir: 'asc' },
+  ];
+  const activeOrder =
+    JOB_ORDERS.find((o) => o.key === jobsSort.sort.key && o.dir === jobsSort.sort.dir)?.label ?? '';
+
+  const clearJobFilters = () => {
+    setJobsCategory('');
+    setJobsContractor('');
+    setOutliersOnly(false);
+  };
 
   // Auto-written executive summary — recomputed from the filtered aggregates.
   // (Must stay above the role-gate return: hooks can't be conditional.)
@@ -727,9 +780,9 @@ export default function AdminCostPage() {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>{sortLabel('contractor', 'Contractor')}</TableCell>
-                    <TableCell align="right">{sortLabel('jobs', 'Jobs')}</TableCell>
-                    <TableCell align="right">{sortLabel('actual_cost', 'Actual cost')}</TableCell>
+                    <TableCell>{contractorSort.sortLabel('contractor', 'Contractor')}</TableCell>
+                    <TableCell align="right">{contractorSort.sortLabel('jobs', 'Jobs')}</TableCell>
+                    <TableCell align="right">{contractorSort.sortLabel('actual_cost', 'Actual cost')}</TableCell>
                     <TableCell align="right">Avg cost / job</TableCell>
                     <TableCell align="right">Share of spend</TableCell>
                     <TableCell align="right">Vs peers</TableCell>
@@ -791,50 +844,162 @@ export default function AdminCostPage() {
           costing over 2× their category's average get an outlier flag. */}
       <CostPanel
         title="Recent costed jobs"
-        subtitle={`Latest close-outs with a recorded cost, ${periodLabel} — showing ${Math.min(jobs.length, 10)} of ${jobs.length}`}
+        subtitle={
+          jobRows.length
+            ? `Every close-out with a recorded cost, ${periodLabel} — showing ${visibleJobs.length} of ${jobRows.length}${
+                outliersOnly ? ` outlier${jobRows.length === 1 ? '' : 's'}` : ''
+              }. Click a column to sort.`
+            : `Close-outs with a recorded cost, ${periodLabel}`
+        }
+        action={
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            {/* Outliers are the reason to open this table at all, so the
+                filter states its own count rather than hiding it behind a click. */}
+            <Tooltip
+              title={
+                outlierCount
+                  ? 'Jobs billed at over twice their category average in this view'
+                  : 'No job in this view is over twice its category average'
+              }
+            >
+              <span>
+                <Chip
+                  size="small"
+                  label={`Outliers (${outlierCount})`}
+                  color={outliersOnly ? 'warning' : 'default'}
+                  variant={outliersOnly ? 'filled' : 'outlined'}
+                  disabled={!outlierCount && !outliersOnly}
+                  onClick={() => setOutliersOnly((v) => !v)}
+                />
+              </span>
+            </Tooltip>
+            <ToggleButtonGroup
+              value={jobsLimit}
+              exclusive
+              size="small"
+              onChange={(_e, v) => v && setJobsLimit(v)}
+            >
+              <ToggleButton value={JOBS_PREVIEW_COUNT} sx={{ px: 2, textTransform: 'none' }}>
+                Latest {JOBS_PREVIEW_COUNT}
+              </ToggleButton>
+              <ToggleButton value={Infinity} sx={{ px: 2, textTransform: 'none' }}>
+                All ({jobRows.length})
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
+        }
       >
+        {/* Table-local filters. These narrow the rows below only — the charts
+            and KPIs keep the whole filtered period, so the category average an
+            outlier is measured against does not move under the reader. */}
+        {!loading && jobs.length > 0 && (
+          <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+            <TextField
+              select
+              size="small"
+              label="Category"
+              value={jobsCategory}
+              onChange={(e) => setJobsCategory(e.target.value)}
+              sx={{ minWidth: 160 }}
+            >
+              <MenuItem value="">All categories</MenuItem>
+              {jobCategories.map((c) => (
+                <MenuItem key={c} value={c}>{c}</MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              size="small"
+              label="Contractor"
+              value={jobsContractor}
+              onChange={(e) => setJobsContractor(e.target.value)}
+              sx={{ minWidth: 200 }}
+            >
+              <MenuItem value="">All contractors</MenuItem>
+              {jobContractors.map((c) => (
+                <MenuItem key={c} value={c}>{c}</MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              size="small"
+              label="Order"
+              value={activeOrder}
+              onChange={(e) => {
+                const o = JOB_ORDERS.find((x) => x.label === e.target.value);
+                if (o) jobsSort.setSort({ key: o.key, dir: o.dir });
+              }}
+              sx={{ minWidth: 170 }}
+              helperText={activeOrder ? '' : 'sorted by a column'}
+            >
+              {JOB_ORDERS.map((o) => (
+                <MenuItem key={o.label} value={o.label}>{o.label}</MenuItem>
+              ))}
+            </TextField>
+            {jobsFiltered && (
+              <Chip
+                label="Clear table filters"
+                size="small"
+                variant="outlined"
+                color="warning"
+                onDelete={clearJobFilters}
+                onClick={clearJobFilters}
+                sx={{ alignSelf: 'center' }}
+              />
+            )}
+          </Stack>
+        )}
+
         {loading ? (
           <Skeleton variant="rounded" height={240} />
-        ) : jobs.length ? (
-          <TableContainer>
-            <Table size="small">
+        ) : visibleJobs.length ? (
+          // Capped so "All" on a year of history scrolls inside the panel
+          // instead of pushing the rest of the page away.
+          <TableContainer sx={{ maxHeight: jobsLimit === Infinity ? 520 : 'none' }}>
+            <Table size="small" stickyHeader={jobsLimit === Infinity}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Closed</TableCell>
-                  <TableCell>Block</TableCell>
-                  <TableCell>Category</TableCell>
-                  <TableCell>Contractor</TableCell>
-                  <TableCell align="right">Actual cost</TableCell>
+                  <TableCell>{jobsSort.sortLabel('closed_at', 'Closed')}</TableCell>
+                  <TableCell>{jobsSort.sortLabel('block', 'Block')}</TableCell>
+                  <TableCell>{jobsSort.sortLabel('lift', 'Lift')}</TableCell>
+                  <TableCell>{jobsSort.sortLabel('category', 'Category')}</TableCell>
+                  <TableCell>{jobsSort.sortLabel('contractor', 'Contractor')}</TableCell>
+                  <TableCell align="right">{jobsSort.sortLabel('actual_cost', 'Actual cost')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {jobs.slice(0, 10).map((j) => {
-                  const avg = categoryAvg[j.category];
-                  const outlier = avg > 0 && j.actual_cost > 2 * avg;
-                  return (
-                    <TableRow key={j.id} hover>
-                      <TableCell>{j.closed_at}</TableCell>
-                      <TableCell>{j.block}</TableCell>
-                      <TableCell>{j.category}</TableCell>
-                      <TableCell>{j.contractor}</TableCell>
-                      <TableCell align="right">
-                        <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                          {outlier && (
-                            <Tooltip title={`Over 2× the ${j.category} average of ${fmtMoney(avg)}`}>
-                              <Chip size="small" color="warning" label="Outlier" />
-                            </Tooltip>
-                          )}
-                          <span>{fmtMoney(j.actual_cost)}</span>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {visibleJobs.map((j) => (
+                  <TableRow key={j.id} hover>
+                    <TableCell>{j.closed_at}</TableCell>
+                    <TableCell>{j.block}</TableCell>
+                    {/* Estate defects aren't tied to a lift — say so rather
+                        than leaving the cell ambiguously blank. */}
+                    <TableCell>{j.lift ?? '—'}</TableCell>
+                    <TableCell>{j.category}</TableCell>
+                    <TableCell>{j.contractor}</TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                        {isOutlier(j) && (
+                          <Tooltip title={`Over 2× the ${j.category} average of ${fmtMoney(categoryAvg[j.category])}`}>
+                            <Chip size="small" color="warning" label="Outlier" />
+                          </Tooltip>
+                        )}
+                        <span>{fmtMoney(j.actual_cost)}</span>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </TableContainer>
         ) : (
-          <Alert severity="info">No costed jobs match the current filters.</Alert>
+          <Alert severity="info">
+            {outliersOnly && !jobsCategory && !jobsContractor
+              ? 'No outlier jobs in this view — every job is within twice its category average.'
+              : jobsFiltered
+                ? 'No jobs match these table filters. Clear them to see the rest of the period.'
+                : 'No costed jobs match the current filters.'}
+          </Alert>
         )}
       </CostPanel>
 
