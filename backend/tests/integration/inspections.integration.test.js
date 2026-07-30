@@ -374,11 +374,23 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.history.push({ inspection_id, actor_id, action, previous_status, new_status, note });
     return { rows: [] };
   }
-  // contractor existence check: SELECT id, contact_email FROM contractors WHERE id = $1
+  // contractor existence check:
+  // SELECT id, contact_email, user_id FROM contractors WHERE id = $1
+  // user_id is the account holder's users.id — the D.5 socket room is keyed by it.
   if (/SELECT id.* FROM contractors/i.test(sql)) {
     return {
       rows: params[0] === 'con-1'
-        ? [{ id: 'con-1', contact_email: 'lc@example.com' }]
+        ? [{ id: 'con-1', contact_email: 'lc@example.com', user_id: 'con-user-1' }]
+        : [],
+    };
+  }
+  // contractorRecipient (UC-008 assignee notifications + the D.5 reject room):
+  // SELECT user_id, name FROM contractors WHERE id = $1. Distinct from the branch
+  // above — that one starts 'SELECT id', this one 'SELECT user_id'.
+  if (/SELECT user_id, name FROM contractors/i.test(sql)) {
+    return {
+      rows: params[0] === 'con-1'
+        ? [{ user_id: 'con-user-1', name: 'Otis Service SG' }]
         : [],
     };
   }
@@ -1046,13 +1058,34 @@ describe('PATCH /api/inspections/:id', () => {
       note: 'Lift specialist to attend',
     });
 
-    // Live update pushed to managers, the block's residents, and the record's
-    // own room — the originator's live channel (UC-003).
+    // Live update pushed to managers, the block's residents, the record's own
+    // room (the originator's live channel, UC-003), and — D.5 — the assigned
+    // contractor's room, keyed by their users.id via contractors.user_id.
     const socketService = require('../../src/services/socketService');
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'block-44A', `insp-${id}`, 'contractor-con-user-1'],
+      'status_update',
+      expect.objectContaining({ id, status: 'Assigned' })
+    );
+  });
+
+  // A vendor with no linked login has no room to push to, and the assignment
+  // must still go through — an update that assigns nobody adds no contractor room.
+  test('200 a non-assigning update pushes no contractor room', async () => {
+    const id = await seedComplaint('Jammed rubbish chute');
+    const socketService = require('../../src/services/socketService');
+    socketService.emitToRooms.mockClear();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ priority: 'High' });
+
+    expect(res.status).toBe(200);
     expect(socketService.emitToRooms).toHaveBeenCalledWith(
       ['manager-room', 'block-44A', `insp-${id}`],
       'status_update',
-      expect.objectContaining({ id, status: 'Assigned' })
+      expect.objectContaining({ id })
     );
   });
 
@@ -1726,6 +1759,26 @@ describe('POST /api/inspections/:id/reject', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  // D.5 — the rejection has to reach the contractor's own room, or their inbox
+  // keeps showing the work as accepted until they reload the page.
+  test('pushes the rejection to the contractor room as well as the manager', async () => {
+    const id = await seedAwaitingEndorsement();
+    const socketService = require('../../src/services/socketService');
+    socketService.emitToRooms.mockClear();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/reject`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'block-44A', 'contractor-con-user-1'],
+      'status_update',
+      expect.objectContaining({ id, status: 'Assigned' })
+    );
   });
 
   // D.4 — the contractor is told by email, not just in-app, that the work is
