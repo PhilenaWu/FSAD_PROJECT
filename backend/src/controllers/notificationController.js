@@ -5,7 +5,9 @@
 'use strict';
 
 const notificationModel = require('../models/notificationModel');
-const socketService = require('../services/socketService');
+// deliver() moved to the service unchanged so lifecycle events (notifyEvent) and
+// manager broadcasts share one delivery path instead of drifting apart.
+const { deliver } = require('../services/notificationService');
 
 const URGENCIES = ['Informational', 'Warning', 'Critical'];
 
@@ -27,22 +29,6 @@ function validateScope(scope) {
     default:
       return 'scope.type must be blocks, all_blocks, contractor or inspector_team.';
   }
-}
-
-// Resolve recipients, persist the recipient rows, and emit the notification to
-// every target room. Shared by immediate send and scheduled dispatch.
-async function deliver(notification) {
-  const { userIds, rooms } = await notificationModel.resolveRecipients(notification.scope);
-  await notificationModel.addRecipients(notification.id, userIds);
-
-  socketService.emitToRooms(rooms, 'notification', {
-    id: notification.id,
-    message: notification.message,
-    urgency: notification.urgency,
-    created_at: notification.created_at,
-  });
-
-  return userIds.length;
 }
 
 // POST /api/notifications — manager sends or schedules a notification.
@@ -106,17 +92,57 @@ async function send(req, res, next) {
 // Internal: dispatch every scheduled notification whose time has arrived. Called
 // by notificationDispatcher.js on a 60 s timer. Each notification is delivered
 // then flipped to Sent; one failure doesn't abort the others.
+//
+// A failed send is marked 'Failed' rather than left 'Scheduled'. findDueScheduled
+// matches on 'Scheduled', so leaving it there meant a send that could never
+// succeed was retried every 60 s for the life of the process. Failing it once and
+// surfacing that in the status is the honest behaviour — the manager can compose
+// a replacement, which is cheaper than an invisible retry loop against the DB.
 async function dispatchDueNotifications() {
   const due = await notificationModel.findDueScheduled();
+  let sent = 0;
+  let failed = 0;
   for (const notification of due) {
     try {
       await deliver(notification);
       await notificationModel.markSent(notification.id);
+      sent += 1;
     } catch (err) {
       console.error(`[notifications] Failed to dispatch ${notification.id}:`, err.message);
+      failed += 1;
+      try {
+        await notificationModel.markFailed(notification.id);
+      } catch (markErr) {
+        // If even the status update fails the row stays 'Scheduled' and will be
+        // retried — the old behaviour, but now only when the DB itself is down.
+        console.error(
+          `[notifications] Could not mark ${notification.id} failed:`,
+          markErr.message
+        );
+      }
     }
   }
-  return due.length;
+  return { due: due.length, sent, failed };
+}
+
+// GET /api/notifications — the caller's own inbox, newest first. Optional
+// `?unread_only=true` and `?limit=`. This is what lets the bell survive a
+// refresh: previously it only held what arrived over the socket while the page
+// was open, so a notification sent while the user was away was unreachable.
+async function listMine(req, res, next) {
+  try {
+    const unread_only = req.query.unread_only === 'true';
+    const parsed = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : 50;
+
+    const [data, unread_count] = await Promise.all([
+      notificationModel.findForRecipient(req.user.id, { unread_only, limit }),
+      notificationModel.countUnreadForRecipient(req.user.id),
+    ]);
+    res.json({ data, unread_count });
+  } catch (err) {
+    next(err);
+  }
 }
 
 // GET /api/notifications/:id/receipts — manager reads live read/unread counts.
@@ -150,4 +176,4 @@ async function markRead(req, res, next) {
   }
 }
 
-module.exports = { send, dispatchDueNotifications, getReceipts, markRead };
+module.exports = { send, dispatchDueNotifications, getReceipts, markRead, listMine };

@@ -1,7 +1,7 @@
 // UC-008: manager notification composer. Pick a target scope, write a message,
 // set urgency, optionally schedule, confirm, and send. After an immediate send
 // the read-receipt badge polls live counts.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
@@ -21,6 +21,7 @@ import {
 import SendIcon from '@mui/icons-material/Send';
 import ReadReceiptBadge from '../components/notifications/ReadReceiptBadge';
 import { send } from '../services/notificationService';
+import { listContractors } from '../services/contractorService';
 
 const SCOPE_TYPES = [
   { value: 'blocks', label: 'Specific block(s)' },
@@ -32,14 +33,16 @@ const SCOPE_TYPES = [
 const URGENCIES = ['Informational', 'Warning', 'Critical'];
 
 // Human-readable summary of the chosen scope for the confirm dialog.
-function describeScope(scopeType, blocks, contractorId) {
+// `contractorName` falls back to the id so the dialog is still meaningful if the
+// picker list failed to load.
+function describeScope(scopeType, blocks, contractorId, contractorName) {
   switch (scopeType) {
     case 'blocks':
       return `residents in block(s) ${blocks || '—'}`;
     case 'all_blocks':
       return 'all residents in all blocks';
     case 'contractor':
-      return `contractor ${contractorId || '—'}`;
+      return `contractor ${contractorName || contractorId || '—'}`;
     case 'inspector_team':
       return 'the inspector team';
     default:
@@ -58,6 +61,27 @@ export default function NotificationsPage() {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null); // { notification_id, status, recipients_count? }
   const [error, setError] = useState('');
+
+  // Contractor picker options. The scope needs a `users.id`, not a contractor id,
+  // so only vendors with a linked login are offered — messaging one without an
+  // account would resolve to no recipient. Previously this was a free-text field
+  // and the manager had to paste a UUID.
+  const [contractors, setContractors] = useState([]);
+  const [contractorsError, setContractorsError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    listContractors()
+      .then(({ data }) => {
+        if (!active) return;
+        setContractors((data ?? []).filter((c) => c.user_id));
+      })
+      .catch(() => {
+        if (active) setContractorsError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const scheduled = Boolean(sendTime);
 
@@ -161,10 +185,26 @@ export default function NotificationsPage() {
 
           {scopeType === 'contractor' && (
             <TextField
-              label="Contractor user id"
+              select
+              label="Contractor"
               value={contractorId}
               onChange={(e) => setContractorId(e.target.value)}
-            />
+              disabled={contractors.length === 0}
+              helperText={
+                contractorsError
+                  ? 'Could not load contractors — reload to try again.'
+                  : contractors.length === 0
+                    ? 'No contractor has a linked login account yet.'
+                    : 'Only contractors with a login account can be messaged.'
+              }
+              error={contractorsError}
+            >
+              {contractors.map((c) => (
+                <MenuItem key={c.user_id} value={c.user_id}>
+                  {c.name}
+                </MenuItem>
+              ))}
+            </TextField>
           )}
 
           <TextField
@@ -233,7 +273,12 @@ export default function NotificationsPage() {
         <DialogContent>
           <DialogContentText>
             {scheduled ? 'Schedule this message for ' : 'Send this message to '}
-            {describeScope(scopeType, blocks, contractorId)}
+            {describeScope(
+              scopeType,
+              blocks,
+              contractorId,
+              contractors.find((c) => c.user_id === contractorId)?.name
+            )}
             {scheduled ? '.' : ' now?'}
           </DialogContentText>
         </DialogContent>

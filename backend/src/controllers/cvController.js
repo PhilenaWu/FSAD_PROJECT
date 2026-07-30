@@ -9,6 +9,7 @@ const cvDetectionModel = require('../models/cvDetectionModel');
 const inspectionModel = require('../models/inspectionModel');
 const retryQueueModel = require('../models/retryQueueModel');
 const socketService = require('../services/socketService');
+const notificationService = require('../services/notificationService');
 const { priorityFromScore } = require('../utils/priorityFromScore');
 
 // A photo that came with a real human report (resident/inspector upload —
@@ -131,6 +132,17 @@ async function recordDetection({
   } catch {
     // Socket not initialised (e.g. tests) or emit failed — ignore.
   }
+
+  // The cv_alert event above has no listener anywhere in the frontend, so a
+  // high-confidence detection reached nobody. CV is assistive and a human must
+  // confirm it, which requires the human to know it exists.
+  await notificationService.notifyEvent({
+    event_type: 'cv_detection',
+    scope: { type: 'managers' },
+    message: `CV detected a ${defect_class} defect at Blk ${location_block} (${Math.round(confidence * 100)}% confidence) — needs confirmation.`,
+    urgency: 'Warning',
+    link: `/inspections/${inspection.id}`,
+  });
 
   return { cvDetection, inspection };
 }

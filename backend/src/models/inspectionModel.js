@@ -825,6 +825,90 @@ async function holdByContractor(id, contractorId, actorId, hold_reason) {
   }
 }
 
+// Contractor resumes a held defect (UC-010 Alt Flow A, second half — G11).
+// Restores the status the record held before the pause, clears hold_reason, and
+// pushes target_deadline out by however long the hold lasted, so time spent
+// waiting on site access or a part is not counted against the contractor.
+//
+// The hold's start time is read from the append-only audit trail rather than a
+// dedicated column: holdByContractor writes its 'On Hold' row in the same
+// transaction as the status change, so that row's created_at *is* the moment the
+// clock stopped. Avoids a schema change, and the value cannot drift from the
+// history the record already shows. The most recent 'On Hold' row is used, so a
+// record held more than once extends correctly each time.
+//
+// Returns the updated row, undefined when the record isn't this contractor's, or
+// the string 'INVALID_STATE' when it isn't actually on hold.
+async function resumeByContractor(id, contractorId, actorId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const before = await lockAssigned(client, id, contractorId);
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+    if (before.status !== 'On Hold') {
+      await client.query('ROLLBACK');
+      return 'INVALID_STATE';
+    }
+
+    const { rows: holdRows } = await client.query(
+      `SELECT previous_status, created_at
+         FROM inspection_history
+        WHERE inspection_id = $1 AND action = 'On Hold'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [id]
+    );
+    const hold = holdRows[0];
+    // No 'On Hold' row (a record whose status was set directly by a manager, or
+    // pre-audit legacy data): resume without extending, since there is no
+    // trustworthy start time to measure from. Better than inventing one.
+    const heldSince = hold?.created_at ?? null;
+    const restoredStatus = hold?.previous_status ?? 'Assigned';
+
+    const updated = await client.query(
+      `UPDATE inspections
+          SET status = $2,
+              hold_reason = NULL,
+              target_deadline = CASE
+                WHEN $3::timestamp IS NULL THEN target_deadline
+                ELSE target_deadline + (NOW() - $3::timestamp)
+              END,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [id, restoredStatus, heldSince]
+    );
+
+    const heldDays = heldSince
+      ? Math.round(((Date.now() - new Date(heldSince).getTime()) / 86400000) * 10) / 10
+      : null;
+    await client.query(
+      `INSERT INTO inspection_history
+         (inspection_id, actor_id, action, previous_status, new_status, note)
+       VALUES ($1, $2, 'Resumed', 'On Hold', $3, $4)`,
+      [
+        id,
+        actorId,
+        restoredStatus,
+        heldDays === null
+          ? 'Resumed; deadline unchanged (no recorded hold start).'
+          : `Resumed after ${heldDays} day(s) on hold; deadline extended by the same period.`,
+      ]
+    );
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Privacy-safe estate-wide feed for the resident status board. The column list
 // is a deliberate allow-list — NEVER add resident_id, location_unit, title,
 // description, photo/audio URLs, GPS, or any identifying field here.
@@ -848,6 +932,7 @@ module.exports = {
   acknowledgeByContractor,
   rectifyByContractor,
   holdByContractor,
+  resumeByContractor,
   findByOriginator,
   findByResident,
   findDetailById,

@@ -13,6 +13,11 @@ const router = express.Router();
 // POST /api/notifications — manager sends or schedules a scoped notification.
 router.post('/', requireAuth, requireRole('manager'), notificationController.send);
 
+// GET /api/notifications — the caller's own persisted inbox (any role).
+// Declared before /:id/receipts; the paths are distinct, so order is only for
+// readability.
+router.get('/', requireAuth, notificationController.listMine);
+
 // GET /api/notifications/:id/receipts — manager polls read/unread counts.
 router.get(
   '/:id/receipts',

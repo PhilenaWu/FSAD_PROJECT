@@ -9,6 +9,7 @@ const contractorModel = require('../models/contractorModel');
 const vendorHistoryModel = require('../models/vendorHistoryModel');
 const { uploadRaw } = require('../services/cloudinaryService');
 const { emitToRoom } = require('../services/socketService');
+const notificationService = require('../services/notificationService');
 
 function httpError(statusCode, code, message) {
   const err = new Error(message);
@@ -122,6 +123,14 @@ async function onboard(req, res, next) {
     await vendorHistoryModel.add(contractor.id, req.user.id, 'Onboarded',
       `Contract ${contract_start} → ${contract_end}; account for ${account_holder_name} (${job_title})`);
 
+    await notificationService.notifyEvent({
+      event_type: 'vendor_onboarded',
+      scope: { type: 'admins' },
+      message: `Vendor "${contractor.name}" onboarded — contract to ${contract_end}.`,
+      urgency: 'Informational',
+      link: '/admin/vendors',
+    });
+
     res.status(201).json({
       contractor_id: contractor.id,
       user_id: user.id,
@@ -178,6 +187,29 @@ async function renew(req, res, next) {
     await vendorHistoryModel.add(vendor.id, req.user.id, 'Contract Renewed',
       `New contract end: ${contract_end}${newDocUrl ? '; new contract document uploaded' : ''}`);
 
+    await notificationService.notifyEvent({
+      event_type: 'vendor_renewed',
+      scope: { type: 'admins' },
+      message: `Vendor "${vendor.name}" contract renewed to ${contract_end}.`,
+      urgency: 'Informational',
+      link: '/admin/vendors',
+    });
+    // A renewal reactivates a suspended account, which the vendor should know
+    // about — they may have been locked out until now.
+    if (user && vendor.user_id) {
+      await notificationService.notifyEvent({
+        event_type: 'vendor_renewed',
+        scope: {
+          type: 'users',
+          user_ids: [vendor.user_id],
+          rooms: [`contractor-${vendor.user_id}`],
+        },
+        message: `Your contract has been renewed to ${contract_end} — your account is active.`,
+        urgency: 'Informational',
+        link: '/contractor-inbox',
+      });
+    }
+
     res.json({
       contractor_id: updated.id,
       status: user ? user.status : null,
@@ -205,6 +237,36 @@ async function suspend(req, res, next) {
     const user = await userModel.setStatus(vendor.user_id, 'suspended');
     await vendorHistoryModel.add(vendor.id, req.user.id, 'Suspended',
       'Early termination by admin');
+
+    // The vendor themselves is locked out at their next login (G16) and would
+    // otherwise discover it only by being refused.
+    await notificationService.notifyEvent({
+      event_type: 'vendor_suspended',
+      scope: {
+        type: 'users',
+        user_ids: [vendor.user_id],
+        rooms: [`contractor-${vendor.user_id}`],
+      },
+      message: `Your account has been suspended — contract terminated. Contact the estate administrator.`,
+      urgency: 'Critical',
+    });
+    // Managers are the ones who reassign the vendor's open work (UC-002 Alt C),
+    // so the comment above this function is only true if they are told.
+    await notificationService.notifyEvent({
+      event_type: 'vendor_suspended',
+      scope: { type: 'managers' },
+      message: `Vendor "${vendor.name}" was suspended — their open records need reassignment.`,
+      urgency: 'Warning',
+      link: '/inspections',
+    });
+    await notificationService.notifyEvent({
+      event_type: 'vendor_suspended',
+      scope: { type: 'admins' },
+      message: `Vendor "${vendor.name}" suspended (early termination).`,
+      urgency: 'Informational',
+      link: '/admin/vendors',
+    });
+
     res.json({ contractor_id: vendor.id, status: user.status });
   } catch (err) {
     next(err);
@@ -234,10 +296,57 @@ async function expiryCheck(req, res, next) {
         // Socket.IO not initialised (e.g. tests) — suspension still applies.
         console.error('[expiryCheck] socket emit failed:', socketErr.message);
       }
+
+      // The socket event above only reaches an admin with the page already
+      // open. These persist, so an expiry that happened overnight is still
+      // waiting in the morning.
+      await notificationService.notifyEvent({
+        event_type: 'vendor_expired',
+        scope: { type: 'admins' },
+        message: `Vendor "${vendor.name}" contract expired — account suspended.`,
+        urgency: 'Critical',
+        link: '/admin/vendors',
+      });
+      await notificationService.notifyEvent({
+        event_type: 'vendor_expired',
+        scope: { type: 'managers' },
+        message: `Vendor "${vendor.name}" expired and was suspended — their open records need reassignment.`,
+        urgency: 'Warning',
+        link: '/inspections',
+      });
+    }
+
+    // Warn before the lapse, not only after it. UC-012 A3 shows an
+    // expiring-soon banner, but nothing reached an admin who wasn't looking at
+    // that page — and once the contract has expired the account is already
+    // suspended, which is the outage the warning exists to prevent.
+    //
+    // Fired only on fixed day counts so a 30-day runway produces 5 reminders,
+    // not 30. This job runs daily, so each threshold is hit at most once and no
+    // "already notified" state is needed.
+    const REMIND_AT_DAYS = [30, 14, 7, 3, 1];
+    let expiring_soon = 0;
+    try {
+      const all = await contractorModel.listByContractEnd();
+      for (const vendor of all) {
+        if (!REMIND_AT_DAYS.includes(Number(vendor.days_until_expiry))) continue;
+        expiring_soon += 1;
+        await notificationService.notifyEvent({
+          event_type: 'vendor_expiring_soon',
+          scope: { type: 'admins' },
+          message: `Vendor "${vendor.name}" contract expires in ${vendor.days_until_expiry} day(s) — renew to avoid suspension.`,
+          urgency: Number(vendor.days_until_expiry) <= 7 ? 'Warning' : 'Informational',
+          link: '/admin/vendors',
+        });
+      }
+    } catch (err) {
+      // A reminder failure must not affect the suspensions above.
+      console.error('[expiryCheck] expiring-soon reminders failed:', err.message);
     }
 
     res.json({
       suspended: expired.length,
+      expiring_soon,
       vendors: expired.map((v) => ({
         contractor_id: v.id,
         name: v.name,

@@ -22,7 +22,6 @@ import {
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import ReportCard from '../components/inspections/ReportCard';
-import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
   applyRating,
@@ -67,11 +66,10 @@ export default function MyReportsPage() {
   const [toast, setToast] = useState(null);
 
   const { socket, connected, joinRoom, leaveRoom } = useSocket();
-  const { profile } = useAuth();
 
   // UC-003 names this "My reports" for residents and "My inspections" for
-  // inspectors — same page, scoped to whoever is signed in.
-  const isInspector = profile?.role === 'inspector';
+  // inspectors — same page, scoped to whoever is signed in. `isInspector` is
+  // derived from `profile` at the top of the component.
   const pageTitle = isInspector ? 'My inspections' : 'My reports';
 
   // The status_update handler is registered once per socket, so it reads the
