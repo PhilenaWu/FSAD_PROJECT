@@ -177,6 +177,21 @@ describe('DashboardPage — data and failure states', () => {
     await waitFor(() => expect(screen.queryByText(/Could not load dashboard data/)).not.toBeInTheDocument());
   });
 
+  test('priority-queue rows link to /inspections/:id (not the retired /incidents path)', async () => {
+    getPriorityQueue.mockResolvedValue({
+      data: [{
+        id: 'rec-1', title: 'Lift door misalignment', block: '44A', category: 'Lift',
+        priority: 'Critical', status: 'Assigned', ai_priority_score: 88,
+        composite_score: 71.4, created_at: '2026-06-22T09:15:00Z',
+      }],
+    });
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: 'Lift door misalignment' });
+    // /incidents was never a route — it bounced off the catch-all back here.
+    expect(link).toHaveAttribute('href', '/inspections/rec-1');
+  });
+
   test('a superseded response cannot repaint the page (stale-request race)', async () => {
     let releaseSlow;
     const slow = new Promise((resolve) => {

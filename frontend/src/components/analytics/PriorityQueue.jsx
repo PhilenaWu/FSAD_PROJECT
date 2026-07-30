@@ -33,7 +33,9 @@ export default function PriorityQueue({ rows }) {
           {rows.map((r) => (
             <TableRow key={r.id} hover>
               <TableCell>
-                <MuiLink component={Link} to={`/incidents/${r.id}`} underline="hover" color="primary">
+                {/* /inspections, not /incidents — same catch-all bounce the
+                    heatmap drill-through once had. */}
+                <MuiLink component={Link} to={`/inspections/${r.id}`} underline="hover" color="primary">
                   {r.title}
                 </MuiLink>
               </TableCell>
