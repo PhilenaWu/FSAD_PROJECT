@@ -27,6 +27,7 @@ import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import ImageNotSupportedOutlinedIcon from '@mui/icons-material/ImageNotSupportedOutlined';
 import ReplayOutlinedIcon from '@mui/icons-material/ReplayOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import SignaturePad from '../components/SignaturePad';
 import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
 import { useAuth } from '../context/AuthContext';
@@ -104,6 +105,8 @@ function PhotoSlot({ label, url }) {
 export default function InspectionDetailPage() {
   const { id } = useParams();
   const { profile } = useAuth();
+  // Inspectors get a read-only view — triage form, reject, and close are hidden.
+  const isInspector = profile?.role === 'inspector';
 
   const [inspection, setInspection] = useState(null);
   const [contractors, setContractors] = useState([]);
@@ -136,6 +139,12 @@ export default function InspectionDetailPage() {
   const [rejecting, setRejecting] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState(null);
 
+  // Inspector's read-only "mark as reviewed" panel — an audit note only, no
+  // status change or accept/close authority (that stays with the manager).
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewFeedback, setReviewFeedback] = useState(null);
+
   // Defect rows drive the endorsement panel; `outstandingItems` mirrors the
   // server's G8 gate so the manager sees what blocks the close before trying.
   const defectResults = useMemo(
@@ -165,19 +174,24 @@ export default function InspectionDetailPage() {
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([
-      api.get(`/api/inspections/${id}`),
-      api.get('/api/contractors'),
-      api.get('/api/users/inspectors'),
-    ])
+    // Inspectors are read-only and can't reach the manager-only /contractors
+    // and /users/inspectors endpoints, so skip fetching them entirely.
+    const requests = isInspector
+      ? [api.get(`/api/inspections/${id}`)]
+      : [
+          api.get(`/api/inspections/${id}`),
+          api.get('/api/contractors'),
+          api.get('/api/users/inspectors'),
+        ];
+    Promise.all(requests)
       .then(([insRes, conRes, inspRes]) => {
         const ins = insRes.data;
         setInspection(ins);
-        setContractors(conRes.data);
-        setInspectors(inspRes.data);
+        if (conRes) setContractors(conRes.data);
+        if (inspRes) setInspectors(inspRes.data);
         // Default the endorser to the record's own inspector when it has one
         // (lift spot-checks); the manager can still nominate a different one.
-        if (ins.inspector_id && inspRes.data.some((i) => i.id === ins.inspector_id)) {
+        if (ins.inspector_id && inspRes?.data.some((i) => i.id === ins.inspector_id)) {
           setEndorserId(ins.inspector_id);
         }
         setForm({
@@ -191,7 +205,7 @@ export default function InspectionDetailPage() {
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, isInspector]);
 
   useEffect(load, [load]);
 
@@ -335,8 +349,29 @@ export default function InspectionDetailPage() {
     }
   }
 
-  // UI-level guard — backend requireRole('manager') is the real enforcement.
-  if (profile && profile.role !== 'manager') {
+  // Inspector confirms they've looked over a Rectified record. Writes an
+  // audit-trail row only — no status change, no accept/close authority.
+  async function handleReview() {
+    setReviewFeedback(null);
+    setReviewing(true);
+    try {
+      await api.post(`/api/inspections/${id}/review`, { note: reviewNote.trim() });
+      setReviewNote('');
+      setReviewFeedback({ severity: 'success', message: 'Marked as reviewed.' });
+      load(); // refresh history so the new entry shows up below
+    } catch (err) {
+      setReviewFeedback({
+        severity: 'error',
+        message: err.response?.data?.message ?? 'Could not mark as reviewed. Please try again.',
+      });
+    } finally {
+      setReviewing(false);
+    }
+  }
+
+  // UI-level guard — backend requireRole('manager', 'inspector') is the real
+  // enforcement.
+  if (profile && profile.role !== 'manager' && profile.role !== 'inspector') {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -481,7 +516,8 @@ export default function InspectionDetailPage() {
                 )}
               </Paper>
 
-              {/* Right: triage form */}
+              {/* Right: triage form — manager-only, inspectors are read-only */}
+              {!isInspector && (
               <Paper
                 elevation={1}
                 component="form"
@@ -557,6 +593,7 @@ export default function InspectionDetailPage() {
                   </Button>
                 </Stack>
               </Paper>
+              )}
             </Stack>
 
             {/* Joint endorsement (UC-004 / P.13): the checklist as inspected,
@@ -658,8 +695,9 @@ export default function InspectionDetailPage() {
                 </Stack>
 
                 {/* Reject (UC-004 Alt 4) — only meaningful once the contractor
-                    has claimed the work is done. */}
-                {inspection.status === 'Rectified' && (
+                    has claimed the work is done. Manager-only; inspectors are
+                    read-only here. */}
+                {!isInspector && inspection.status === 'Rectified' && (
                   <Box sx={{ mt: 3 }}>
                     <Divider sx={{ mb: 2 }} />
                     {rejectFeedback && (
@@ -708,7 +746,9 @@ export default function InspectionDetailPage() {
             )}
 
             {/* Close record (UC-004) — terminal action, visually distinct from
-                the triage card: outlined with the error accent, not elevated. */}
+                the triage card: outlined with the error accent, not elevated.
+                Manager-only; inspectors are read-only here. */}
+            {!isInspector && (
             <Paper
               variant="outlined"
               component="form"
@@ -846,6 +886,57 @@ export default function InspectionDetailPage() {
                 </Button>
               </Stack>
             </Paper>
+            )}
+
+            {/* Inspector's read-only "mark as reviewed" — an audit note only;
+                accept/reject/close stay with the manager's panel above. Only
+                relevant once the record is actually awaiting endorsement —
+                not for an inspector's own not-yet-rectified past inspections. */}
+            {isInspector && inspection.status === 'Rectified' && (
+              <Paper elevation={1} sx={{ p: 3, borderRadius: 3 }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                  <CheckCircleOutlineIcon color="success" />
+                  <Typography variant="subtitle1" fontWeight={700}>
+                    Mark as reviewed
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  Confirms you've checked this completed work. Recorded in the history
+                  below — the manager still handles accept/reject and closing.
+                </Typography>
+                <Stack spacing={2}>
+                  {reviewFeedback && (
+                    <Alert severity={reviewFeedback.severity} onClose={() => setReviewFeedback(null)}>
+                      {reviewFeedback.message}
+                    </Alert>
+                  )}
+                  <TextField
+                    label="Note (optional)"
+                    size="small"
+                    multiline
+                    minRows={2}
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                  />
+                  <Button
+                    variant="contained"
+                    color="success"
+                    onClick={handleReview}
+                    disabled={reviewing}
+                    startIcon={
+                      reviewing ? (
+                        <CircularProgress size={16} color="inherit" />
+                      ) : (
+                        <CheckCircleOutlineIcon />
+                      )
+                    }
+                    sx={{ alignSelf: 'flex-start' }}
+                  >
+                    {reviewing ? 'Saving…' : 'Mark as reviewed'}
+                  </Button>
+                </Stack>
+              </Paper>
+            )}
 
             {/* Audit history */}
             <Paper elevation={1} sx={{ p: 3, borderRadius: 3 }}>

@@ -1102,6 +1102,19 @@ describe('GET /api/inspections (manager queue)', () => {
       .set('Authorization', 'Bearer resident-token');
     expect(res.status).toBe(403);
   });
+
+  // Inspectors read this endpoint (read-only) to review completed work
+  // before the manager's joint close.
+  test('200 for an inspector', async () => {
+    await seedComplaint('Leak at 44A');
+
+    const res = await request(app)
+      .get('/api/inspections')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+  });
 });
 
 describe('GET /api/inspections/:id (manager detail)', () => {
@@ -1204,6 +1217,19 @@ describe('GET /api/inspections/:id (manager detail)', () => {
       .get('/api/inspections/insp-nope')
       .set('Authorization', 'Bearer manager-token');
     expect(res.status).toBe(404);
+  });
+
+  // Inspectors read this endpoint (read-only) to review completed work
+  // before the manager's joint close.
+  test('200 for an inspector', async () => {
+    const id = await seedComplaint('Stuck rubbish chute');
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.title).toBe('Stuck rubbish chute');
   });
 });
 
@@ -1602,6 +1628,71 @@ describe('POST /api/inspections/:id/reject', () => {
     expect(res.body.status).toBe('Assigned');
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
+  });
+});
+
+describe('POST /api/inspections/:id/review', () => {
+  async function seedRectified() {
+    const id = await seedComplaint('Rectified complaint');
+    await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ status: 'Rectified' });
+    return id;
+  }
+
+  test('200 records an audit row without changing status', async () => {
+    const id = await seedRectified();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/review`)
+      .set('Authorization', 'Bearer inspector-token')
+      .send({ note: 'Looks good on site.' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.code).toBe('OK');
+
+    const reviewed = store.history.find((h) => h.action === 'Reviewed by Inspector');
+    expect(reviewed).toBeTruthy();
+    expect(reviewed.note).toBe('Looks good on site.');
+    expect(reviewed.new_status).toBe('Rectified');
+
+    const inspection = store.inspections.find((i) => i.id === id);
+    expect(inspection.status).toBe('Rectified');
+  });
+
+  test('409 INVALID_STATE when the record is not Rectified', async () => {
+    const id = await seedComplaint('Still open');
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/review`)
+      .set('Authorization', 'Bearer inspector-token')
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('INVALID_STATE');
+  });
+
+  test('403 when the caller is not an inspector', async () => {
+    const id = await seedRectified();
+
+    const res = await request(app)
+      .post(`/api/inspections/${id}/review`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({});
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('404 for an unknown inspection id', async () => {
+    const res = await request(app)
+      .post('/api/inspections/insp-nope/review')
+      .set('Authorization', 'Bearer inspector-token')
+      .send({});
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
   });
 });
 

@@ -31,6 +31,7 @@ import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../context/AuthContext';
@@ -46,7 +47,10 @@ const NAV_BY_ROLE = {
     { label: 'Status board', to: '/status-board', icon: GridViewOutlinedIcon },
   ],
   inspector: [
+    { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
     { label: 'New inspection', to: '/inspections/new', icon: AssignmentOutlinedIcon },
+    { label: 'Past inspections', to: '/my-reports', icon: AssignmentOutlinedIcon },
+    { label: 'Completed work', to: '/inspections', icon: FactCheckOutlinedIcon },
   ],
   contractor: [
     { label: 'Assigned defects', to: '/contractor-inbox', icon: AssignmentOutlinedIcon },

@@ -3,7 +3,7 @@
 // rating UI skeleton on resolved/closed reports (submit endpoint lands later).
 // Zoe wires the Socket.IO live-update layer separately (Z.3) — no sockets here.
 import { useEffect, useState } from 'react';
-import { Link as RouterLink } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -16,6 +16,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
+import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { statusDisplay } from '../utils/statusDisplay';
 
@@ -34,6 +35,9 @@ function formatDate(iso) {
 }
 
 export default function MyReportsPage() {
+  const { profile } = useAuth();
+  const navigate = useNavigate();
+  const isInspector = profile?.role === 'inspector';
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -65,7 +69,7 @@ export default function MyReportsPage() {
           fontWeight={700}
           sx={{ mb: 3, color: 'primary.main', textAlign: 'center' }}
         >
-          My reports
+          {isInspector ? 'Past inspections' : 'My reports'}
         </Typography>
 
         {loading ? (
@@ -74,28 +78,53 @@ export default function MyReportsPage() {
           </Stack>
         ) : loadError ? (
           <Alert severity="error">
-            Could not load your reports. Refresh to try again.
+            Could not load your {isInspector ? 'inspections' : 'reports'}. Refresh to try again.
           </Alert>
         ) : reports.length === 0 ? (
           <Paper elevation={2} sx={{ p: 4, borderRadius: 3, textAlign: 'center' }}>
             <Typography variant="h6" fontWeight={700} sx={{ mb: 0.5 }}>
-              No reports yet
+              {isInspector ? 'No inspections yet' : 'No reports yet'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Spotted an issue in your estate?{' '}
-              <Link component={RouterLink} to="/report" underline="hover">
-                Report it here
-              </Link>
-              .
+              {isInspector ? (
+                <>
+                  Filed inspections will show up here.{' '}
+                  <Link component={RouterLink} to="/inspections/new" underline="hover">
+                    Start a new inspection
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  Spotted an issue in your estate?{' '}
+                  <Link component={RouterLink} to="/report" underline="hover">
+                    Report it here
+                  </Link>
+                  .
+                </>
+              )}
             </Typography>
           </Paper>
         ) : (
           <Stack spacing={2}>
             {reports.map((r) => {
               const display = statusDisplay(r.status);
-              const ratable = RATABLE_STATUSES.includes(r.status);
+              const ratable = !isInspector && RATABLE_STATUSES.includes(r.status);
               return (
-                <Paper key={r.id} elevation={2} sx={{ p: { xs: 2.5, sm: 3 }, borderRadius: 3 }}>
+                <Paper
+                  key={r.id}
+                  elevation={2}
+                  onClick={isInspector ? () => navigate(`/inspections/${r.id}`) : undefined}
+                  sx={{
+                    p: { xs: 2.5, sm: 3 },
+                    borderRadius: 3,
+                    ...(isInspector && {
+                      cursor: 'pointer',
+                      transition: (theme) => theme.transitions.create('box-shadow'),
+                      '&:hover': { boxShadow: 6 },
+                    }),
+                  }}
+                >
                   <Stack direction="row" spacing={2}>
                     {r.photo_url && (
                       <Box
