@@ -237,6 +237,42 @@ describe('topMover', () => {
     ];
     expect(topMover(flat)).toBeNull();
   });
+
+  test('a category too small to matter cannot win on percentage alone', () => {
+    // The real case this guards: Plumbing went $512 → $4,520 (+783%) in a month
+    // where total spend was ~$21k. True, but 2% of the month is not the story;
+    // Doors moving $12k → $15k is.
+    const rows = [
+      { closed_at: '2026-05-01', category: 'Plumbing', actual_cost: 512 },
+      { closed_at: '2026-06-01', category: 'Plumbing', actual_cost: 4520 },
+      { closed_at: '2026-05-01', category: 'Doors', actual_cost: 12000 },
+      { closed_at: '2026-06-01', category: 'Doors', actual_cost: 15000 },
+      { closed_at: '2026-05-01', category: 'Lift', actual_cost: 8488 },
+      { closed_at: '2026-06-01', category: 'Lift', actual_cost: 8000 },
+    ];
+    const m = topMover(rows, { currentMonth: '2026-07' });
+    expect(m.category).toBe('Doors');
+    expect(m.pct).toBe(25);
+  });
+
+  test('the floor is a share of the month, so it scales with the estate', () => {
+    // Same 1%-of-total base, thousandth of the size — still excluded.
+    const rows = [
+      { closed_at: '2026-05-01', category: 'Plumbing', actual_cost: 0.5 },
+      { closed_at: '2026-06-01', category: 'Plumbing', actual_cost: 4.5 },
+      { closed_at: '2026-05-01', category: 'Doors', actual_cost: 49.5 },
+      { closed_at: '2026-06-01', category: 'Doors', actual_cost: 60 },
+    ];
+    expect(topMover(rows, { currentMonth: '2026-07' }).category).toBe('Doors');
+  });
+
+  test('with one dominant category the guard never blocks the only mover', () => {
+    const rows = [
+      { closed_at: '2026-05-01', category: 'Doors', actual_cost: 100 },
+      { closed_at: '2026-06-01', category: 'Doors', actual_cost: 180 },
+    ];
+    expect(topMover(rows, { currentMonth: '2026-07' }).pct).toBe(80);
+  });
 });
 
 describe('contractorBenchmarks', () => {

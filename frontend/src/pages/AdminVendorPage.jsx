@@ -27,6 +27,8 @@ import {
   TableHead,
   TableRow,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -38,6 +40,7 @@ import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 import { downloadCsv } from '../utils/csvDownload';
+import useTableSort from '../components/common/useTableSort';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
@@ -88,6 +91,9 @@ function suggestLoginEmail(holderName, companyEmail) {
   const local = holderName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');
   return domain && local ? `${local}@${domain}` : '';
 }
+
+// How many vendors the table shows before "All" is chosen.
+const VENDOR_PREVIEW_COUNT = 10;
 
 // Chip colour for the expiry countdown: red = expired, amber = ≤30 days.
 function expiryChip(days) {
@@ -175,22 +181,59 @@ export default function AdminVendorPage() {
   // Table search + status filter (client-side — the list is small).
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [rowLimit, setRowLimit] = useState(Infinity);
+  const vendorSort = useTableSort('days_until_expiry', 'asc');
+
+  // One predicate per status chip, so the chip counts and the filter can never
+  // disagree about what "expiring" means.
+  const matchesStatus = (v, status) => {
+    switch (status) {
+      case 'active': return v.status === 'active';
+      case 'suspended': return v.status === 'suspended';
+      case 'expiring': return v.status === 'active'
+        && v.days_until_expiry !== null && v.days_until_expiry >= 0 && v.days_until_expiry <= 30;
+      case 'expired': return v.days_until_expiry !== null && v.days_until_expiry < 0;
+      default: return true;
+    }
+  };
+
+  const matchesSearch = (v, q) =>
+    !q || `${v.name} ${v.account_holder ?? ''} ${v.contact_email ?? ''} ${v.brands_serviced ?? ''}`
+      .toLowerCase().includes(q);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return vendors.filter((v) => {
-      if (q && !`${v.name} ${v.account_holder ?? ''} ${v.contact_email ?? ''} ${v.brands_serviced ?? ''}`
-        .toLowerCase().includes(q)) return false;
-      switch (statusFilter) {
-        case 'active': return v.status === 'active';
-        case 'suspended': return v.status === 'suspended';
-        case 'expiring': return v.status === 'active'
-          && v.days_until_expiry !== null && v.days_until_expiry >= 0 && v.days_until_expiry <= 30;
-        case 'expired': return v.days_until_expiry !== null && v.days_until_expiry < 0;
-        default: return true;
-      }
-    });
-  }, [vendors, search, statusFilter]);
+    const rows = vendors.filter((v) => matchesSearch(v, q) && matchesStatus(v, statusFilter));
+    return vendorSort.sortRows(rows);
+  }, [vendors, search, statusFilter, vendorSort]);
+
+  const shownRows = rowLimit === Infinity ? visible : visible.slice(0, rowLimit);
+
+  // Chip counts respect the search box but not each other — each says how many
+  // vendors that status would show right now.
+  const statusCounts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const searched = vendors.filter((v) => matchesSearch(v, q));
+    return {
+      active: searched.filter((v) => matchesStatus(v, 'active')).length,
+      expiring: searched.filter((v) => matchesStatus(v, 'expiring')).length,
+      expired: searched.filter((v) => matchesStatus(v, 'expired')).length,
+      suspended: searched.filter((v) => matchesStatus(v, 'suspended')).length,
+    };
+  }, [vendors, search]);
+
+  // Clicking the active chip clears it, so the filter needs no separate "All".
+  const toggleStatus = (status) =>
+    setStatusFilter((current) => (current === status ? 'all' : status));
+
+  const VENDOR_ORDERS = [
+    { label: 'Soonest expiring', key: 'days_until_expiry', dir: 'asc' },
+    { label: 'Latest expiring', key: 'days_until_expiry', dir: 'desc' },
+    { label: 'Vendor A–Z', key: 'name', dir: 'asc' },
+    { label: 'Vendor Z–A', key: 'name', dir: 'desc' },
+  ];
+  const activeVendorOrder =
+    VENDOR_ORDERS.find((o) => o.key === vendorSort.sort.key && o.dir === vendorSort.sort.dir)?.label ?? '';
 
   // Export the filtered view as CSV (reuses the UC-005 helper).
   function handleExportCsv() {
@@ -400,20 +443,64 @@ export default function AdminVendorPage() {
                 ),
               }}
             />
+            {/* Status as chips with live counts — the same pattern as the cost
+                dashboard's outlier filter. A count is the thing an admin wants
+                to know before clicking, so it is on the control, not behind it. */}
+            {[
+              { key: 'expiring', label: 'Expiring ≤30d', color: 'warning' },
+              { key: 'expired', label: 'Expired', color: 'error' },
+              { key: 'suspended', label: 'Suspended', color: 'default' },
+              { key: 'active', label: 'Active', color: 'success' },
+            ].map((s) => (
+              <Chip
+                key={s.key}
+                size="small"
+                label={`${s.label} (${statusCounts[s.key]})`}
+                color={statusFilter === s.key ? s.color : 'default'}
+                variant={statusFilter === s.key ? 'filled' : 'outlined'}
+                disabled={statusCounts[s.key] === 0 && statusFilter !== s.key}
+                onClick={() => toggleStatus(s.key)}
+              />
+            ))}
             <TextField
               size="small"
               select
-              label="Status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              sx={{ minWidth: 170 }}
+              label="Order"
+              value={activeVendorOrder}
+              onChange={(e) => {
+                const o = VENDOR_ORDERS.find((x) => x.label === e.target.value);
+                if (o) vendorSort.setSort({ key: o.key, dir: o.dir });
+              }}
+              sx={{ minWidth: 180 }}
+              helperText={activeVendorOrder ? '' : 'sorted by a column'}
             >
-              <MenuItem value="all">All</MenuItem>
-              <MenuItem value="active">Active</MenuItem>
-              <MenuItem value="expiring">Expiring ≤ 30 days</MenuItem>
-              <MenuItem value="expired">Expired</MenuItem>
-              <MenuItem value="suspended">Suspended</MenuItem>
+              {VENDOR_ORDERS.map((o) => (
+                <MenuItem key={o.label} value={o.label}>{o.label}</MenuItem>
+              ))}
             </TextField>
+            <ToggleButtonGroup
+              value={rowLimit}
+              exclusive
+              size="small"
+              onChange={(_e, v) => v && setRowLimit(v)}
+            >
+              <ToggleButton value={VENDOR_PREVIEW_COUNT} sx={{ px: 2, textTransform: 'none' }}>
+                First {VENDOR_PREVIEW_COUNT}
+              </ToggleButton>
+              <ToggleButton value={Infinity} sx={{ px: 2, textTransform: 'none' }}>
+                All ({visible.length})
+              </ToggleButton>
+            </ToggleButtonGroup>
+            {statusFilter !== 'all' && (
+              <Chip
+                label="Clear filter"
+                size="small"
+                variant="outlined"
+                color="warning"
+                onDelete={() => setStatusFilter('all')}
+                onClick={() => setStatusFilter('all')}
+              />
+            )}
             <Box sx={{ flexGrow: 1 }} />
             <Tooltip title={visible.length === 0 ? 'Nothing to export' : 'Export the current view as CSV'}>
               <span>
@@ -441,17 +528,17 @@ export default function AdminVendorPage() {
             <Table size="small" sx={{ minWidth: 900 }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Vendor</TableCell>
-                  <TableCell>Account holder</TableCell>
+                  <TableCell>{vendorSort.sortLabel('name', 'Vendor')}</TableCell>
+                  <TableCell>{vendorSort.sortLabel('account_holder', 'Account holder')}</TableCell>
                   <TableCell>Brands</TableCell>
-                  <TableCell>Contract</TableCell>
-                  <TableCell>Expires in</TableCell>
-                  <TableCell>Account</TableCell>
+                  <TableCell>{vendorSort.sortLabel('contract_end', 'Contract')}</TableCell>
+                  <TableCell>{vendorSort.sortLabel('days_until_expiry', 'Expires in')}</TableCell>
+                  <TableCell>{vendorSort.sortLabel('status', 'Account')}</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {visible.map((v) => (
+                {shownRows.map((v) => (
                   <TableRow key={v.id} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600}>{v.name}</Typography>

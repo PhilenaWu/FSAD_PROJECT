@@ -33,6 +33,8 @@ import SlideshowOutlinedIcon from '@mui/icons-material/SlideshowOutlined';
 import AutoAwesomeOutlinedIcon from '@mui/icons-material/AutoAwesomeOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
@@ -41,6 +43,7 @@ import {
   mergeTrends,
   mergeSla,
 } from '../utils/csvImport';
+import { bucketTrend } from '../utils/trendBuckets';
 import KpiRow from '../components/analytics/KpiRow';
 import HeatmapChart from '../components/analytics/HeatmapChart';
 import TrendLineChart from '../components/analytics/TrendLineChart';
@@ -68,6 +71,9 @@ import {
 // paper spot-check form (HLD §7.2) — the client's "which part of the lift
 // fails most" question.
 const FILTER_KEYS = ['block', 'category', 'section', 'from', 'to'];
+
+// How many AI risk alerts sit on the dashboard before the rest are folded away.
+const ALERT_PREVIEW_COUNT = 3;
 
 // CSV import guards — a mis-picked huge file must not freeze the tab.
 const MAX_IMPORT_BYTES = 1_000_000;
@@ -145,6 +151,7 @@ export default function DashboardPage() {
   const [scorecard, setScorecard] = useState([]);
   const [queue, setQueue] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [alertsExpanded, setAlertsExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [fetchFailed, setFetchFailed] = useState(false);
   const [alertBusy, setAlertBusy] = useState(false);
@@ -190,6 +197,17 @@ export default function DashboardPage() {
     if (!imported) return null;
     return mergeTrends([], imported);
   }, [imported]);
+  // The trend line buckets by day / week / month depending on how much history
+  // is in view, so the panel subtitle has to say which one it settled on.
+  const trendGranularity = useMemo(
+    () => bucketTrend([trends, importedTrend ?? []]).granularity,
+    [trends, importedTrend]
+  );
+  // Alerts arrive newest-first from the API, so the preview is a plain slice.
+  const visibleAlerts = useMemo(
+    () => (alertsExpanded ? alerts : alerts.slice(0, ALERT_PREVIEW_COUNT)),
+    [alerts, alertsExpanded]
+  );
   // SLA of the imported rows alone; null when the import has no resolved rows.
   const importedSla = useMemo(() => {
     if (!imported || !sla) return null;
@@ -596,19 +614,56 @@ export default function DashboardPage() {
         </Stack>
       </Paper>
 
-      {/* AI risk alerts (5.12/5.13) above the heatmap */}
+      {/* AI risk alerts (5.12/5.13) above the heatmap. Only the newest few are
+          shown: the alerts are a prompt to act, and a wall of twenty pushes
+          every chart below the fold. The header states how many are waiting so
+          the count is never hidden by the truncation. */}
       {alerts.length > 0 && (
-        <Stack spacing={1.5} sx={{ mb: 3 }}>
-          {alerts.map((a) => (
-            <AIAlertCard
-              key={a.id}
-              alert={a}
-              busy={alertBusy}
-              onAccept={handleAccept}
-              onDismiss={handleDismiss}
-            />
-          ))}
-        </Stack>
+        <Box sx={{ mb: 3 }}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            flexWrap="wrap"
+            useFlexGap
+            sx={{ mb: 1 }}
+          >
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="subtitle1" fontWeight={700}>
+                AI risk alerts
+              </Typography>
+              <Chip size="small" color="warning" label={`${alerts.length} active`} />
+            </Stack>
+            {alerts.length > ALERT_PREVIEW_COUNT && (
+              <Button
+                size="small"
+                onClick={() => setAlertsExpanded((v) => !v)}
+                endIcon={alertsExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              >
+                {alertsExpanded ? 'Show fewer' : `View all ${alerts.length}`}
+              </Button>
+            )}
+          </Stack>
+
+          <Stack spacing={1.5}>
+            {visibleAlerts.map((a) => (
+              <AIAlertCard
+                key={a.id}
+                alert={a}
+                busy={alertBusy}
+                onAccept={handleAccept}
+                onDismiss={handleDismiss}
+              />
+            ))}
+          </Stack>
+
+          {!alertsExpanded && alerts.length > ALERT_PREVIEW_COUNT && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Showing the {ALERT_PREVIEW_COUNT} most recent of {alerts.length}. Accepting or
+              dismissing one brings the next into view.
+            </Typography>
+          )}
+        </Box>
       )}
 
       {/* Preview control bar — appears only while a CSV preview is active,
@@ -700,7 +755,7 @@ export default function DashboardPage() {
           </Panel>
         </Grid>
         <Grid size={{ xs: 12, sm: 7, md: 3.5 }}>
-          <Panel title={<>Issue trend{previewChip}</>} subtitle={`Reports per day, ${periodLabel}`}>
+          <Panel title={<>Issue trend{previewChip}</>} subtitle={`Reports per ${trendGranularity}, ${periodLabel}`}>
             {loading ? (
               chartSkeleton
             ) : (
