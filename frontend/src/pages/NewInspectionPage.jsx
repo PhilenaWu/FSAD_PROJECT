@@ -6,6 +6,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -28,6 +31,7 @@ import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternate
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import LocationCapture from '../components/LocationCapture';
 import SignaturePad from '../components/SignaturePad';
@@ -36,6 +40,9 @@ import api from '../services/api';
 import { compressImage } from '../utils/imageCompress';
 
 const SEVERITIES = ['Minor', 'Major', 'Critical']; // checklist_results CHECK
+
+// Paper-form section labels: [A] MOTOR ROOM, [B] LIFT CAR, [C] HOISTWAY & LIFT PIT.
+const SECTION_LETTERS = ['A', 'B', 'C', 'D', 'E'];
 
 export default function NewInspectionPage() {
   const { profile } = useAuth();
@@ -99,14 +106,26 @@ export default function NewInspectionPage() {
   );
 
   // Group template items by section, preserving display_order within each.
+  // The paper form labels its blocks [A]/[B]/[C]; the stored section name is
+  // kept clean because it doubles as the analytics section filter value, so the
+  // letter is derived from section order here rather than baked into the data.
   const sections = useMemo(() => {
     const bySection = new Map();
     for (const item of items) {
       if (!bySection.has(item.section)) bySection.set(item.section, []);
       bySection.get(item.section).push(item);
     }
-    return [...bySection.entries()];
+    return [...bySection.entries()].map(([name, sectionItems], i) => ({
+      name,
+      label: `${SECTION_LETTERS[i] ?? '•'} — ${name}`,
+      items: sectionItems,
+    }));
   }, [items]);
+
+  // Which sections are open. Absent = fall back to "first one only", so the
+  // form opens on section A rather than a 25-item wall on a phone.
+  const [expandedSections, setExpandedSections] = useState({});
+  const isSectionOpen = (name, idx) => expandedSections[name] ?? idx === 0;
 
   // Any manual touch — including an explicit "looks correct" confirm with an
   // empty patch — counts as the inspector reviewing that field, so it clears
@@ -150,6 +169,7 @@ export default function NewInspectionPage() {
     setServicedAt('');
     setAnswers({});
     setGps(null);
+    setExpandedSections({}); // back to "section A open" for the next check
     signaturePadRef.current?.clear();
     setOcrError(null);
     setOcrSummary(null);
@@ -260,6 +280,17 @@ export default function NewInspectionPage() {
       problem = 'Sign the "Checked by" box before submitting.';
 
     if (problem) {
+      // Open every section still holding a problem item — otherwise the message
+      // names a count the inspector can't see behind a collapsed header.
+      const blocking = [...unanswered, ...noSeverity, ...noPhoto];
+      if (blocking.length > 0) {
+        const names = new Set(blocking.map((i) => i.section));
+        setExpandedSections((prev) => {
+          const next = { ...prev };
+          for (const name of names) next[name] = true;
+          return next;
+        });
+      }
       setFeedback({ severity: 'error', message: problem });
       return;
     }
@@ -487,204 +518,244 @@ export default function NewInspectionPage() {
 
                 {/* Checklist appears once a lift is chosen. */}
                 {liftId &&
-                  sections.map(([section, sectionItems]) => (
-                    <Box key={section}>
-                      <Typography
-                        variant="subtitle2"
-                        sx={{ color: 'primary.main', textTransform: 'uppercase', mb: 1 }}
-                      >
-                        {section}
-                      </Typography>
-                      <Stack divider={<Divider />} spacing={2}>
-                        {sectionItems.map((item) => {
-                          const a = answers[item.id] ?? {};
-                          // M.5: every OCR-prefilled field is marked unconfirmed
-                          // until the inspector edits or explicitly confirms it.
-                          const isUnconfirmed = a.unconfirmed === true;
-                          const lowConfidence = isUnconfirmed && a.confidence != null && a.confidence < 0.8;
-                          const isUnreadable = unreadableItemIds.has(item.id);
-                          return (
-                            <Box
-                              key={item.id}
-                              sx={
-                                isUnconfirmed
-                                  ? { borderLeft: 3, borderColor: 'warning.main', pl: 1.5 }
-                                  : undefined
-                              }
-                            >
-                              <Stack
-                                direction={{ xs: 'column', sm: 'row' }}
-                                justifyContent="space-between"
-                                alignItems={{ xs: 'flex-start', sm: 'center' }}
-                                spacing={1}
+                  sections.map((sec, secIdx) => {
+                    const answered = sec.items.filter((i) => answers[i.id]?.result).length;
+                    const complete = answered === sec.items.length;
+                    // A collapsed section must still advertise OCR answers that
+                    // haven't been reviewed, or they'd be confirmed unseen (G18).
+                    const needsReview = sec.items.some(
+                      (i) => answers[i.id]?.unconfirmed === true || unreadableItemIds.has(i.id)
+                    );
+                    return (
+                    <Accordion
+                      key={sec.name}
+                      variant="outlined"
+                      disableGutters
+                      expanded={isSectionOpen(sec.name, secIdx)}
+                      onChange={(e, open) =>
+                        setExpandedSections((prev) => ({ ...prev, [sec.name]: open }))
+                      }
+                      sx={{ borderRadius: 2, '&::before': { display: 'none' } }}
+                    >
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={1}
+                          sx={{ flexGrow: 1, pr: 1 }}
+                        >
+                          <Typography
+                            variant="subtitle2"
+                            sx={{ color: 'primary.main', textTransform: 'uppercase', flexGrow: 1 }}
+                          >
+                            {sec.label}
+                          </Typography>
+                          {needsReview && (
+                            <Tooltip title="Contains scanned answers you haven't confirmed yet">
+                              <Chip size="small" color="warning" variant="outlined" label="Review" />
+                            </Tooltip>
+                          )}
+                          <Chip
+                            size="small"
+                            color={complete ? 'success' : 'default'}
+                            variant={complete ? 'filled' : 'outlined'}
+                            label={`${answered}/${sec.items.length}`}
+                          />
+                        </Stack>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        <Stack divider={<Divider />} spacing={2}>
+                          {sec.items.map((item) => {
+                            const a = answers[item.id] ?? {};
+                            // M.5: every OCR-prefilled field is marked unconfirmed
+                            // until the inspector edits or explicitly confirms it.
+                            const isUnconfirmed = a.unconfirmed === true;
+                            const lowConfidence = isUnconfirmed && a.confidence != null && a.confidence < 0.8;
+                            const isUnreadable = unreadableItemIds.has(item.id);
+                            return (
+                              <Box
+                                key={item.id}
+                                sx={
+                                  isUnconfirmed
+                                    ? { borderLeft: 3, borderColor: 'warning.main', pl: 1.5 }
+                                    : undefined
+                                }
                               >
-                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                                  <Typography variant="body2">{item.item_text}</Typography>
-                                  {isUnreadable && (
-                                    <Chip label="Unreadable — please check" size="small" color="warning" variant="outlined" />
-                                  )}
-                                  {lowConfidence && (
-                                    <Chip label="Please check" size="small" color="warning" variant="outlined" />
-                                  )}
-                                  {isUnconfirmed && (
-                                    <Tooltip title="Looks correct — confirm">
-                                      <IconButton
-                                        size="small"
-                                        color="warning"
-                                        aria-label="Confirm this field"
-                                        onClick={() => setAnswer(item.id, {})}
-                                      >
-                                        <CheckCircleOutlineIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                </Stack>
-                                <RadioGroup
-                                  row
-                                  value={a.result ?? ''}
-                                  onChange={(e) => setAnswer(item.id, { result: e.target.value })}
+                                <Stack
+                                  direction={{ xs: 'column', sm: 'row' }}
+                                  justifyContent="space-between"
+                                  alignItems={{ xs: 'flex-start', sm: 'center' }}
+                                  spacing={1}
                                 >
-                                  <FormControlLabel
-                                    value="Pass"
-                                    control={<Radio size="small" />}
-                                    label="Pass"
-                                  />
-                                  <FormControlLabel
-                                    value="Defect"
-                                    control={<Radio size="small" color="primary" />}
-                                    label="Defect"
-                                  />
-                                </RadioGroup>
-                              </Stack>
-
-                              {/* Defect details: severity (required) + remark, and
-                                  a photo for Major/Critical only. */}
-                              {a.result === 'Defect' && (
-                                <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-                                  <Stack
-                                    direction={{ xs: 'column', sm: 'row' }}
-                                    spacing={2}
-                                  >
-                                    <TextField
-                                      select
-                                      required
-                                      label="Severity"
-                                      size="small"
-                                      value={a.severity ?? ''}
-                                      onChange={(e) => setSeverity(item.id, e.target.value)}
-                                      sx={{ minWidth: 160 }}
-                                    >
-                                      {SEVERITIES.map((s) => (
-                                        <MenuItem key={s} value={s}>
-                                          {s}
-                                        </MenuItem>
-                                      ))}
-                                    </TextField>
-                                    <TextField
-                                      label="Remark"
-                                      size="small"
-                                      value={a.remark ?? ''}
-                                      onChange={(e) =>
-                                        setAnswer(item.id, { remark: e.target.value })
-                                      }
-                                      fullWidth
-                                    />
+                                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                                    <Typography variant="body2">{item.item_text}</Typography>
+                                    {isUnreadable && (
+                                      <Chip label="Unreadable — please check" size="small" color="warning" variant="outlined" />
+                                    )}
+                                    {lowConfidence && (
+                                      <Chip label="Please check" size="small" color="warning" variant="outlined" />
+                                    )}
+                                    {isUnconfirmed && (
+                                      <Tooltip title="Looks correct — confirm">
+                                        <IconButton
+                                          size="small"
+                                          color="warning"
+                                          aria-label="Confirm this field"
+                                          onClick={() => setAnswer(item.id, {})}
+                                        >
+                                          <CheckCircleOutlineIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
                                   </Stack>
-
-                                  {/* G3: Minor defects are remark-only — the
-                                      client's "no photos on minor issue" rule. */}
-                                  {a.severity === 'Minor' && (
-                                    <Typography variant="caption" color="text.secondary">
-                                      Minor defects are recorded by remark only — no photo.
-                                    </Typography>
-                                  )}
-
-                                  {/* Compact per-item photo picker (thumbnail +
-                                      remove, like ReportIssuePage's, scaled down).
-                                      Required once severity is Major/Critical. */}
-                                  {a.severity && a.severity !== 'Minor' && (
-                                    a.previewUrl ? (
-                                    <Stack
-                                      direction="row"
-                                      spacing={1.5}
-                                      alignItems="center"
-                                      sx={{
-                                        p: 1,
-                                        border: 1,
-                                        borderColor: 'divider',
-                                        borderRadius: 2,
-                                      }}
-                                    >
-                                      <Box
-                                        component="img"
-                                        src={a.previewUrl}
-                                        alt="Defect photo preview"
-                                        sx={{
-                                          width: 48,
-                                          height: 48,
-                                          objectFit: 'cover',
-                                          borderRadius: 1,
-                                        }}
-                                      />
-                                      <Typography
-                                        variant="caption"
-                                        sx={{ flexGrow: 1, wordBreak: 'break-all' }}
-                                      >
-                                        {a.photo?.name}
-                                      </Typography>
-                                      <IconButton
-                                        aria-label="Remove photo"
-                                        onClick={() => setPhoto(item.id, null)}
-                                        size="small"
-                                      >
-                                        <CloseIcon fontSize="small" />
-                                      </IconButton>
-                                    </Stack>
-                                  ) : (
-                                    <Box
-                                      component="label"
-                                      sx={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 0.5,
-                                        alignSelf: 'flex-start',
-                                        px: 1.5,
-                                        py: 0.75,
-                                        border: '1px dashed',
-                                        borderColor: 'divider',
-                                        borderRadius: 2,
-                                        cursor: 'pointer',
-                                        color: 'text.secondary',
-                                        fontSize: 13,
-                                        '&:hover': {
-                                          borderColor: 'primary.main',
-                                          color: 'primary.main',
-                                        },
-                                      }}
-                                    >
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        hidden
-                                        onChange={(e) => {
-                                          const chosen = e.target.files?.[0];
-                                          if (chosen) setPhoto(item.id, chosen);
-                                          e.target.value = '';
-                                        }}
-                                      />
-                                      <AddPhotoAlternateOutlinedIcon fontSize="small" />
-                                      Add photo
-                                    </Box>
-                                    )
-                                  )}
+                                  <RadioGroup
+                                    row
+                                    value={a.result ?? ''}
+                                    onChange={(e) => setAnswer(item.id, { result: e.target.value })}
+                                  >
+                                    <FormControlLabel
+                                      value="Pass"
+                                      control={<Radio size="small" />}
+                                      label="Pass"
+                                    />
+                                    <FormControlLabel
+                                      value="Defect"
+                                      control={<Radio size="small" color="primary" />}
+                                      label="Defect"
+                                    />
+                                  </RadioGroup>
                                 </Stack>
-                              )}
-                            </Box>
-                          );
-                        })}
-                      </Stack>
-                    </Box>
-                  ))}
+
+                                {/* Defect details: severity (required) + remark, and
+                                    a photo for Major/Critical only. */}
+                                {a.result === 'Defect' && (
+                                  <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+                                    <Stack
+                                      direction={{ xs: 'column', sm: 'row' }}
+                                      spacing={2}
+                                    >
+                                      <TextField
+                                        select
+                                        required
+                                        label="Severity"
+                                        size="small"
+                                        value={a.severity ?? ''}
+                                        onChange={(e) => setSeverity(item.id, e.target.value)}
+                                        sx={{ minWidth: 160 }}
+                                      >
+                                        {SEVERITIES.map((s) => (
+                                          <MenuItem key={s} value={s}>
+                                            {s}
+                                          </MenuItem>
+                                        ))}
+                                      </TextField>
+                                      <TextField
+                                        label="Remark"
+                                        size="small"
+                                        value={a.remark ?? ''}
+                                        onChange={(e) =>
+                                          setAnswer(item.id, { remark: e.target.value })
+                                        }
+                                        fullWidth
+                                      />
+                                    </Stack>
+
+                                    {/* G3: Minor defects are remark-only — the
+                                        client's "no photos on minor issue" rule. */}
+                                    {a.severity === 'Minor' && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Minor defects are recorded by remark only — no photo.
+                                      </Typography>
+                                    )}
+
+                                    {/* Compact per-item photo picker (thumbnail +
+                                        remove, like ReportIssuePage's, scaled down).
+                                        Required once severity is Major/Critical. */}
+                                    {a.severity && a.severity !== 'Minor' && (
+                                      a.previewUrl ? (
+                                      <Stack
+                                        direction="row"
+                                        spacing={1.5}
+                                        alignItems="center"
+                                        sx={{
+                                          p: 1,
+                                          border: 1,
+                                          borderColor: 'divider',
+                                          borderRadius: 2,
+                                        }}
+                                      >
+                                        <Box
+                                          component="img"
+                                          src={a.previewUrl}
+                                          alt="Defect photo preview"
+                                          sx={{
+                                            width: 48,
+                                            height: 48,
+                                            objectFit: 'cover',
+                                            borderRadius: 1,
+                                          }}
+                                        />
+                                        <Typography
+                                          variant="caption"
+                                          sx={{ flexGrow: 1, wordBreak: 'break-all' }}
+                                        >
+                                          {a.photo?.name}
+                                        </Typography>
+                                        <IconButton
+                                          aria-label="Remove photo"
+                                          onClick={() => setPhoto(item.id, null)}
+                                          size="small"
+                                        >
+                                          <CloseIcon fontSize="small" />
+                                        </IconButton>
+                                      </Stack>
+                                    ) : (
+                                      <Box
+                                        component="label"
+                                        sx={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 0.5,
+                                          alignSelf: 'flex-start',
+                                          px: 1.5,
+                                          py: 0.75,
+                                          border: '1px dashed',
+                                          borderColor: 'divider',
+                                          borderRadius: 2,
+                                          cursor: 'pointer',
+                                          color: 'text.secondary',
+                                          fontSize: 13,
+                                          '&:hover': {
+                                            borderColor: 'primary.main',
+                                            color: 'primary.main',
+                                          },
+                                        }}
+                                      >
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          hidden
+                                          onChange={(e) => {
+                                            const chosen = e.target.files?.[0];
+                                            if (chosen) setPhoto(item.id, chosen);
+                                            e.target.value = '';
+                                          }}
+                                        />
+                                        <AddPhotoAlternateOutlinedIcon fontSize="small" />
+                                        Add photo
+                                      </Box>
+                                      )
+                                    )}
+                                  </Stack>
+                                )}
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      </AccordionDetails>
+                    </Accordion>
+                    );
+                  })}
 
                 {/* G5 — the paper form's "Checked by / Signature" box. Shown
                     with the checklist, since it attests to those answers. */}
