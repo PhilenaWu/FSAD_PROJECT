@@ -37,47 +37,35 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { alpha, useTheme } from '@mui/material/styles';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import { alpha } from '@mui/material/styles';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import PrintOutlinedIcon from '@mui/icons-material/PrintOutlined';
 import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
+import SlideshowOutlinedIcon from '@mui/icons-material/SlideshowOutlined';
 import CloseIcon from '@mui/icons-material/Close';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  PointElement,
-  LineElement,
-  Filler,
-  Legend,
-  Tooltip as ChartTooltip,
-} from 'chart.js';
-import { Bar, Line } from 'react-chartjs-2';
+import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { downloadCsv } from '../utils/csvDownload';
-import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
+import CostTile from '../components/cost/CostTile';
+import CostPanel from '../components/cost/CostPanel';
+import CategoryBarChart from '../components/cost/CategoryBarChart';
+import CostTrendChart from '../components/cost/CostTrendChart';
+import liftStatusChip from '../components/cost/liftStatusChip';
+import { fmtMoney } from '../components/cost/formatMoney';
 import {
   getCostFilterOptions,
   getCostSummary,
   getCostAnalytics,
   getLiftWatchlist,
+  exportCostPptx,
   buildInsights,
   LIFT_REPLACEMENT_REVIEW_COST,
 } from '../services/costService';
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Filler, Legend, ChartTooltip);
-
 // `contractorId` holds the contractor's UUID — the backend filters on the
 // foreign key, not on a display name that could change.
 const FILTER_KEYS = ['from', 'to', 'block', 'category', 'contractorId'];
-
-// "$18,240.50" — SGD operational maintenance costs.
-const fmtMoney = (n) =>
-  n == null ? '—' : `$${Number(n).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const isoDaysAgo = (days) =>
   new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -89,208 +77,6 @@ const QUICK_RANGES = [
   { label: 'This year', from: () => `${new Date().getFullYear()}-01-01`, to: () => '' },
   { label: 'All time', from: () => '', to: () => '' },
 ];
-
-// KPI stat tile — same visual language as the UC-005 KpiRow tiles.
-function Tile({ label, value, sub, trend, trendLabel }) {
-  // trend: positive % = spend up vs the prior window (bad → red), negative = down (good → green)
-  const TrendIcon = trend > 0 ? TrendingUpIcon : TrendingDownIcon;
-  const trendColor = trend > 0 ? 'error.main' : 'success.main';
-
-  return (
-    <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, height: '100%' }}>
-      <Typography variant="body2" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="h5" fontWeight={700}>
-        {value}
-      </Typography>
-      {trend != null && (
-        <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: trendColor }}>
-          <TrendIcon fontSize="small" />
-          <Typography variant="caption" fontWeight={600}>
-            {trend > 0 ? '+' : ''}
-            {trend}% {trendLabel}
-          </Typography>
-        </Stack>
-      )}
-      {sub && (
-        <Typography variant="caption" color="text.secondary" component="div">
-          {sub}
-        </Typography>
-      )}
-    </Paper>
-  );
-}
-
-// Chart/section wrapper — outlined Paper with a title and a period subtitle so
-// each panel states the window its numbers cover.
-function Panel({ title, subtitle, action, children }) {
-  return (
-    <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, height: '100%' }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-        <Box>
-          {/* component="div": titles may contain a Chip (a div), invalid inside h6. */}
-          <Typography variant="subtitle1" component="div" fontWeight={700}>
-            {title}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 2, minHeight: 18 }}>
-            {subtitle}
-          </Typography>
-        </Box>
-        {action && <Box sx={{ displayPrint: 'none' }}>{action}</Box>}
-      </Stack>
-      {children}
-    </Paper>
-  );
-}
-
-// Clicking a bar drills down: the page sets that category as the active
-// filter (mirrors the manager heatmap's click-to-drill-down).
-function CategoryBarChart({ data, onBarClick, chartRef }) {
-  const theme = useTheme();
-  const chartData = {
-    labels: data.map((d) => d.category),
-    datasets: [
-      {
-        label: 'Actual cost',
-        data: data.map((d) => d.actual_cost),
-        backgroundColor: alpha(theme.palette.primary.main, 0.7),
-        borderRadius: 4,
-      },
-    ],
-  };
-  const options = {
-    maintainAspectRatio: false,
-    onClick: (_evt, elements) => {
-      if (elements.length) onBarClick?.(data[elements[0].index].category);
-    },
-    onHover: (evt, elements) => {
-      evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (item) => {
-            const row = data[item.dataIndex];
-            return `${fmtMoney(item.raw)} across ${row.jobs} job${row.jobs === 1 ? '' : 's'}`;
-          },
-        },
-      },
-    },
-    scales: {
-      y: { beginAtZero: true, ticks: { callback: (v) => `$${Number(v).toLocaleString()}` } },
-      x: { grid: { display: false } },
-    },
-  };
-  return <Bar ref={chartRef} data={chartData} options={options} />;
-}
-
-// Monthly actuals as a solid line; the 3-month projection (damped-trend
-// exponential smoothing on complete months) continues it as a dashed amber
-// curve inside a shaded ~80% uncertainty band derived from the model's own
-// historical errors.
-function CostTrendChart({ data, forecast, chartRef }) {
-  const theme = useTheme();
-  const points = forecast?.points ?? [];
-  const labels = [...data.map((d) => d.month), ...points.map((p) => p.month)];
-  const lastActual = data[data.length - 1]?.actual_cost ?? null;
-
-  // Nulls across the actual months (anchored on the last one), then the
-  // projected series — so the dashed curve continues the solid line.
-  const projectionSeries = (values) => [
-    ...data.map((d, i) => (i === data.length - 1 ? lastActual : null)),
-    ...values,
-  ];
-
-  const datasets = [
-    {
-      label: 'Actual spend',
-      data: [...data.map((d) => d.actual_cost), ...points.map(() => null)],
-      borderColor: theme.palette.primary.main,
-      backgroundColor: alpha(theme.palette.primary.main, 0.08),
-      pointBackgroundColor: theme.palette.primary.main,
-      pointRadius: 3,
-      tension: 0.3,
-      fill: true,
-    },
-  ];
-  if (points.length) {
-    // Band edges first (hidden from legend/tooltip via the '_' prefix);
-    // the upper edge fills down to the lower edge drawn just before it.
-    datasets.push(
-      {
-        label: '_band_lower',
-        data: projectionSeries(points.map((p) => p.lower)),
-        borderWidth: 0,
-        pointRadius: 0,
-        tension: 0.3,
-        fill: false,
-      },
-      {
-        label: '_band_upper',
-        data: projectionSeries(points.map((p) => p.upper)),
-        borderWidth: 0,
-        pointRadius: 0,
-        backgroundColor: alpha(theme.palette.warning.main, 0.15),
-        tension: 0.3,
-        fill: '-1',
-      },
-      {
-        label: 'Projected (damped trend)',
-        data: projectionSeries(points.map((p) => p.value)),
-        borderColor: theme.palette.warning.dark,
-        borderDash: [6, 4],
-        pointBackgroundColor: theme.palette.warning.dark,
-        pointStyle: 'rectRot',
-        pointRadius: 4,
-        tension: 0.3,
-        fill: false,
-      }
-    );
-  }
-
-  const options = {
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: points.length > 0,
-        position: 'bottom',
-        labels: {
-          boxWidth: 24,
-          filter: (item) => !item.text.startsWith('_'),
-        },
-        onClick: null,
-      },
-      tooltip: {
-        filter: (item) => !item.dataset.label.startsWith('_'),
-        callbacks: {
-          label: (item) => {
-            const projIndex = item.dataIndex - data.length;
-            if (item.dataset.label.startsWith('Projected') && projIndex >= 0) {
-              const p = points[projIndex];
-              return `${fmtMoney(p.value)} projected (likely ${fmtMoney(p.lower)}–${fmtMoney(p.upper)})`;
-            }
-            const row = data[item.dataIndex];
-            return row ? `${fmtMoney(item.raw)} across ${row.jobs} job${row.jobs === 1 ? '' : 's'}` : fmtMoney(item.raw);
-          },
-        },
-      },
-    },
-    scales: {
-      y: { beginAtZero: true, ticks: { callback: (v) => `$${Number(v).toLocaleString()}` } },
-      x: { grid: { display: false } },
-    },
-  };
-  return <Line ref={chartRef} data={{ labels, datasets }} options={options} />;
-}
-
-// Watchlist row status from lifetime spend vs the review threshold.
-function liftStatusChip(pct) {
-  if (pct >= 100) return <Chip size="small" color="error" label="Review replacement" />;
-  if (pct >= 75) return <Chip size="small" color="warning" label="Approaching review" />;
-  return <Chip size="small" color="success" label="Healthy" />;
-}
 
 export default function AdminCostPage() {
   const { profile } = useAuth();
@@ -322,6 +108,10 @@ export default function AdminCostPage() {
   // UC-004 → UC-011 live link: a manager closing a job (which records the
   // actual_cost) prompts this dashboard to refresh.
   const [closeSeen, setCloseSeen] = useState(false);
+
+  // PowerPoint export — the deck is built server-side, so it takes a moment.
+  const [pptxBusy, setPptxBusy] = useState(false);
+  const [toast, setToast] = useState('');
 
   // Chart canvases, for the per-panel PNG download.
   const categoryChartRef = useRef(null);
@@ -403,6 +193,26 @@ export default function AdminCostPage() {
       window.removeEventListener('afterprint', resizeCharts);
     };
   }, []);
+
+  // Server-rendered cost deck (4C-2 pain point — the weekly meeting pack).
+  // Opens in a new tab rather than navigating away from the filtered view.
+  const handleExportPptx = async () => {
+    setPptxBusy(true);
+    try {
+      const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+      const { pptx_url: url } = await exportCostPptx(params);
+      if (url) {
+        window.open(url, '_blank', 'noopener');
+        setToast('PowerPoint deck ready — opened in a new tab.');
+      } else {
+        setToast('The deck was built but no download link came back.');
+      }
+    } catch (err) {
+      setToast(err.response?.data?.message || 'Could not build the PowerPoint deck.');
+    } finally {
+      setPptxBusy(false);
+    }
+  };
 
   // chart.toBase64Image() → download, for pasting into slides (4C-2 pain point).
   const downloadChartPng = (ref, filename) => {
@@ -556,6 +366,20 @@ export default function AdminCostPage() {
               </Button>
             </span>
           </Tooltip>
+          {/* The deck is rendered server-side from the same figures, so it
+              cannot drift from the screen. */}
+          <Tooltip title={jobs.length ? '' : 'No costed jobs match the current filters — nothing to export.'}>
+            <span>
+              <Button
+                variant="outlined"
+                startIcon={<SlideshowOutlinedIcon />}
+                disabled={!jobs.length || pptxBusy}
+                onClick={handleExportPptx}
+              >
+                {pptxBusy ? 'Building…' : 'PowerPoint'}
+              </Button>
+            </span>
+          </Tooltip>
         </Stack>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
@@ -583,14 +407,14 @@ export default function AdminCostPage() {
       {summary ? (
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid size={{ xs: 6, md: 3 }}>
-            <Tile
+            <CostTile
               label="Total maintenance spend"
               value={fmtMoney(summary.total_actual)}
               sub={`${summary.jobs} closed job${summary.jobs === 1 ? '' : 's'}, ${periodLabel}`}
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
-            <Tile
+            <CostTile
               label="Spend movement"
               value={
                 summary.variance_pct == null
@@ -607,14 +431,14 @@ export default function AdminCostPage() {
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
-            <Tile
+            <CostTile
               label="Projected exposure"
               value={fmtMoney(summary.total_projected)}
               sub="active AI risk alerts, if left unaddressed"
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
-            <Tile
+            <CostTile
               label="Avg cost per job"
               value={fmtMoney(avgPerJob)}
               sub="total spend ÷ closed jobs"
@@ -754,7 +578,7 @@ export default function AdminCostPage() {
       {/* Charts row */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
         <Grid size={{ xs: 12, md: 6 }}>
-          <Panel
+          <CostPanel
             title="Spend by category"
             subtitle={`Closed jobs, ${periodLabel} — click a bar to filter`}
             action={
@@ -774,10 +598,10 @@ export default function AdminCostPage() {
             ) : (
               <Alert severity="info">No costed jobs match the current filters.</Alert>
             )}
-          </Panel>
+          </CostPanel>
         </Grid>
         <Grid size={{ xs: 12, md: 6 }}>
-          <Panel
+          <CostPanel
             title={
               <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                 <span>Monthly spend trend</span>
@@ -826,13 +650,13 @@ export default function AdminCostPage() {
             ) : (
               <Alert severity="info">No costed jobs match the current filters.</Alert>
             )}
-          </Panel>
+          </CostPanel>
         </Grid>
       </Grid>
 
       {/* Repair-vs-replace lift watchlist — lifetime spend vs review threshold */}
       <Box sx={{ mb: 3 }}>
-        <Panel
+        <CostPanel
           title="Lift watchlist — repair vs replace"
           subtitle={`Lifetime maintenance spend per lift vs the ${fmtMoney(LIFT_REPLACEMENT_REVIEW_COST)} replacement-review threshold (date filters don't apply — the whole life counts)`}
         >
@@ -890,12 +714,12 @@ export default function AdminCostPage() {
           ) : (
             <Alert severity="info">No lift-linked costed jobs match the current filters.</Alert>
           )}
-        </Panel>
+        </CostPanel>
       </Box>
 
       {/* Cost per contractor — sortable; pairs with the UC-005 scorecard */}
       <Box sx={{ mb: 3 }}>
-        <Panel title="Cost per contractor" subtitle={`Closed jobs, ${periodLabel}`}>
+        <CostPanel title="Cost per contractor" subtitle={`Closed jobs, ${periodLabel}`}>
           {loading ? (
             <Skeleton variant="rounded" height={160} />
           ) : (
@@ -960,12 +784,12 @@ export default function AdminCostPage() {
               </Table>
             </TableContainer>
           )}
-        </Panel>
+        </CostPanel>
       </Box>
 
       {/* Recent costed jobs — the drill-down behind the aggregates. Jobs
           costing over 2× their category's average get an outlier flag. */}
-      <Panel
+      <CostPanel
         title="Recent costed jobs"
         subtitle={`Latest close-outs with a recorded cost, ${periodLabel} — showing ${Math.min(jobs.length, 10)} of ${jobs.length}`}
       >
@@ -1012,10 +836,18 @@ export default function AdminCostPage() {
         ) : (
           <Alert severity="info">No costed jobs match the current filters.</Alert>
         )}
-      </Panel>
+      </CostPanel>
 
       {/* UC-004 → UC-011 live link: prompt (not auto-refresh) when a job is
           closed elsewhere, so charts don't move under the admin mid-read. */}
+      <Snackbar
+        open={Boolean(toast)}
+        autoHideDuration={6000}
+        onClose={() => setToast('')}
+        message={toast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
+
       <Snackbar
         open={closeSeen}
         onClose={() => setCloseSeen(false)}

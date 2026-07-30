@@ -139,7 +139,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | H.1 | Overdue + re-open columns on the scorecard | `ContractorScorecard.jsx`, `analyticsController.js` | **Done.** Overdue was already live. `avg_reopens` added — `hasReopenCount()` probes `information_schema` once and emits `NULL::float` until migration `026` exists, so the query is valid before and after it and begins averaging by itself |
 | H.2 | Section filter in analytics | `DashboardPage.jsx`, `analyticsController.js` | **Done.** `?section` adds an `EXISTS` over `checklist_results → checklist_items` scoped to `result = 'Defect'`. Correlates on `i.id` for prefixed callers, `inspections.id` otherwise. The dropdown hides itself when no sections are seeded |
 | H.3 | Annual export entry point | `ReportsArchivePage.jsx`, `reportService.js` | **Done.** Year picker derived from the listed reports (no extra endpoint), download button → `GET /api/reports/annual`. 404 surfaces as "not available yet"; the page never generates or emails anything |
-| H.4 | Tests | `tests/unit/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 507 backend, 43 frontend |
+| H.4 | Tests | `tests/unit/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 507 backend, 78 frontend |
 
 > **UC-011 is closed.** Davian's `5.19a`/`5.19b` landed `adminController.js` and
 > `routes/admin.js`; `costService.js` now calls `/api/admin/costs/*` through
@@ -223,7 +223,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | ADM-T01…05 | `/costs/jobs` | Contract keys per row, `YYYY-MM-DD` close date and numeric cost, `null` lift kept, closed + costed only newest first, LEFT joins, every filter bound as a parameter |
 | ADM-T06…09 | `/costs/filter-options` | Blocks, categories, contractors **with ids**; options come from costed rows only; binds no parameters; empty tables yield empty arrays |
 
-Run: `npx jest` (507) and `npx vitest run` (50).
+Run: `npx jest` (507) and `npx vitest run` (78 — 62 pure/service + 16 component).
 
 
 

@@ -179,10 +179,19 @@ export function backtestForecast(trend, { currentMonth } = {}) {
   return { rows, mape };
 }
 
+// A category has to have been at least this share of the prior month's total
+// spend before its percentage change is worth reporting. Without a floor the
+// callout is won by whichever category was near zero last month — $512 rising
+// to $4,520 reads as "up 783%", which is arithmetically true and analytically
+// worthless. Expressed as a share rather than a dollar figure so the rule
+// holds at any estate size.
+export const MOVER_MIN_BASE_SHARE = 0.05;
+
 // Biggest category cost increase, latest COMPLETE month vs the month before —
 // the "top mover" callout. The partial current month is excluded: comparing a
 // half-finished month against a full one would flag artificial movements.
-// Null when there's no increase or fewer than two complete months.
+// Categories below MOVER_MIN_BASE_SHARE of the prior month are ignored.
+// Null when there's no qualifying increase or fewer than two complete months.
 export function topMover(rows, { currentMonth } = {}) {
   const nowMonth = currentMonth ?? new Date().toISOString().slice(0, 7);
   const months = [...new Set(rows.map((j) => j.closed_at.slice(0, 7)))]
@@ -199,10 +208,14 @@ export function topMover(rows, { currentMonth } = {}) {
   };
   const prev = totals(prevM);
   const last = totals(lastM);
+  const prevTotal = [...prev.values()].reduce((a, n) => a + n, 0);
+  const minBase = prevTotal * MOVER_MIN_BASE_SHARE;
+
   let best = null;
   for (const [category, cost] of last) {
     const before = prev.get(category);
     if (!before) continue; // new categories have no meaningful % change
+    if (before < minBase) continue; // too small a base to draw a conclusion from
     const pct = Math.round(((cost - before) / before) * 1000) / 10;
     if (pct > 0 && (!best || pct > best.pct)) {
       best = { category, pct, month: lastM, cost, prev_cost: before };
@@ -451,4 +464,13 @@ export async function getCostAnalytics(filters = {}) {
 export async function getLiftWatchlist(filters = {}) {
   const rows = await fetchJobRows({ block: filters.block });
   return { data: buildLiftWatchlist(rows, { block: filters.block }) };
+}
+
+// POST /api/export/admin-costs-pptx → { pptx_url }
+// The deck is rendered server-side from the same fetchers the dashboard reads,
+// so it cannot drift from what is on screen. Admin-only, and the filters are
+// sent in the API's own parameter names.
+export async function exportCostPptx(filters = {}) {
+  const res = await api.post('/api/export/admin-costs-pptx', { filters: toParams(filters) });
+  return res.data;
 }
