@@ -79,6 +79,20 @@ const ALERT_PREVIEW_COUNT = 3;
 const MAX_IMPORT_BYTES = 1_000_000;
 const MAX_IMPORT_ROWS = 5000;
 
+// The what-if preview survives an accidental refresh via sessionStorage —
+// still session-only and never written to the database ("Clear" also removes
+// it here). A corrupt or missing entry just means no preview.
+const PREVIEW_STORAGE_KEY = 'dashboard-whatif-preview';
+
+function loadStoredPreview() {
+  try {
+    const rows = JSON.parse(sessionStorage.getItem(PREVIEW_STORAGE_KEY));
+    return Array.isArray(rows) && rows.length ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
 // Card wrapper shared by every dashboard section. `subtitle` states the time
 // window the panel covers, so its numbers can't be misread against the KPI
 // tiles (which use their own 30-day windows).
@@ -159,7 +173,7 @@ export default function DashboardPage() {
 
   // What-if preview: imported CSV rows blended into the charts client-side.
   // null = normal (database) view. Nothing is written to the database.
-  const [imported, setImported] = useState(null);
+  const [imported, setImported] = useState(loadStoredPreview);
   // Shared preview view: all charts follow one switch — combined | existing | imported.
   const [previewView, setPreviewView] = useState('all');
   const fileInputRef = useRef(null);
@@ -227,6 +241,7 @@ export default function DashboardPage() {
   function clearPreview() {
     setImported(null);
     setPreviewView('all'); // stale "Imported only" must not linger past the import
+    sessionStorage.removeItem(PREVIEW_STORAGE_KEY);
   }
 
   // Panel-title chip marking charts that currently include preview data.
@@ -255,6 +270,11 @@ export default function DashboardPage() {
         }
         setImported(rows);
         setPreviewView('all'); // fresh import always starts on the combined view
+        try {
+          sessionStorage.setItem(PREVIEW_STORAGE_KEY, JSON.stringify(rows));
+        } catch {
+          // Quota exceeded — the preview still works, it just won't survive a refresh.
+        }
         setToast(`Previewing ${rows.length} imported row${rows.length === 1 ? '' : 's'} — charts updated.`);
       } catch (err) {
         setToast(err.message);

@@ -65,6 +65,7 @@ const renderPage = () =>
   );
 
 beforeEach(() => {
+  sessionStorage.clear(); // a stored what-if preview must not leak between tests
   getFilterOptions.mockResolvedValue({ blocks: ['44A'], categories: ['Doors'], sections: [] });
   getSummary.mockResolvedValue({
     open_count: 79,
@@ -128,6 +129,31 @@ describe('DashboardPage — AI risk alerts', () => {
 
     await waitFor(() => expect(getRecommendations).toHaveBeenCalled());
     expect(screen.queryByText('AI risk alerts')).not.toBeInTheDocument();
+  });
+});
+
+describe('DashboardPage — what-if preview persistence', () => {
+  test('a preview stored in sessionStorage survives a reload of the page', async () => {
+    sessionStorage.setItem(
+      'dashboard-whatif-preview',
+      JSON.stringify([{ block: '44A', category: 'Doors', date: null, resolution_time_hours: null }])
+    );
+    renderPage();
+
+    expect(await screen.findByText(/What-if preview — 1 imported row/)).toBeInTheDocument();
+
+    // Clear preview drops the stored rows too — nothing lingers.
+    await userEvent.click(screen.getByRole('button', { name: /Clear preview/i }));
+    expect(sessionStorage.getItem('dashboard-whatif-preview')).toBeNull();
+    expect(screen.queryByText(/What-if preview/)).not.toBeInTheDocument();
+  });
+
+  test('a corrupt stored preview is ignored rather than crashing the page', async () => {
+    sessionStorage.setItem('dashboard-whatif-preview', 'not json {');
+    renderPage();
+
+    expect(await screen.findByText('Analytics Dashboard')).toBeInTheDocument();
+    expect(screen.queryByText(/What-if preview/)).not.toBeInTheDocument();
   });
 });
 
