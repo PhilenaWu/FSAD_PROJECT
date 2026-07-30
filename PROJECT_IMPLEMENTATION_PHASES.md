@@ -49,10 +49,12 @@ Rebalanced from the original plan. The change: **UC-012 vendor backend and its e
 
 > **Boundary — Hasini owns no cron jobs and no email.** Every scheduled workflow
 > (`contract-expiry-check`, `overdue-defect-chase`, `nightly-recommendations`,
-> `monthly-report`) and every Nodemailer call site belongs to Davian. Hasini's
-> surface is presentation only: Chart.js components, the admin/vendor pages, and
-> client-side export controls. Where a Hasini page needs a server figure, it
-> consumes an endpoint Davian owns rather than computing or sending anything.
+> `monthly-report`) and every Nodemailer call site belongs to Davian. Hasini owns
+> UC-005 end to end — including its analytics endpoints in
+> `analyticsController.js` (which is why H.1/H.2 below list that file) — plus
+> Chart.js components, the admin/vendor pages, and client-side export controls.
+> For UC-011 and UC-012 the backend is Davian's: there, a Hasini page consumes an
+> endpoint he owns rather than computing or sending anything.
 
 **Load after rebalance** (volume / difficulty out of 10): Philena 8/8 · Davian 7/7 · Zoe 7/7 · Hasini 7/8 · Mahdiya 6/7. The original spread was 5–10; this is 6–8.
 

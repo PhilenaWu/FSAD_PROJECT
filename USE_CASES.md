@@ -165,7 +165,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 
 1. Manager opens `/dashboard`. The page reads its filter state from the URL query string, so a filtered view is bookmarkable and shareable.
 2. Six requests fire in parallel — summary, heatmap, trends, SLA, contractor scorecard, AI alerts — plus the priority queue on its own filters.
-3. **KPI row** renders open count, overdue count, average resolution hours and SLA %, each with movement against the prior 30-day window.
+3. **KPI row** renders reports filed (with % movement against the prior 30-day window, per the HLD §6.3 response shape), open count, overdue count, and average resolution hours with the SLA %.
 4. **Filter bar** offers block, category, form section, and a from/to date range. Options are queried from the database (`/analytics/filter-options`), never hardcoded. Any change rewrites the URL and re-fetches every panel.
 5. **Charts** render: heatmap (block × category), daily trend line, SLA doughnut against the 72-hour threshold.
 6. **Contractor scorecard** lists jobs, average rectification days, repeat-defect rate, overdue count and average re-opens per contractor.
@@ -191,7 +191,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 | `from` later than `to` | Inline field error, fetch suppressed, last good data retained — no request is sent with an impossible range |
 | CSV import > 1 MB | Rejected client-side before parsing, with a size message; no partial state |
 | CSV import > 5,000 rows | Rejected after parse with a row-count message |
-| CSV malformed / not CSV | "Could not read that file" toast; the preview is not entered |
+| CSV malformed / not CSV | Field- or row-specific toast (e.g. "Row 2: date must be YYYY-MM-DD"); "Could not read that file" only on an actual read failure. The preview is not entered either way |
 | Priority-queue filter matches nothing | Info alert in the panel; **Export CSV** disables itself with an explanatory tooltip (ANA-T05) |
 | PptxGenJS throws | `500 EXPORT_FAILED`; the UI surfaces the message and CSV export remains available as a fallback |
 
@@ -203,7 +203,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 - **Nothing closed yet** → SLA percentage is 0 with `total_resolved: 0`, not `NaN`.
 - **A job acknowledged but never rectified** → `avg_rectification_days` is `NULL`, rendered `—`.
 - **`reopen_count` column absent** (pre-migration `026`) → `avg_reopens` is `NULL`, rendered `—`; the controller probes `information_schema` once and begins averaging by itself once the column exists.
-- **Trend gap months** → interior months with no data are filled with 0 so the line does not silently skip quiet periods.
+- **Trend gap periods** → interior days/weeks/months with no data are filled with 0 so the line does not silently skip quiet periods. (This is client-side bucketing — `utils/trendBuckets.js` — not the SQL: `/analytics/trends` returns only the days that have rows.)
 
 Chart.js heatmap (block × category), trend line, SLA gauge, contractor scorecard, and a ranked priority queue — all responding to **block / category / form section / date-range** filters. Heatmap cells drill through to a filtered `/inspections`. Exports: client-side CSV, and `POST /api/export/pptx` for a PowerPoint deck of the current filtered view (the client's weekly-meeting pain point). **Data Playground:** an Import CSV control blends hypothetical rows (`block,category[,date][,resolution_time_hours]`) into the charts client-side with a Combined / Existing only / Imported only toggle; ≤1 MB and ≤5,000 rows; nothing is persisted and exports always use real data.
 
@@ -322,17 +322,23 @@ KPI tiles (total actual, total projected, variance %), cost by category, cost pe
 | Manager (not admin) opens the page | `403 FORBIDDEN` from every `/api/admin/costs/*` route; the page also renders an "administrators only" alert client-side. As in UC-005, the UI guard is convenience — the enforcement is the server's |
 | Fewer than 3 complete months of history | Forecast returns `null` — too thin to fit; the chart shows history only, no invented projection |
 | No prior window to compare | `variance_pct` is `null`; the tile shows "no prior data" |
-| A category has no peer contractor with ≥2 jobs | No benchmark flag emitted rather than a misleading comparison against a single job |
+| A contractor or its peers have <2 jobs in a category | No benchmark flag emitted rather than a misleading comparison against a single job — both sides of the comparison need ≥2 jobs |
 | Month with zero actual spend | Skipped in the backtest — percentage error against zero is undefined |
 | Filter result empty | Panels render empty states; export disabled |
 
 **Data path — no mock source.** `adminController.js` + `routes/admin.js` serve
 `GET /api/admin/costs/{summary,breakdown,trends,jobs,filter-options}` under
-`requireRole('admin')`, and `costService.js` calls them through `api`. The money
-totals and the job count are SQL aggregates; the pure functions (`groupTotals`,
-`buildTrend`, `forecastNext`, `backtestForecast`, `topMover`,
-`buildLiftWatchlist`, `contractorBenchmarks`, `buildInsights`) run over the
-server-filtered rows `/costs/jobs` returns. `mocks/costMocks.js` has been deleted.
+`requireRole('admin')`. The page calls **three** of them through `costService.js`
+(`summary`, `jobs`, `filter-options`); the money totals and the job count are SQL
+aggregates, and the pure functions (`groupTotals`, `buildTrend`, `forecastNext`,
+`backtestForecast`, `topMover`, `buildLiftWatchlist`, `contractorBenchmarks`,
+`buildInsights`) derive everything else client-side from the server-filtered
+rows `/costs/jobs` returns — one fetch feeds every row-level panel (the
+architecture decision in `docs/UC-011.md`). `/costs/breakdown` is consumed
+server-side by the admin PowerPoint deck (`exportController.js`); `/costs/trends`
+is served for API completeness but has no frontend consumer. The `liftId` filter
+is likewise API-level only — per-lift analysis in the UI is the watchlist's job.
+`mocks/costMocks.js` has been deleted.
 
 **Cost history.** Migration `034_seed_lift_cost_history.sql` seeds 199 closed
 lift rectifications across the trailing 13 months, dated relative to
@@ -357,10 +363,10 @@ drill-down table flags as outliers.
 ### Main flow
 
 1. Admin opens `/admin/vendors` — vendors listed **soonest-expiring first**, each with a days-until-expiry chip (red expired, amber ≤30 days).
-2. **Onboard:** company details, contact email, account-holder name/title, access reason, contract start/end, and a contract document uploaded to Cloudinary `/contracts` for reference. Creates the `contractors` row plus a linked `contractor` login.
+2. **Onboard:** company details, contact email, account-holder name/title, access reason, contract start/end, and an **optional** contract document uploaded to Cloudinary `/contracts` for reference. Creates the `contractors` row plus a linked `contractor` login.
 3. **Renew:** extends `contract_end`; reactivates the account if it was auto-suspended.
 4. **Suspend:** early termination — sets `users.status = 'suspended'` immediately.
-5. **Edit details:** contact email, brands serviced, access reason. The login email is immutable — it is the account's identity.
+5. **Edit details:** contact email, brands serviced, account-holder name/title, access reason. Contract dates change only via Renew, and the login email is immutable — it is the account's identity.
 5a. **Cost evidence:** each row links to `/admin/costs?contractorId=…` — the UC-011 dashboard filtered to that vendor, the evidence behind a renew-or-suspend decision.
 6. **History:** every action is readable per vendor from `vendor_history`.
 7. **Daily expiry job (Davian):** suspends vendors past `contract_end`, writes history, emits `vendor_expired` to `admin-room`.

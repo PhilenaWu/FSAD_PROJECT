@@ -483,11 +483,18 @@ export default function AdminCostPage() {
               }
             />
           </Grid>
+          {/* AI alerts carry block+category only — no contractor. With a
+              contractor filter active the server zeroes the projected series
+              (unattributable), so say that instead of a silent $0.00. */}
           <Grid size={{ xs: 6, md: 3 }}>
             <CostTile
               label="Projected exposure"
-              value={fmtMoney(summary.total_projected)}
-              sub="active AI risk alerts, if left unaddressed"
+              value={filters.contractorId ? '—' : fmtMoney(summary.total_projected)}
+              sub={
+                filters.contractorId
+                  ? 'not shown per contractor — AI alerts are not attributed to one'
+                  : 'active AI risk alerts, if left unaddressed'
+              }
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
@@ -711,7 +718,7 @@ export default function AdminCostPage() {
       <Box sx={{ mb: 3 }}>
         <CostPanel
           title="Lift watchlist — repair vs replace"
-          subtitle={`Lifetime maintenance spend per lift vs the ${fmtMoney(LIFT_REPLACEMENT_REVIEW_COST)} replacement-review threshold (date filters don't apply — the whole life counts)`}
+          subtitle={`Lifetime maintenance spend per lift vs the ${fmtMoney(LIFT_REPLACEMENT_REVIEW_COST)} replacement-review threshold (date filters don't apply — the whole life counts; the block filter still narrows the list)`}
         >
           {loading ? (
             <Skeleton variant="rounded" height={160} />

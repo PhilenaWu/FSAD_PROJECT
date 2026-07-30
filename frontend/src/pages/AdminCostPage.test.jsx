@@ -122,6 +122,21 @@ describe('AdminCostPage', () => {
     expect(screen.queryByText(/vs prior period/)).not.toBeInTheDocument();
   });
 
+  test('a contractor filter blanks projected exposure with an explanation, not a silent $0', async () => {
+    // The server zeroes the projected series under a contractor filter —
+    // ai_predictions carries no contractor to attribute exposure to.
+    getCostSummary.mockResolvedValue(summary({ total_projected: 0 }));
+    render(
+      <MemoryRouter initialEntries={['/admin/costs?contractorId=00000000-0000-4000-8000-000000000001']}>
+        <AdminCostPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('—')).toBeInTheDocument();
+    expect(screen.getByText(/not shown per contractor/)).toBeInTheDocument();
+    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+  });
+
   test('an empty result renders empty states and disables the exports', async () => {
     getCostSummary.mockResolvedValue(summary({ total_actual: 0, jobs: 0, variance_pct: null }));
     getCostAnalytics.mockResolvedValue(
