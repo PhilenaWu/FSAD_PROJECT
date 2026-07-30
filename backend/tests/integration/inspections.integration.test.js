@@ -208,9 +208,24 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       const wanted = params[Number(anyMatch[1]) - 1];
       rows = rows.filter((i) => wanted.includes(i.status));
     }
+    // Scorecard drill-through: contractor filter by NAME via a subquery on
+    // contractors, and the overdue clause (past deadline, not held/done).
+    const conMatch = /contractor_id IN \(SELECT id FROM contractors WHERE name = \$(\d+)\)/i.exec(sql);
+    if (conMatch) {
+      const wantedName = params[Number(conMatch[1]) - 1];
+      const conIds = (wantedName === 'Otis Service SG') ? ['con-1'] : [];
+      rows = rows.filter((i) => conIds.includes(i.contractor_id));
+    }
+    if (/target_deadline < NOW\(\)/i.test(sql)) {
+      const done = ['On Hold', 'Rectified', 'Resolved', 'Closed'];
+      rows = rows.filter(
+        (i) => i.target_deadline && new Date(i.target_deadline) < new Date() && !done.includes(i.status)
+      );
+    }
     // Remaining scalar filters (category, location_block), in param order.
     for (const [, field, idx] of sql.matchAll(/(\w+) = \$(\d+)/g)) {
       if (field === 'is_deleted') continue; // already applied above
+      if (field === 'name') continue; // the contractor subquery, applied above
       rows = rows.filter((i) => i[field] === params[Number(idx) - 1]);
     }
     rows = archived
@@ -1248,6 +1263,41 @@ describe('GET /api/inspections (manager queue)', () => {
       .set('Authorization', 'Bearer manager-token');
     expect(history.body.data.map((r) => r.id)).toEqual([toClose]);
     expect(history.body.data[0].is_deleted).toBe(true);
+  });
+
+  // UC-005 scorecard drill-through: ?contractor=<name>&overdue=true narrows the
+  // queue to one contractor's past-deadline work. Overdue matches the
+  // scorecard's definition — a record On Hold is not late (G11 pauses the clock).
+  test("200 ?contractor= & ?overdue=true narrow to that contractor's overdue work", async () => {
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+
+    const overdueId = await seedComplaint('Overdue lift door');
+    const onTimeId = await seedComplaint('Still within deadline');
+    const heldId = await seedComplaint('Held — part on order');
+    for (const [id, deadline, status] of [
+      [overdueId, past, 'Assigned'],
+      [onTimeId, future, 'Assigned'],
+      [heldId, past, 'On Hold'],
+    ]) {
+      await request(app)
+        .patch(`/api/inspections/${id}`)
+        .set('Authorization', 'Bearer manager-token')
+        .send({ status, contractor_id: 'con-1', target_deadline: deadline });
+    }
+
+    const res = await request(app)
+      .get('/api/inspections?contractor=Otis Service SG&overdue=true')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r) => r.id)).toEqual([overdueId]);
+
+    // An unknown contractor name matches nothing rather than everything.
+    const none = await request(app)
+      .get('/api/inspections?contractor=No Such Vendor&overdue=true')
+      .set('Authorization', 'Bearer manager-token');
+    expect(none.body.total).toBe(0);
   });
 
   // Inspectors read this endpoint (read-only) to review completed work

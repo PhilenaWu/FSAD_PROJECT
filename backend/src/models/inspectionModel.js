@@ -274,7 +274,7 @@ async function findByOriginator(userId) {
 //
 // Archived records are ordered by when they closed, since priority score is
 // meaningless once the work is done; the live queue stays most-urgent-first.
-async function findAllForManager({ status, category, block, archived = false } = {}) {
+async function findAllForManager({ status, category, block, contractor, overdue, archived = false } = {}) {
   const params = [archived];
   const where = [`is_deleted = $${params.length}`];
 
@@ -292,6 +292,19 @@ async function findAllForManager({ status, category, block, archived = false } =
   if (block) {
     params.push(block);
     where.push(`location_block = $${params.length}`);
+  }
+  // Drill-through from the UC-005 contractor scorecard. Filter by contractor
+  // NAME, matching how the scorecard groups, so the link stays human-readable.
+  if (contractor) {
+    params.push(contractor);
+    where.push(`contractor_id IN (SELECT id FROM contractors WHERE name = $${params.length})`);
+  }
+  // "Overdue" uses the scorecard's definition: past deadline and not held —
+  // a hold pauses the rectification clock (G11), so held work is not late.
+  if (overdue) {
+    where.push(
+      `target_deadline < NOW() AND status NOT IN ('On Hold', 'Rectified', 'Resolved', 'Closed')`
+    );
   }
 
   const orderBy = archived

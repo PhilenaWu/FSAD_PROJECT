@@ -1,6 +1,7 @@
 // UC-005 contractor scorecard table (phase task 5.13a / H.1) — avg
 // rectification days, repeat-defect rate, overdue count, and average re-opens
 // (UC-004 rejections) per contractor.
+import { Link as RouterLink } from 'react-router';
 import {
   Chip,
   Table,
@@ -51,13 +52,24 @@ export default function ContractorScorecard({ rows }) {
               <TableCell align="right">
                 {r.avg_reopens == null ? '—' : r.avg_reopens.toFixed(2)}
               </TableCell>
+              {/* Drill-through: a non-zero overdue count links to the triage
+                  queue pre-filtered to this contractor's overdue work — the
+                  same pattern as the heatmap's cell drill-through. */}
               <TableCell align="right">
-                <Chip
-                  label={r.overdue_count}
-                  size="small"
-                  color={r.overdue_count > 0 ? 'primary' : 'default'}
-                  variant={r.overdue_count > 0 ? 'filled' : 'outlined'}
-                />
+                {r.overdue_count > 0 ? (
+                  <Tooltip title={`View ${r.contractor}'s overdue records in the triage queue`}>
+                    <Chip
+                      label={r.overdue_count}
+                      size="small"
+                      color="primary"
+                      clickable
+                      component={RouterLink}
+                      to={`/inspections?contractor=${encodeURIComponent(r.contractor)}&overdue=true`}
+                    />
+                  </Tooltip>
+                ) : (
+                  <Chip label={r.overdue_count} size="small" variant="outlined" />
+                )}
               </TableCell>
             </TableRow>
           ))}

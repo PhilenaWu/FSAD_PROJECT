@@ -63,6 +63,9 @@ export default function InspectionListPage() {
   const tab = searchParams.get('tab') ?? 'all';
   const category = searchParams.get('category') ?? '';
   const block = searchParams.get('block') ?? '';
+  // Set by the UC-005 contractor-scorecard drill-through; cleared by its chip.
+  const contractor = searchParams.get('contractor') ?? '';
+  const overdue = searchParams.get('overdue') === 'true';
 
   // The tab owns the status filter: each one maps to a comma-separated list the
   // API expands with `status = ANY(...)`. Inspectors bypass the tabs entirely —
@@ -99,6 +102,8 @@ export default function InspectionListPage() {
       if (status) params.status = status;
       if (category) params.category = category;
       if (block) params.block = block;
+      if (contractor) params.contractor = contractor;
+      if (overdue) params.overdue = 'true';
       api
         .get('/api/inspections', { params })
         .then((res) => {
@@ -111,7 +116,7 @@ export default function InspectionListPage() {
           else setLoading(false);
         });
     },
-    [tab, status, category, block]
+    [tab, status, category, block, contractor, overdue]
   );
 
   useEffect(() => {
@@ -186,6 +191,21 @@ export default function InspectionListPage() {
           <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
             {/* Filters narrow within a tab; the tab chooses which statuses. The
                 review queue has no filters yet. */}
+            {/* Scorecard drill-through filter — shown as a removable chip so
+                the manager can see (and escape) the narrowed view. */}
+            {(contractor || overdue) && (
+              <Chip
+                size="small"
+                color="warning"
+                label={`${contractor || 'All contractors'}${overdue ? ' — overdue only' : ''}`}
+                onDelete={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('contractor');
+                  next.delete('overdue');
+                  setSearchParams(next, { replace: true });
+                }}
+              />
+            )}
             {tab !== REVIEW_TAB && (
               <>
                 <TextField

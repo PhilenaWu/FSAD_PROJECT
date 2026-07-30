@@ -507,12 +507,14 @@ async function listStatusBoard(req, res, next) {
 // ?status=&category=&block= filters, most urgent first. { data, total } per HLD.
 async function listForManager(req, res, next) {
   try {
-    const { status, category, block } = req.query;
+    const { status, category, block, contractor } = req.query;
     // ?archived=true switches to the closed-record history view. Anything else
-    // (absent, 'false') keeps the default live queue.
+    // (absent, 'false') keeps the default live queue. ?overdue=true narrows to
+    // past-deadline work (scorecard drill-through); same true-string convention.
     const archived = req.query.archived === 'true';
+    const overdue = req.query.overdue === 'true';
     const data = await inspectionModel.findAllForManager({
-      status, category, block, archived,
+      status, category, block, contractor, overdue, archived,
     });
     res.json({ data, total: data.length });
   } catch (err) {
