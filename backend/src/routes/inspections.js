@@ -89,19 +89,22 @@ router.post(
 );
 
 // GET /api/inspections — manager triage queue with ?status=&category=&block=.
+// Inspectors may also read this (read-only): they use it filtered to
+// status=Rectified to review completed work before the manager's joint close.
 router.get(
   '/',
   requireAuth,
-  requireRole('manager'),
+  requireRole('manager', 'inspector'),
   inspectionController.listForManager
 );
 
 // GET /api/inspections/:id — full record + audit history (manager detail view).
-// Registered after the literal routes so /my and /status-board aren't captured.
+// Inspectors may also read this (read-only, see above). Registered after the
+// literal routes so /my and /status-board aren't captured.
 router.get(
   '/:id',
   requireAuth,
-  requireRole('manager'),
+  requireRole('manager', 'inspector'),
   inspectionController.getDetail
 );
 
@@ -113,6 +116,15 @@ router.patch(
   requireAuth,
   requireRole('manager'),
   inspectionController.updateInspection
+);
+
+// POST /api/inspections/:id/review — inspector marks a Rectified record as
+// reviewed (read-only otherwise): audit-trail entry only, no status change.
+router.post(
+  '/:id/review',
+  requireAuth,
+  requireRole('inspector'),
+  inspectionController.reviewInspection
 );
 
 // POST /api/inspections/:id/reject — manager refuses a rectification (UC-004

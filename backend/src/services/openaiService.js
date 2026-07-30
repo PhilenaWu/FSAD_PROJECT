@@ -300,8 +300,36 @@ async function extractSpotCheckForm(imageUrl, itemTexts) {
     `  ]\n` +
     `}\n\n` +
     `Never guess a severity or invent a remark that isn't legible — mark a row "unreadable" and ` +
-    `use a low field_confidence instead of forcing a Pass/Defect you aren't confident about.`;
+    `use a low field_confidence instead of forcing a Pass/Defect you aren't confident about. ` +
+    `The "items" array MUST contain EXACTLY ${itemTexts.length} entries, no more and no fewer — ` +
+    `one per numbered item above. Never split a single numbered item (even one with two ` +
+    `questions, like "Functioning? Replacement date?") into two entries, and never add an entry ` +
+    `for anything not in the numbered list (e.g. the header fields or servicing date, which are ` +
+    `already asked for separately above).`;
 
+  // Vision output for a dense 25-item form occasionally comes back malformed
+  // (truncated/invalid JSON, or the wrong item count) even at temperature 0 —
+  // confirmed by re-scanning the exact same photo and getting 26 items back on
+  // a retry. One automatic retry clears most of these transient misreads
+  // without forcing the inspector to rescan by hand. A real outage
+  // (serviceUnavailable) is not retried — it won't succeed on a second try.
+  const MAX_ATTEMPTS = 2;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await requestAndParseForm(client, prompt, imageUrl, itemTexts);
+    } catch (err) {
+      if (err.serviceUnavailable) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+// Single attempt: call the vision model and parse/validate its response.
+// Throws on any failure — the caller (extractSpotCheckForm) decides whether
+// to retry.
+async function requestAndParseForm(client, prompt, imageUrl, itemTexts) {
   let resp;
   try {
     resp = await client.chat.completions.create({

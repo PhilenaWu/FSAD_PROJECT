@@ -198,18 +198,21 @@ describe('extractSpotCheckForm (UC-013)', () => {
     ).rejects.toMatchObject({ message: 'vision model overloaded', serviceUnavailable: true });
   });
 
-  test('throws when the model response is not valid JSON', async () => {
+  // A single bad response is retried once (see "recovers on retry" below) —
+  // both attempts must fail here for the call to ultimately throw.
+  test('throws when the model response is not valid JSON on both attempts', async () => {
     mockConfig.OPENAI_API_KEY = 'test-key';
-    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: 'not json at all' } }] });
+    mockCreate.mockResolvedValue({ choices: [{ message: { content: 'not json at all' } }] });
 
     await expect(
       openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
     ).rejects.toThrow(/not valid JSON/);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
-  test('throws when the items array length does not match the input', async () => {
+  test('throws when the items array length does not match the input on both attempts', async () => {
     mockConfig.OPENAI_API_KEY = 'test-key';
-    mockCreate.mockResolvedValueOnce({
+    mockCreate.mockResolvedValue({
       choices: [{
         message: {
           content: JSON.stringify({
@@ -223,6 +226,60 @@ describe('extractSpotCheckForm (UC-013)', () => {
     await expect(
       openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
     ).rejects.toThrow(/expected 2/);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  // Reproduces the real failure this retry was added for: the same photo
+  // scanned twice can get a wrong item count on one attempt and a correct
+  // one on the next (observed: 26 items back instead of 25 on a re-scan of
+  // an identical image). The caller should not have to rescan by hand.
+  test('recovers on retry when the first attempt returns the wrong item count', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              serviced_at: null, serviced_at_confidence: 0,
+              items: [
+                { result: 'Pass', remark: null, field_confidence: 0.9 },
+                { result: 'Pass', remark: null, field_confidence: 0.9 },
+                { result: 'Pass', remark: null, field_confidence: 0.9 }, // extra — 3, expected 2
+              ],
+            }),
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              serviced_at: '2026-03-22', serviced_at_confidence: 0.9,
+              items: [
+                { result: 'Pass', remark: null, field_confidence: 0.9 },
+                { result: 'Defect', remark: 'Noisy', field_confidence: 0.8 },
+              ],
+            }),
+          },
+        }],
+      });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(result.items).toHaveLength(2);
+    expect(result.items[1].remark).toBe('Noisy');
+  });
+
+  // A real outage shouldn't be retried — it will just fail the same way again.
+  test('does not retry a serviceUnavailable failure', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockRejectedValue(new Error('vision model overloaded'));
+
+    await expect(
+      openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
+    ).rejects.toMatchObject({ serviceUnavailable: true });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
   test('an invalid per-item result falls back to "unreadable" rather than throwing', async () => {

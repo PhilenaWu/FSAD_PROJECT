@@ -687,6 +687,35 @@ async function closeInspection(req, res, next) {
   }
 }
 
+// POST /api/inspections/:id/review — an inspector confirms they've looked
+// over a Rectified record (read-only otherwise). Writes an audit row only —
+// no status change, no accept/close authority; that stays with the manager's
+// joint-close flow.
+async function reviewInspection(req, res, next) {
+  try {
+    const note = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+
+    const result = await inspectionModel.markReviewed(
+      req.params.id,
+      note || null,
+      req.user.id
+    );
+    if (!result) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
+    }
+    if (result === 'INVALID_STATE') {
+      return res.status(409).json({
+        code: 'INVALID_STATE',
+        message: 'Only a Rectified record can be marked as reviewed.',
+      });
+    }
+
+    res.json({ code: 'OK', message: 'Marked as reviewed.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // POST /api/inspections/:id/reject — the manager refuses a contractor's
 // rectification (UC-004 Alt 4). The record returns to 'Assigned' with a fresh
 // 14-day deadline and an incremented reopen_count; prior signatures are kept
@@ -778,5 +807,6 @@ module.exports = {
   listStatusBoard,
   ocrPrefill,
   rejectRectification,
+  reviewInspection,
   updateInspection,
 };

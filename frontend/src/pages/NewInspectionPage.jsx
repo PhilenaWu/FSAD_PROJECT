@@ -51,6 +51,7 @@ export default function NewInspectionPage() {
   const [answers, setAnswers] = useState({});
   const [gps, setGps] = useState(null); // optional; never replaces lift choice
   const signaturePadRef = useRef(null); // paper form's "Checked by" box (G5)
+  const feedbackRef = useRef(null); // the validation/submit alert, scrolled into view below
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
 
@@ -81,6 +82,15 @@ export default function NewInspectionPage() {
       active = false;
     };
   }, []);
+
+  // The checklist runs to 25 items above the Submit button, so a validation or
+  // submit-failure message set far below (near the top of the form) would
+  // otherwise go unnoticed. Scroll it into view whenever it appears.
+  useEffect(() => {
+    if (feedback) {
+      feedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [feedback]);
 
   // The chosen lift's record, for the read-only header details below the picker.
   const selectedLift = useMemo(
@@ -162,7 +172,10 @@ export default function NewInspectionPage() {
     setScanning(true);
     try {
       const formData = new FormData();
-      formData.append('form_photo', await compressImage(file));
+      // Unlike defect thumbnails (100 KB default), a full-page form scan needs to
+      // stay legible for OCR — match the backend's 5 MB cap for this route
+      // instead of crushing the 25-row checklist down to a defect-photo size.
+      formData.append('form_photo', await compressImage(file, { maxBytes: 5 * 1024 * 1024 }));
       const { data } = await api.post('/api/inspections/ocr-prefill', formData);
 
       if (data.serviced_at) setServicedAt(data.serviced_at);
@@ -352,7 +365,11 @@ export default function NewInspectionPage() {
             <Box component="form" onSubmit={handleSubmit} noValidate>
               <Stack spacing={3}>
                 {feedback && (
-                  <Alert severity={feedback.severity} onClose={() => setFeedback(null)}>
+                  <Alert
+                    ref={feedbackRef}
+                    severity={feedback.severity}
+                    onClose={() => setFeedback(null)}
+                  >
                     {feedback.message}
                   </Alert>
                 )}

@@ -26,7 +26,7 @@ import api from '../services/api';
 // yet — those routes render a "not ready yet" placeholder rather than erroring.
 const ROLE_HOME = {
   resident: '/report',
-  inspector: '/inspections/new',
+  inspector: '/dashboard',
   manager: '/dashboard',
   contractor: '/contractor-inbox',
   admin: '/admin/costs',

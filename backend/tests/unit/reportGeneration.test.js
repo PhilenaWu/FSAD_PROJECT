@@ -1,9 +1,12 @@
 // Unit tests for UC-009 Phase 1 (data -> summary -> PDF). No live services:
 // config/db is mocked so getReportData runs against sample inspection/prediction
-// data, and OPENAI_API_KEY is unset under test so generateExecutiveSummary takes
-// its deterministic fallback path (no real OpenAI call). generateMonthlyReportPDF
-// runs against the real pdfkit (in-memory only).
+// data, and config/env is mocked so OPENAI_API_KEY reads as unset regardless of
+// the real .env — generateExecutiveSummary must take its deterministic fallback
+// path here (no real OpenAI call), which a real key in .env would otherwise
+// override. generateMonthlyReportPDF runs against the real pdfkit (in-memory only).
 'use strict';
+
+jest.mock('../../src/config/env', () => ({ OPENAI_API_KEY: undefined }));
 
 // --- Mock the pg layer. Dispatch on SQL shape; each test sets `responses`. ---
 let responses;

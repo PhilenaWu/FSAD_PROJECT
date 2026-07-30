@@ -409,6 +409,26 @@ async function rejectRectification(id, reason, actorId) {
   }
 }
 
+// Inspector marks a Rectified record as reviewed, ahead of the manager's joint
+// close. Read-only otherwise — this only appends an audit row (no status
+// change), so a plain SELECT + INSERT needs no transaction. Returns undefined
+// when the id doesn't match a live record, 'INVALID_STATE' when the record
+// isn't Rectified, or true on success.
+async function markReviewed(id, note, actorId) {
+  const before = await findById(id);
+  if (!before) return undefined;
+  if (before.status !== 'Rectified') return 'INVALID_STATE';
+
+  await query(
+    `INSERT INTO inspection_history (
+       inspection_id, actor_id, action, previous_status, new_status, note
+     )
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, actorId, 'Reviewed by Inspector', before.status, before.status, note || null]
+  );
+  return true;
+}
+
 // Defect rows on a record that are not yet signed off (G8): either not marked
 // rectified, or rectified without the contractor's proof photo. Returns the
 // paper form's item numbers so the caller can name them in the error.
@@ -815,6 +835,7 @@ module.exports = {
   findDetailById,
   findForStatusBoard,
   findUnrectifiedDefects,
+  markReviewed,
   rejectRectification,
   queueRecurrenceJob,
   updateByManager,
