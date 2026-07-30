@@ -176,7 +176,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 
 - **A1 — Drill-through to triage.** Clicking a heatmap cell navigates to the triage queue pre-filtered to that block + category. The queue's filters are URL-driven, so back returns to the dashboard with its filters intact. This is the join between analytics and the UC-002 → UC-004 lifecycle.
 - **A2 — Live refresh.** The page subscribes to `status_update` on `manager-room`. Assign, rectify and close events (UC-002 / UC-004 / UC-010) trigger a re-fetch coalesced on a 1.5 s timer, so a burst of transitions causes one refresh, not one per event.
-- **A3 — CSV what-if preview (Data Playground).** Importing a `block,category[,date][,resolution_time_hours]` CSV blends hypothetical rows into the heatmap, trend and SLA gauge client-side. A Combined / Existing only / Imported only toggle drives all three charts at once; imported data is marked (ring on cells, dashed series, before → after gauge). **Nothing is persisted**, and Clear preview drops the rows.
+- **A3 — CSV what-if preview (Data Playground).** Importing a `block,category[,date][,resolution_time_hours]` CSV blends hypothetical rows into the heatmap, trend and SLA gauge client-side. A Combined / Existing only / Imported only toggle drives all three charts at once; imported data is marked (ring on cells, dashed series, before → after gauge). **Nothing is written to the database**; the preview survives an accidental refresh via `sessionStorage` only, and Clear preview drops the rows from both.
 - **A4 — PowerPoint export.** `POST /api/export/pptx` renders the current filtered view server-side via PptxGenJS. It re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift from the screen — and it always uses database rows, never A3's preview rows.
 - **A5 — Run AI analysis on demand.** "Run AI analysis" calls `GET /api/recommendations/run` rather than waiting for the nightly job, then re-fetches so new alert cards appear.
 - **A6 — Manager arrives with no records yet.** Every panel renders its own `<Alert severity="info">` empty state rather than an empty axis.
@@ -222,6 +222,7 @@ Chart.js heatmap (block × category), trend line, SLA gauge, contractor scorecar
 - **Heatmap drill-through** — clicking a block × category cell navigates to `/inspections?block=…&category=…`, landing the manager on the triage queue already filtered to those records, from which UC-002 (assign) and UC-004 (close) proceed normally. The queue's filters are URL-driven, so the link is shareable and the browser back button returns to the dashboard with its own filters intact.
 - **Live refresh** — the dashboard subscribes to `status_update` on `manager-room`, the same event UC-002/UC-004/UC-010 emit on every assign, rectify and close (HLD §10). Re-fetches are coalesced on a 1.5 s timer so a burst of transitions triggers one refresh, not one per event.
 - **Priority queue → record** — each row links to `/inspections/:id`, the joint-endorsement view.
+- **Scorecard drill-through** — a non-zero overdue count links to `/inspections?contractor=…&overdue=true`, the triage queue narrowed to that contractor's past-deadline work (shown as a removable filter chip). Overdue uses the scorecard's own definition, so the two screens can never disagree.
 - **Exports carry the current filter state**, and always use database rows, never Data Playground preview rows.
 
 ---
@@ -360,6 +361,7 @@ drill-down table flags as outliers.
 3. **Renew:** extends `contract_end`; reactivates the account if it was auto-suspended.
 4. **Suspend:** early termination — sets `users.status = 'suspended'` immediately.
 5. **Edit details:** contact email, brands serviced, access reason. The login email is immutable — it is the account's identity.
+5a. **Cost evidence:** each row links to `/admin/costs?contractorId=…` — the UC-011 dashboard filtered to that vendor, the evidence behind a renew-or-suspend decision.
 6. **History:** every action is readable per vendor from `vendor_history`.
 7. **Daily expiry job (Davian):** suspends vendors past `contract_end`, writes history, emits `vendor_expired` to `admin-room`.
 
@@ -374,7 +376,8 @@ drill-down table flags as outliers.
 
 | Case | Code |
 |---|---|
-| `contract_end` before `contract_start` | `400 INVALID_CONTRACT_DATES` (VND-T02) |
+| `contract_end` before `contract_start` | `400 INVALID_CONTRACT_DATES` (VND-T02); also caught inline on the form before any request is sent |
+| Renewal date on or before the current `contract_end` | Inline field error; the Renew button disables — a non-extension is not a renewal |
 | Login email already registered | `409 EMAIL_ALREADY_EXISTS`, **no rows created** (VND-T03) |
 | Suspended vendor attempts to log in | `403 ACCOUNT_SUSPENDED` (VND-T05) |
 | Non-admin calls any vendor route | `403 FORBIDDEN` |

@@ -133,11 +133,17 @@ npm run dev
 
 ## Security at a glance
 
-- Passwords hashed with bcrypt (12 salt rounds).
-- JWTs signed with `JWT_SECRET`, 30-minute sliding expiry, stored **in memory only** on the client (never localStorage).
-- Manager-only routes guarded by a `requireRole('manager')` middleware.
+- Authentication is **Supabase Auth**: sign-up/login/session refresh happen on the
+  client via `@supabase/supabase-js`; the backend verifies the Supabase access
+  token on every request and reads the caller's role from the `users` profile row.
+  There are no custom auth endpoints and no password hashes in our database.
+- Role-gated routes guarded by `requireRole(...)` middleware (`resident`,
+  `inspector`, `manager`, `contractor`, `admin`) — enforcement is server-side;
+  UI role checks are convenience only.
 - Scheduled endpoints protected by a `CRON_SECRET` bearer token.
-- All request bodies validated before reaching controllers; rate limiting on auth routes.
+- Request filters/bodies validated before any SQL runs (joi + per-controller
+  validation); every query is parameterised — no string-built SQL. Errors use
+  the `{ code, message }` contract throughout.
 
 ---
 
@@ -165,9 +171,10 @@ from the `inspections` table.
 - **CSV what-if preview** — import a CSV (`block,category[,date][,resolution_time_hours]`)
   to blend simulated rows into the charts client-side; a Combined / Existing
   only / Imported only switch compares views; Clear preview reverts. Nothing
-  touches the database and exports always use real data.
-- Filters (block / category / date range) persist in the URL, so a filtered
-  view is bookmarkable.
+  touches the database and exports always use real data; the preview survives
+  an accidental refresh via sessionStorage only.
+- Filters (block / category / paper-form section / date range) persist in the
+  URL, so a filtered view is bookmarkable.
 
 ### Endpoints (all manager-only)
 
@@ -183,7 +190,29 @@ GET  /api/recommendations                 active AI alerts
 POST /api/export/pptx                     PowerPoint deck  (manager or admin)
 ```
 
-All accept `?from&to&block&category`.
+All accept `?from&to&block&category&section` (`section` narrows to inspections
+with a Defect in that part of the paper spot-check form). The scorecard's
+overdue count drills through to `/inspections?contractor=<name>&overdue=true`.
+
+**Example** — `GET /api/analytics/summary?block=44A` with
+`Authorization: Bearer <supabase-token>`:
+
+```json
+{
+  "open_count": 46, "overdue_count": 4, "avg_resolution_hours": 58.3,
+  "sla_percentage": 63.92, "new_last_30": 58, "new_prior_30": 41,
+  "new_records_change_pct": 41.5, "sla_threshold_hrs": 72
+}
+```
+
+**Error codes** (shape is always `{ code, message }`):
+
+| Status | Code | When |
+|---|---|---|
+| 401 | `UNAUTHORIZED` | Missing/expired Supabase token |
+| 403 | `FORBIDDEN` | Authenticated but not a manager |
+| 400 | `VALIDATION_ERROR` | Bad `views` list on the PPTX export |
+| 500 | `EXPORT_FAILED` | Deck build/upload failed — UI falls back to CSV |
 
 ### Setup / demo data
 
@@ -206,8 +235,15 @@ if `Demo:` records exist). Contractors come from `016_seed_reference_data.sql`.
    trend line, SLA delta; flick Combined → Imported only → Clear preview.
 4. Click **Export to PowerPoint** → open the deck: native editable charts,
    ready for the weekly meeting.
-5. Edge cases: filter to an empty result (CSV button disables with a
-   tooltip), import a malformed CSV (specific error, nothing breaks).
+5. Drill-throughs: click a heatmap cell → triage queue pre-filtered to that
+   block + category; click a scorecard overdue count → that contractor's
+   overdue work, shown as a removable filter chip. Browser back returns to
+   the dashboard with its filters intact.
+6. Edge cases (30 s, scripted): set From after To (inline error, no request
+   fired, data stays); filter to an empty result (CSV button disables with a
+   tooltip); import a malformed CSV, then one with a bad date (row-numbered
+   errors, nothing breaks); point out an On Hold record is **not** counted
+   overdue — the clock is paused (G11), matching the chase emails.
 
 ## UC-012 — Vendor Account Lifecycle (Hasini)
 
@@ -251,6 +287,21 @@ GET   /api/admin/vendors/:id/history        audit trail
 POST  /api/admin/vendors/run-expiry-check   on-demand expiry run
 GET   /api/admin/vendors/expiry-check       daily job (CRON_SECRET bearer, not JWT)
 ```
+
+**Example** — `POST /api/admin/vendors/:id/renew` (multipart) with
+`contract_end=2027-08-01` returns the updated vendor row; a reactivated
+account also gets a `vendor_history` entry (`Contract Renewed`).
+
+**Error codes** (shape is always `{ code, message }`):
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `INVALID_CONTRACT_DATES` | `contract_end` before `contract_start` (also caught inline in the form) |
+| 400 | `VALIDATION_ERROR` | Required onboarding field missing (names the fields) |
+| 409 | `EMAIL_ALREADY_EXISTS` | Login email already registered — no rows created |
+| 403 | `ACCOUNT_SUSPENDED` | Suspended vendor attempts any authenticated call |
+| 403 | `FORBIDDEN` | Non-admin calls any vendor route |
+| 404 | `NOT_FOUND` | Unknown vendor id |
 
 ### Setup / demo data
 
