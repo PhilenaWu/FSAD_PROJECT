@@ -351,9 +351,6 @@ async function createLiftInspection(req, res, next) {
     // informed to lift servicing supervisor". This path previously produced no
     // in-app signal of any kind, so a submitted spot-check was invisible until
     // someone happened to open the queue.
-    //
-    // No status_update emit is added here: that room list is Philena's call
-    // (D.5), and the notification below reaches both audiences on its own.
     if (has_defects) {
       const defects = checklist.filter((item) => item.result === 'Defect');
       const worst = defects.some((d) => d.severity === 'Critical') ? 'Critical' : 'Warning';
@@ -387,6 +384,26 @@ async function createLiftInspection(req, res, next) {
         urgency: 'Informational',
         link: `/inspections/${inspection.id}`,
       });
+    }
+
+    // Live push (HLD §10) so the manager's queue and dashboard don't sit stale
+    // while a spot-check lands. manager-room only, deliberately:
+    //   • block-{n} holds residents, and findForStatusBoard excludes lift
+    //     inspections — every resident in the block would refetch and see
+    //     nothing new.
+    //   • admin-room watches actual_cost, which a spot-check never carries
+    //     (a G6 auto-file leaves it NULL, so it can't reach the cost figures).
+    //   • insp-{id} has no members yet; clients join it on demand.
+    // `inspection` is already the auto-closed row on the zero-defect path, so
+    // this one emit reports 'Closed' there and 'Open' otherwise — no branch.
+    try {
+      socketService.emitToRooms(
+        ['manager-room'],
+        'status_update',
+        { id: inspection.id, status: inspection.status, updated_at: inspection.updated_at }
+      );
+    } catch {
+      // Socket not initialised (e.g. tests) — ignore (G13).
     }
 
     res.status(201).json(inspection);

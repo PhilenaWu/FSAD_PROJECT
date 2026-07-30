@@ -601,6 +601,41 @@ describe('POST /api/inspections/lift', () => {
     expect(store.history.some((h) => h.action === 'Created')).toBe(true);
   });
 
+  // Every other transition pushes status_update; creation was the one that
+  // didn't, leaving the manager's queue and dashboard stale until reloaded.
+  test('pushes status_update to manager-room on submit', async () => {
+    const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+
+    const socketService = require('../../src/services/socketService');
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room'],
+      'status_update',
+      expect.objectContaining({ id: res.body.id, status: res.body.status })
+    );
+  });
+
+  // The zero-defect path reports its final state, not the transient 'Open' the
+  // row briefly held inside the transaction.
+  test('the zero-defect emit reports Closed, not Open', async () => {
+    const allPass = [
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Pass' },
+    ];
+
+    const res = await submitLift(allPass);
+
+    const socketService = require('../../src/services/socketService');
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room'],
+      'status_update',
+      expect.objectContaining({ id: res.body.id, status: 'Closed' })
+    );
+    // admin-room is deliberately absent: a compliant check carries no
+    // actual_cost, so it can never reach the UC-011 cost figures.
+    const rooms = socketService.emitToRooms.mock.calls.flatMap(([r]) => r);
+    expect(rooms).not.toContain('admin-room');
+  });
+
   // --- G6: zero defects auto-files as a compliant check -------------------
   test('201 with no defects files straight to Closed, unassigned', async () => {
     const allPass = [

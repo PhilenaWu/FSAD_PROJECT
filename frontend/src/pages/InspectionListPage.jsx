@@ -8,7 +8,7 @@
 // Inspectors also read this endpoint (backend allows it read-only) to review
 // completed work before the manager's joint close — always filtered to
 // status=Rectified and without the tabs.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link as RouterLink, Navigate, useNavigate, useSearchParams } from 'react-router';
 import {
   Alert,
@@ -17,6 +17,7 @@ import {
   Chip,
   CircularProgress,
   Container,
+  LinearProgress,
   MenuItem,
   Paper,
   Stack,
@@ -33,6 +34,7 @@ import {
 } from '@mui/material';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
 import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
@@ -50,6 +52,8 @@ export default function InspectionListPage() {
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Background refetch (socket-driven) — shows a thin bar, never the spinner.
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   // Filters live in the URL, so the dashboard heatmap can drill through to a
@@ -82,33 +86,58 @@ export default function InspectionListPage() {
   // 'all' is the default, so it lives as an absent param rather than ?tab=all.
   const setTab = (key) => setParam('tab', key === 'all' ? '' : key);
 
-  useEffect(() => {
-    // The manual-review tab renders its own component with its own fetch.
-    if (tab === REVIEW_TAB) return undefined;
-    let active = true;
-    setLoading(true);
-    const params = {};
-    if (status) params.status = status;
-    if (category) params.category = category;
-    if (block) params.block = block;
-    api
-      .get('/api/inspections', { params })
-      .then((res) => {
-        if (active) {
+  // `silent` refetches leave `loading` alone: swapping the whole table for a
+  // spinner on every socket event would blink the manager's place away. They
+  // drive the thin progress bar above the table instead.
+  const fetchRows = useCallback(
+    (silent = false) => {
+      // The manual-review tab renders its own component with its own fetch.
+      if (tab === REVIEW_TAB) return;
+      if (silent) setRefreshing(true);
+      else setLoading(true);
+      const params = {};
+      if (status) params.status = status;
+      if (category) params.category = category;
+      if (block) params.block = block;
+      api
+        .get('/api/inspections', { params })
+        .then((res) => {
           setRows(res.data.data);
           setLoadError(false);
-        }
-      })
-      .catch(() => {
-        if (active) setLoadError(true);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
+        })
+        .catch(() => setLoadError(true))
+        .finally(() => {
+          if (silent) setRefreshing(false);
+          else setLoading(false);
+        });
+    },
+    [tab, status, category, block]
+  );
+
+  useEffect(() => {
+    fetchRows();
+  }, [fetchRows]);
+
+  // Live refresh. The backend pushes `status_update` to manager-room on every
+  // transition — including a newly filed spot-check — so the queue must not sit
+  // stale while records move underneath it. Coalesced on a short timer because
+  // a burst of transitions would otherwise trigger a re-fetch per event.
+  // Managers only: nobody else is in manager-room, so the subscription would
+  // never fire for an inspector.
+  const { socket } = useSocket();
+  useEffect(() => {
+    if (isInspector || !socket) return undefined;
+    let timer;
+    const onStatusUpdate = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fetchRows(true), 1500);
     };
-  }, [tab, status, category, block]);
+    socket.on('status_update', onStatusUpdate);
+    return () => {
+      clearTimeout(timer);
+      socket.off('status_update', onStatusUpdate);
+    };
+  }, [socket, isInspector, fetchRows]);
 
   // Block options come from the analytics filter-options endpoint (manager-only,
   // same gate as this page). Deriving them from `rows` collapsed the dropdown to
@@ -208,6 +237,14 @@ export default function InspectionListPage() {
             ))}
             <Tab value={REVIEW_TAB} label="Needs Manual Review" />
           </Tabs>
+        )}
+
+        {/* Background-refresh indicator. The 4px box is always in the layout so
+            the table never jumps when a socket-driven refetch starts. */}
+        {tab !== REVIEW_TAB && (
+          <Box sx={{ height: 4, mb: 0.5 }}>
+            {refreshing && <LinearProgress sx={{ height: 2, borderRadius: 1 }} />}
+          </Box>
         )}
 
         {tab !== REVIEW_TAB ? (
