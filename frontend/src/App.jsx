@@ -1,7 +1,9 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router'
 import ProtectedRoute from './components/ProtectedRoute'
 import RoleLayout from './components/RoleLayout'
 import RoleHome from './components/RoleHome'
+import PageLoader from './components/PageLoader'
 import LoginPage from './pages/LoginPage'
 import ReportIssuePage from './pages/ReportIssuePage'
 import InspectionListPage from './pages/InspectionListPage'
@@ -13,9 +15,14 @@ import StatusBoardPage from './pages/StatusBoardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
 import ProfilePage from './pages/ProfilePage'
-import AdminVendorPage from './pages/AdminVendorPage'
-import AdminCostPage from './pages/AdminCostPage'
 import ContractorInboxPage from './pages/ContractorInboxPage'
+
+// Admin pages are lazy-loaded: only the admin role ever visits them, and the
+// cost dashboard carries its own Chart.js panels — no other role should pay
+// for that in the initial bundle. (RoleHome lazy-loads the UC-005 dashboard
+// the same way.)
+const AdminCostPage = lazy(() => import('./pages/AdminCostPage'))
+const AdminVendorPage = lazy(() => import('./pages/AdminVendorPage'))
 
 function App() {
   return (
@@ -42,8 +49,22 @@ function App() {
           <Route path="/profile" element={<ProfilePage />} />
           {/* Contractor portal (UC-010). */}
           <Route path="/contractor-inbox" element={<ContractorInboxPage />} />
-          <Route path="/admin/costs" element={<AdminCostPage />} />
-          <Route path="/admin/vendors" element={<AdminVendorPage />} />
+          <Route
+            path="/admin/costs"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <AdminCostPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/admin/vendors"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <AdminVendorPage />
+              </Suspense>
+            }
+          />
         </Route>
       </Route>
 
