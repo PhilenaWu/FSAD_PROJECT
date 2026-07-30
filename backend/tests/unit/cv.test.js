@@ -253,7 +253,15 @@ describe('cvController.detect', () => {
     expect(result.cvDetection).toEqual({ id: 'cv-1', status: 'processed' });
     expect(result.inspection).toEqual({ id: 'insp-auto-1', source_type: 'cv_auto_detected' });
 
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    // Exactly two domain writes, in this order, and no others. Asserted by
+    // table rather than by total call count: recordDetection also raises a
+    // UC-008 manager notification, whose own inserts are not this test's
+    // concern and would otherwise make a raw count brittle.
+    const domainWrites = mockQuery.mock.calls.filter(([sql]) =>
+      /INSERT INTO (cv_detections|inspections)\b/i.test(sql)
+    );
+    expect(domainWrites).toHaveLength(2);
+
     const [detectionSql, detectionParams] = mockQuery.mock.calls[0];
     expect(detectionSql).toMatch(/INSERT INTO cv_detections/i);
     expect(detectionParams[5]).toBe('processed'); // status param

@@ -9,6 +9,7 @@ const openaiService = require('../services/openaiService');
 const pdfService = require('../services/pdfService');
 const cloudinaryService = require('../services/cloudinaryService');
 const emailService = require('../services/emailService');
+const notificationService = require('../services/notificationService');
 
 // Human-readable period for the email subject/body and Cloudinary file name.
 function periodLabel(startDate, endDate) {
@@ -64,6 +65,19 @@ async function generateReportInternal(startDate, endDate, triggerSource) {
     report_status: reportStatus,
     email_delivered: false,
   });
+
+  // In-app copy of the same news. Placed before the email block because that
+  // block returns early on success, and a manager who misses the email should
+  // still find the report waiting in the bell.
+  if (reportStatus === 'Ready' && reportUrl) {
+    await notificationService.notifyEvent({
+      event_type: 'report_ready',
+      scope: { type: 'managers' },
+      message: `Monthly report for ${label} is ready.`,
+      urgency: 'Informational',
+      link: '/reports',
+    });
+  }
 
   // 6. Email the managers/admins a link — only when there is a report to link
   // to. Any failure here is swallowed so the report stays 'Ready'.

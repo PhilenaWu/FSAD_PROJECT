@@ -37,15 +37,22 @@ const profiles = {
 };
 
 // The record the portal acts on; tests flip `assigned` to simulate a record
-// reassigned away (UC-010 E3 → 404).
-const state = { assigned: true };
+// reassigned away (UC-010 E3 → 404), and `lockedStatus` to drive the state the
+// action starts from (resume requires 'On Hold').
+const state = { assigned: true, lockedStatus: 'Assigned' };
 
 const mockClient = {
   query: jest.fn(async (sql, params = []) => {
     if (/FOR UPDATE/i.test(sql)) {
       return state.assigned
-        ? { rows: [{ id: 'ins-1', status: 'Assigned', location_block: '44A' }] }
+        ? { rows: [{ id: 'ins-1', status: state.lockedStatus, location_block: '44A' }] }
         : { rows: [] };
+    }
+    // resumeByContractor reads the hold's start time from the audit trail.
+    if (/FROM inspection_history/i.test(sql)) {
+      return {
+        rows: [{ previous_status: 'Acknowledged', created_at: '2026-07-22T09:00:00Z' }],
+      };
     }
     if (/UPDATE inspections/i.test(sql)) {
       // Literal-status paths (acknowledge/finalize/hold) name the status inline;
@@ -187,5 +194,72 @@ describe('POST /api/contractor/:id/hold', () => {
       .send({});
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+// Z.2 / G11. Before this endpoint existed a held record had no way back —
+// 'On Hold' was terminal and the paused deadline never restarted.
+describe('POST /api/contractor/:id/resume', () => {
+  afterEach(() => {
+    state.lockedStatus = 'Assigned';
+  });
+
+  test('200 — restores the pre-hold status and extends the deadline', async () => {
+    state.lockedStatus = 'On Hold';
+    mockClient.query.mockClear();
+
+    const res = await request(app)
+      .post('/api/contractor/ins-1/resume')
+      .set('Authorization', 'Bearer contractor-token');
+
+    expect(res.status).toBe(200);
+    // The audit row recorded 'Acknowledged' as the status before the pause, so
+    // that is what the record goes back to — not a hardcoded 'Assigned'.
+    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Acknowledged' });
+
+    // The deadline is pushed out by the held duration rather than reset.
+    const [updateSql] = mockClient.query.mock.calls.find(([sql]) =>
+      /UPDATE inspections/i.test(sql)
+    );
+    expect(updateSql).toMatch(/target_deadline \+ \(NOW\(\) -/i);
+
+    // hold_reason is cleared so the inbox stops showing the banner.
+    expect(updateSql).toMatch(/hold_reason = NULL/i);
+  });
+
+  test('writes a Resumed audit row (UC-015)', async () => {
+    state.lockedStatus = 'On Hold';
+    mockClient.query.mockClear();
+
+    await request(app)
+      .post('/api/contractor/ins-1/resume')
+      .set('Authorization', 'Bearer contractor-token');
+
+    const audit = mockClient.query.mock.calls.find(([sql]) =>
+      /INSERT INTO inspection_history/i.test(sql)
+    );
+    expect(audit[0]).toMatch(/'Resumed'/);
+    expect(audit[1][3]).toMatch(/deadline extended/i);
+  });
+
+  test('409 when the record is not on hold', async () => {
+    state.lockedStatus = 'Assigned';
+    const res = await request(app)
+      .post('/api/contractor/ins-1/resume')
+      .set('Authorization', 'Bearer contractor-token');
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('INVALID_STATE');
+  });
+
+  test('404 when the record is no longer this contractor\'s', async () => {
+    state.lockedStatus = 'On Hold';
+    state.assigned = false;
+    const res = await request(app)
+      .post('/api/contractor/ins-1/resume')
+      .set('Authorization', 'Bearer contractor-token');
+    state.assigned = true;
+
+    expect(res.status).toBe(404);
   });
 });

@@ -12,6 +12,7 @@ const openaiService = require('../services/openaiService');
 const emailService = require('../services/emailService');
 const cvController = require('./cvController');
 const socketService = require('../services/socketService');
+const notificationService = require('../services/notificationService');
 const config = require('../config/env');
 
 // Schema enums (migration 004 CHECKs) for PATCH validation.
@@ -26,6 +27,43 @@ const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 // (migration 025).
 function deadlineIn14Days() {
   return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// --- UC-008 notification helpers -------------------------------------------
+// Additive only: these produce durable bell notifications alongside the existing
+// status_update emits, which are left exactly as they are. notifyEvent never
+// throws (G13), so nothing below can affect a transition that already committed.
+
+// The contractor's login + room for a record, so the assignee can actually be
+// told. Separate from the existing contact_email lookup, which stays untouched.
+// Returns null when the contractor has no linked login (UC-014 A4) — managers
+// are still notified, the assignment still proceeds.
+async function contractorRecipient(contractorId) {
+  if (!contractorId) return null;
+  const { rows } = await query(
+    'SELECT user_id, name FROM contractors WHERE id = $1',
+    [contractorId]
+  );
+  const row = rows[0];
+  if (!row?.user_id) return null;
+  return {
+    scope: { type: 'users', user_ids: [row.user_id], rooms: [`contractor-${row.user_id}`] },
+    name: row.name,
+  };
+}
+
+// Who filed the record: a resident complaint is tracked by its author (UC-003),
+// a spot-check by the inspector. insp-{id} is the originator's own room.
+function originatorScope(inspection) {
+  const userId = inspection.resident_id ?? inspection.inspector_id;
+  if (!userId) return null;
+  return { type: 'users', user_ids: [userId], rooms: [`insp-${inspection.id}`] };
+}
+
+function recordLabel(inspection) {
+  return inspection.location_block
+    ? `Blk ${inspection.location_block} — ${inspection.title}`
+    : inspection.title;
 }
 
 // Optional GPS fields captured client-side on explicit tap. Supplementary
@@ -113,6 +151,17 @@ async function create(req, res, next) {
         })
         .catch((err) => console.error('CV detection failed:', err.message));
     }
+
+    // A complaint sitting untriaged is the failure mode here — nothing told a
+    // manager one had arrived. AI-scored high goes out as Critical so it stands
+    // out in the bell.
+    await notificationService.notifyEvent({
+      event_type: 'complaint_submitted',
+      scope: { type: 'managers' },
+      message: `New resident report — ${recordLabel(inspection)}`,
+      urgency: (inspection.ai_priority_score ?? 0) >= 80 ? 'Critical' : 'Informational',
+      link: `/inspections/${inspection.id}`,
+    });
 
     res.status(201).json(inspection);
   } catch (err) {
@@ -297,6 +346,48 @@ async function createLiftInspection(req, res, next) {
       has_defects,
       ...gpsFields(req.body),
     });
+
+    // Step 4 of the client's workflow — "finding on report (defect) will be
+    // informed to lift servicing supervisor". This path previously produced no
+    // in-app signal of any kind, so a submitted spot-check was invisible until
+    // someone happened to open the queue.
+    //
+    // No status_update emit is added here: that room list is Philena's call
+    // (D.5), and the notification below reaches both audiences on its own.
+    if (has_defects) {
+      const defects = checklist.filter((item) => item.result === 'Defect');
+      const worst = defects.some((d) => d.severity === 'Critical') ? 'Critical' : 'Warning';
+      const summary = `${recordLabel(inspection)} — ${defects.length} defect(s) flagged`;
+
+      await notificationService.notifyEvent({
+        event_type: 'defects_flagged',
+        scope: { type: 'managers' },
+        message: `${summary}, awaiting assignment.`,
+        urgency: worst,
+        link: `/inspections/${inspection.id}`,
+      });
+
+      const assignee = await contractorRecipient(inspection.contractor_id);
+      if (assignee) {
+        await notificationService.notifyEvent({
+          event_type: 'defects_flagged',
+          scope: assignee.scope,
+          message: `${summary} on a lift you service. Rectification is due within 2 weeks.`,
+          urgency: worst,
+          link: '/contractor-inbox',
+        });
+      }
+    } else {
+      // G6: filed as a compliant check. No contractor, no email — but the
+      // manager still wants to see that the check happened.
+      await notificationService.notifyEvent({
+        event_type: 'spot_check_passed',
+        scope: { type: 'managers' },
+        message: `${recordLabel(inspection)} — spot-check passed with no defects, filed automatically.`,
+        urgency: 'Informational',
+        link: `/inspections/${inspection.id}`,
+      });
+    }
 
     res.status(201).json(inspection);
   } catch (err) {
@@ -517,6 +608,45 @@ async function updateInspection(req, res, next) {
         await emailService.sendDefectAlert(inspection, recipients.filter(Boolean).join(','));
       } catch (err) {
         console.error('[inspectionController] Defect alert email failed:', err.message);
+        // The manager is the only one who can chase an undelivered alert, and
+        // until now the failure lived in the server log where nobody saw it
+        // (UC-014 A4, the "LC not reachable" case).
+        await notificationService.notifyEvent({
+          event_type: 'defect_email_failed',
+          scope: { type: 'managers' },
+          message: `Defect alert email failed for ${recordLabel(inspection)} — the lift company was not reached.`,
+          urgency: 'Warning',
+          link: `/inspections/${inspection.id}`,
+        });
+      }
+    }
+
+    // Tell the assignee. The status_update emit above deliberately still goes
+    // only to manager/block/insp rooms (D.5 is Philena's to change); this
+    // notification reaches contractor-{user_id} independently, so the assignee
+    // learns of the work either way.
+    if (contractor_id !== undefined) {
+      const assignee = await contractorRecipient(contractor_id);
+      if (assignee) {
+        await notificationService.notifyEvent({
+          event_type: 'defect_assigned',
+          scope: assignee.scope,
+          message: `${recordLabel(inspection)} has been assigned to you — due ${new Date(inspection.target_deadline).toLocaleDateString('en-SG')}.`,
+          urgency: 'Warning',
+          link: '/contractor-inbox',
+        });
+      }
+    } else if (priority !== undefined) {
+      // A re-prioritised job changes what the contractor should work on next.
+      const assignee = await contractorRecipient(inspection.contractor_id);
+      if (assignee) {
+        await notificationService.notifyEvent({
+          event_type: 'priority_changed',
+          scope: assignee.scope,
+          message: `${recordLabel(inspection)} is now ${inspection.priority} priority.`,
+          urgency: 'Warning',
+          link: '/contractor-inbox',
+        });
       }
     }
 
@@ -687,6 +817,34 @@ async function closeInspection(req, res, next) {
       // Socket not initialised (e.g. tests) — ignore.
     }
 
+    // Close is the end of the record's life: managers file it, admins see the
+    // cost land, and the person who raised it finds out it is done.
+    await notificationService.notifyEvent({
+      event_type: 'closed',
+      scope: { type: 'managers' },
+      message: `${recordLabel(inspection)} was jointly endorsed and closed.`,
+      urgency: 'Informational',
+      link: `/inspections/${inspection.id}`,
+    });
+    await notificationService.notifyEvent({
+      event_type: 'closed',
+      scope: { type: 'admins' },
+      message: `${recordLabel(inspection)} closed${inspection.actual_cost ? ` — cost $${inspection.actual_cost}` : ''}.`,
+      urgency: 'Informational',
+      link: `/admin/costs`,
+    });
+    const closeOwner = originatorScope(inspection);
+    if (closeOwner) {
+      await notificationService.notifyEvent({
+        event_type: 'closed',
+        scope: closeOwner,
+        message: `${recordLabel(inspection)} has been resolved and closed.`,
+        urgency: 'Informational',
+        // /my-reports takes no :id — see contractorController.notifyTransition.
+        link: '/my-reports',
+      });
+    }
+
     res.json({
       id: inspection.id,
       status: inspection.status,
@@ -794,6 +952,20 @@ async function rejectRectification(req, res, next) {
       } catch (err) {
         console.error('[inspectionController] Rejection email failed:', err.message);
       }
+    }
+
+    // The contractor has to redo the work, so they are the one party who must
+    // see the reason. The status_update above does not reach their room, so this
+    // notification is how it gets there.
+    const rejectAssignee = await contractorRecipient(inspection.contractor_id);
+    if (rejectAssignee) {
+      await notificationService.notifyEvent({
+        event_type: 'rectification_rejected',
+        scope: rejectAssignee.scope,
+        message: `Rectification rejected on ${recordLabel(inspection)} — ${reason}`,
+        urgency: 'Warning',
+        link: '/contractor-inbox',
+      });
     }
 
     res.json(inspection);

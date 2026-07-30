@@ -1,8 +1,9 @@
-// UC-008 recipient bell. Listens for live `notification` Socket.IO events and
-// shows an unread count; the menu lists received messages with a mark-as-read
-// action. In-session only (received while connected) — enough for the real-time
-// path; a persisted inbox can layer on later.
+// UC-008 recipient bell. Loads the persisted inbox on mount, then listens for
+// live `notification` Socket.IO events and prepends them. Shows an unread count;
+// the menu lists messages with a mark-as-read action, and a message carrying a
+// `link` (lifecycle events do) navigates to the record it is about.
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
   Badge,
   Box,
@@ -17,7 +18,7 @@ import {
 } from '@mui/material';
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined';
 import { useSocket } from '../../context/SocketContext';
-import { markRead } from '../../services/notificationService';
+import { list, markRead } from '../../services/notificationService';
 
 const URGENCY_COLOR = {
   Informational: 'default',
@@ -27,13 +28,36 @@ const URGENCY_COLOR = {
 
 export default function NotificationBell() {
   const { socket } = useSocket();
-  const [items, setItems] = useState([]); // { id, message, urgency, created_at, read }
+  const navigate = useNavigate();
+  // { id, message, urgency, event_type, link, created_at, read }
+  const [items, setItems] = useState([]);
   const [anchor, setAnchor] = useState(null);
+
+  // Seed from the server so anything received while offline is still here. A
+  // failure leaves the list empty and the socket path still works.
+  useEffect(() => {
+    let active = true;
+    list()
+      .then(({ data }) => {
+        if (active) setItems(data.data ?? []);
+      })
+      .catch(() => {
+        // Offline or the request failed — live events still populate the bell.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!socket) return;
     const onNotification = (n) => {
-      setItems((prev) => [{ ...n, read: false }, ...prev]);
+      // De-dupe by id: a notification can arrive over the socket and also be in
+      // the fetched page, and the same socket may deliver it twice if the user
+      // is in more than one target room.
+      setItems((prev) =>
+        prev.some((i) => i.id === n.id) ? prev : [{ ...n, read: false }, ...prev]
+      );
     };
     socket.on('notification', onNotification);
     return () => socket.off('notification', onNotification);
@@ -49,6 +73,16 @@ export default function NotificationBell() {
       await markRead(id);
     } catch {
       // no-op — see comment above
+    }
+  }
+
+  // Clicking a row marks it read and, for a lifecycle event, opens the record it
+  // refers to. Broadcasts have no link and stay put.
+  function handleClick(n) {
+    if (!n.read) handleMarkRead(n.id);
+    if (n.link) {
+      setAnchor(null);
+      navigate(n.link);
     }
   }
 
@@ -91,8 +125,11 @@ export default function NotificationBell() {
               <ListItem
                 key={`${n.id}-${idx}`}
                 alignItems="flex-start"
-                sx={{ bgcolor: n.read ? 'transparent' : 'action.hover', cursor: n.read ? 'default' : 'pointer' }}
-                onClick={() => !n.read && handleMarkRead(n.id)}
+                sx={{
+                  bgcolor: n.read ? 'transparent' : 'action.hover',
+                  cursor: !n.read || n.link ? 'pointer' : 'default',
+                }}
+                onClick={() => handleClick(n)}
               >
                 <ListItemText
                   primary={
@@ -102,10 +139,16 @@ export default function NotificationBell() {
                         label={n.urgency}
                         color={URGENCY_COLOR[n.urgency] ?? 'default'}
                       />
-                      {!n.read && (
+                      {n.link ? (
                         <Typography variant="caption" color="primary">
-                          Tap to mark read
+                          Tap to open
                         </Typography>
+                      ) : (
+                        !n.read && (
+                          <Typography variant="caption" color="primary">
+                            Tap to mark read
+                          </Typography>
+                        )
                       )}
                     </Box>
                   }

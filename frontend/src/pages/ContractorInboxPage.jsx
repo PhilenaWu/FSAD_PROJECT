@@ -38,13 +38,15 @@ import {
 import AssignmentTurnedInOutlinedIcon from '@mui/icons-material/AssignmentTurnedInOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
+import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined';
 import SignaturePad from '../components/SignaturePad';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import { compressImage } from '../utils/imageCompress';
 import { statusDisplay } from '../utils/statusDisplay';
-import { getAssigned, acknowledge, rectify, hold } from '../services/contractorService';
+import { getAssigned, acknowledge, rectify, hold, resume } from '../services/contractorService';
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -68,6 +70,7 @@ function DeadlineChip({ days }) {
 
 export default function ContractorInboxPage() {
   const { profile } = useAuth();
+  const { socket } = useSocket();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -172,6 +175,25 @@ export default function ContractorInboxPage() {
       document.removeEventListener('visibilitychange', refresh);
     };
   }, [load]);
+
+  // Push refresh (Z.3). The poll above already gets there within 15 s, but a
+  // notification addressed to this contractor's room means something just
+  // changed on one of their records, so refetch immediately rather than waiting
+  // out the interval. Skipped mid-action so an in-flight submit isn't disturbed.
+  //
+  // This listens for `notification` rather than `status_update` on purpose: the
+  // contractor room receives no status_update today (the assign and reject emits
+  // omit contractor-{user_id} — D.5), whereas notifyEvent's `users` scope emits
+  // straight to it. Assign and reject start refreshing here on their own once
+  // those triggers are wired, with no further change to this page.
+  useEffect(() => {
+    if (!socket) return;
+    const onNotification = () => {
+      if (!busyRef.current) load(true);
+    };
+    socket.on('notification', onNotification);
+    return () => socket.off('notification', onNotification);
+  }, [socket, load]);
 
   // Reset the work panel whenever the selected defect changes; revoke the
   // previous defect's photo previews first so object URLs don't leak.
@@ -285,6 +307,29 @@ export default function ContractorInboxPage() {
       setFeedback({
         severity: 'error',
         message: err.response?.data?.message ?? 'Could not place on hold — please try again.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Clear the hold and restart the clock (Alt Flow A, G11). The server restores
+  // whichever status the record held before the pause, so no status is assumed
+  // here — the refetch shows what it actually became.
+  async function handleResume() {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await resume(selected.id);
+      setFeedback({
+        severity: 'success',
+        message: 'Work resumed — the deadline was extended by the time held.',
+      });
+      load(true);
+    } catch (err) {
+      setFeedback({
+        severity: 'error',
+        message: err.response?.data?.message ?? 'Could not resume — please try again.',
       });
     } finally {
       setBusy(false);
@@ -414,9 +459,29 @@ export default function ContractorInboxPage() {
                   </Alert>
                 )}
 
-                {selected.hold_reason && selected.status === 'On Hold' && (
-                  <Alert severity="warning" sx={{ mb: 2 }}>
-                    On hold — {selected.hold_reason}
+                {/* On hold: the reason, plus the only way back out. Until resume
+                    existed a held record was stuck there permanently. */}
+                {selected.status === 'On Hold' && (
+                  <Alert
+                    severity="warning"
+                    sx={{ mb: 2 }}
+                    action={
+                      <Button
+                        color="inherit"
+                        size="small"
+                        startIcon={<PlayArrowOutlinedIcon />}
+                        disabled={busy}
+                        onClick={handleResume}
+                      >
+                        Resume
+                      </Button>
+                    }
+                  >
+                    {selected.hold_reason ? `On hold — ${selected.hold_reason}` : 'On hold'}
+                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                      The deadline is paused. Resuming extends it by however long the
+                      hold lasted.
+                    </Typography>
                   </Alert>
                 )}
 

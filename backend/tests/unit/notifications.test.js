@@ -38,7 +38,8 @@ jest.mock('../../src/config/db', () => ({
       return { rows: p ? [p] : [] };
     }
     if (/INSERT INTO notifications/i.test(sql)) {
-      const [manager_id, message, scope, urgency, status, send_time, sent_at] = params;
+      const [manager_id, message, scope, urgency, status, send_time, sent_at, event_type, link] =
+        params;
       return {
         rows: [
           {
@@ -50,12 +51,39 @@ jest.mock('../../src/config/db', () => ({
             status,
             send_time,
             sent_at,
+            event_type,
+            link,
             created_at: '2026-07-15T00:00:00Z',
           },
         ],
       };
     }
-    // resolveRecipients (blocks): two residents match.
+    // resolveRecipients ({ type: 'users' }) — must precede the generic users
+    // matcher below, which would otherwise swallow it.
+    if (/SELECT id FROM users WHERE id = ANY/i.test(sql)) {
+      return { rows: (params[0] ?? []).map((id) => ({ id })) };
+    }
+    // The persisted inbox (GET /api/notifications).
+    if (/FROM notification_recipients r/i.test(sql)) {
+      return {
+        rows: [
+          {
+            id: 'notif-1',
+            message: 'Water off 9–12',
+            urgency: 'Warning',
+            event_type: null,
+            link: null,
+            created_at: '2026-07-15T00:00:00Z',
+            read: false,
+            read_at: null,
+          },
+        ],
+      };
+    }
+    if (/COUNT\(\*\)::int AS unread/i.test(sql)) {
+      return { rows: [{ unread: 1 }] };
+    }
+    // resolveRecipients (blocks / inspector_team / managers / admins).
     if (/SELECT id FROM users/i.test(sql)) {
       return { rows: [{ id: 'r1' }, { id: 'r2' }] };
     }
@@ -132,5 +160,201 @@ describe('PATCH /api/notifications/:id/read', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ notification_id: 'notif-1', read: true });
+  });
+});
+
+// The persisted inbox. Before this endpoint the bell held items in React memory
+// only, so anything sent while a recipient was offline was unreachable even
+// though its notification_recipients row existed.
+describe('GET /api/notifications', () => {
+  test('200 with the caller own rows and an unread count', async () => {
+    const res = await request(app)
+      .get('/api/notifications')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.unread_count).toBe(1);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({ id: 'notif-1', read: false });
+  });
+
+  test('scopes the query to the caller, not a client-supplied id', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+    await request(app).get('/api/notifications').set('Authorization', 'Bearer resident-token');
+
+    const inbox = query.mock.calls.find(([sql]) => /FROM notification_recipients r/i.test(sql));
+    expect(inbox[1][0]).toBe('res-1');
+  });
+
+  test('unread_only=true is passed through to the query', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+    await request(app)
+      .get('/api/notifications?unread_only=true')
+      .set('Authorization', 'Bearer resident-token');
+
+    const inbox = query.mock.calls.find(([sql]) => /FROM notification_recipients r/i.test(sql));
+    expect(inbox[1][1]).toBe(true);
+  });
+
+  test('401 without a token', async () => {
+    const res = await request(app).get('/api/notifications');
+    expect(res.status).toBe(401);
+  });
+});
+
+// notifyEvent is the seam lifecycle transitions call. It must persist a row and
+// emit exactly once, and it must never throw — the transition that triggered it
+// has already committed, so a notification failure cannot be allowed to turn a
+// successful state change into a 500 (G13).
+describe('notificationService.notifyEvent', () => {
+  const notificationService = require('../../src/services/notificationService');
+  const socketService = require('../../src/services/socketService');
+
+  beforeEach(() => {
+    socketService.emitToRooms.mockClear();
+  });
+
+  test('persists the event and emits once, carrying event_type and link', async () => {
+    const count = await notificationService.notifyEvent({
+      event_type: 'rectified',
+      scope: { type: 'managers' },
+      message: 'Work submitted on Blk 44A',
+      urgency: 'Warning',
+      link: '/inspections/ins-1',
+    });
+
+    expect(count).toBe(2);
+    expect(socketService.emitToRooms).toHaveBeenCalledTimes(1);
+    const [rooms, event, payload] = socketService.emitToRooms.mock.calls[0];
+    expect(rooms).toEqual(['manager-room']);
+    expect(event).toBe('notification');
+    expect(payload).toMatchObject({
+      event_type: 'rectified',
+      link: '/inspections/ins-1',
+      urgency: 'Warning',
+    });
+  });
+
+  test('resolves the admins scope to admin-room', async () => {
+    await notificationService.notifyEvent({
+      event_type: 'vendor_expired',
+      scope: { type: 'admins' },
+      message: 'Contract expired',
+      urgency: 'Critical',
+    });
+
+    expect(socketService.emitToRooms.mock.calls[0][0]).toEqual(['admin-room']);
+  });
+
+  test('resolves the users scope to the ids and rooms the caller supplies', async () => {
+    await notificationService.notifyEvent({
+      event_type: 'defect_assigned',
+      scope: {
+        type: 'users',
+        user_ids: ['ctr-user-1'],
+        rooms: ['contractor-ctr-user-1'],
+      },
+      message: 'A defect was assigned to you',
+      urgency: 'Warning',
+    });
+
+    expect(socketService.emitToRooms.mock.calls[0][0]).toEqual(['contractor-ctr-user-1']);
+  });
+
+  test('drops empty ids in the users scope rather than inserting null', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+
+    const count = await notificationService.notifyEvent({
+      event_type: 'defect_assigned',
+      scope: { type: 'users', user_ids: [null, undefined], rooms: [] },
+      message: 'Nobody to tell',
+    });
+
+    // No recipients, so no recipient insert and nothing to emit to. The real
+    // emitToRooms early-returns on an empty room list, so the call is a no-op.
+    expect(count).toBe(0);
+    expect(query.mock.calls.some(([sql]) => /INSERT INTO notification_recipients/i.test(sql))).toBe(
+      false
+    );
+    expect(socketService.emitToRooms.mock.calls[0][0]).toEqual([]);
+  });
+
+  test('swallows a delivery failure and does not throw (G13)', async () => {
+    socketService.emitToRooms.mockImplementationOnce(() => {
+      throw new Error('socket down');
+    });
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      notificationService.notifyEvent({
+        event_type: 'rectified',
+        scope: { type: 'managers' },
+        message: 'Work submitted',
+      })
+    ).resolves.toBe(0);
+
+    spy.mockRestore();
+  });
+});
+
+// A scheduled send that can never succeed used to stay 'Scheduled', and
+// findDueScheduled matches on exactly that — so the dispatcher retried it every
+// 60 s for the life of the process.
+describe('dispatchDueNotifications', () => {
+  const notificationController = require('../../src/controllers/notificationController');
+  const socketService = require('../../src/services/socketService');
+  const { query } = require('../../src/config/db');
+
+  test('marks a failed send Failed so it leaves the queue', async () => {
+    query.mockClear();
+    socketService.emitToRooms.mockImplementationOnce(() => {
+      throw new Error('socket down');
+    });
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    // One due notification, then the model's UPDATE.
+    query.mockImplementationOnce(async () => ({
+      rows: [
+        {
+          id: 'notif-due',
+          message: 'scheduled',
+          scope: { type: 'managers' },
+          urgency: 'Warning',
+          created_at: '2026-07-15T00:00:00Z',
+        },
+      ],
+    }));
+
+    const result = await notificationController.dispatchDueNotifications();
+
+    expect(result).toMatchObject({ due: 1, sent: 0, failed: 1 });
+    const marked = query.mock.calls.find(([sql]) => /SET status = 'Failed'/i.test(sql));
+    expect(marked).toBeDefined();
+    expect(marked[1]).toEqual(['notif-due']);
+
+    spy.mockRestore();
+  });
+
+  test('marks a successful send Sent', async () => {
+    query.mockClear();
+    query.mockImplementationOnce(async () => ({
+      rows: [
+        {
+          id: 'notif-due-2',
+          message: 'scheduled',
+          scope: { type: 'managers' },
+          urgency: 'Informational',
+          created_at: '2026-07-15T00:00:00Z',
+        },
+      ],
+    }));
+
+    const result = await notificationController.dispatchDueNotifications();
+
+    expect(result).toMatchObject({ due: 1, sent: 1, failed: 0 });
+    expect(query.mock.calls.some(([sql]) => /SET status = 'Sent'/i.test(sql))).toBe(true);
   });
 });

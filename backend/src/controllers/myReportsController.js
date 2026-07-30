@@ -6,6 +6,7 @@
 'use strict';
 
 const myReportModel = require('../models/myReportModel');
+const notificationService = require('../services/notificationService');
 
 // A rating is offered once the work is done. 'Closed' is included deliberately:
 // the workflow runs Assigned → Acknowledged → Rectified → Closed and only reaches
@@ -78,6 +79,17 @@ async function submitRating(req, res, next) {
     const inspection = await myReportModel.submitRating(req.params.id, req.user.id, {
       rating,
       comment,
+    });
+
+    // Satisfaction feedback is only useful if a manager sees it — a rating left
+    // in the database that nobody is told about cannot inform anything. A low
+    // score is flagged Warning so it stands out from routine praise.
+    await notificationService.notifyEvent({
+      event_type: 'rating_submitted',
+      scope: { type: 'managers' },
+      message: `${rating}★ rating left on "${existing.title}"${comment ? ` — "${comment}"` : ''}`,
+      urgency: rating <= 2 ? 'Warning' : 'Informational',
+      link: `/inspections/${inspection.id}`,
     });
 
     res.json({

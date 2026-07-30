@@ -12,6 +12,15 @@ export function getReceipts(id) {
   return api.get(`/api/notifications/${id}/receipts`);
 }
 
+// The caller's own persisted inbox — what the bell loads on mount so messages
+// received while offline (or before a refresh) are not lost.
+export function list({ unread_only = false, limit } = {}) {
+  const params = {};
+  if (unread_only) params.unread_only = 'true';
+  if (limit) params.limit = limit;
+  return api.get('/api/notifications', { params });
+}
+
 // Recipient marks a notification read.
 export function markRead(id) {
   return api.patch(`/api/notifications/${id}/read`);

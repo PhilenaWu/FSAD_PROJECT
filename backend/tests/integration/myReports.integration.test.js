@@ -27,10 +27,16 @@ jest.mock('../../src/config/supabase', () => ({
 jest.mock('../../src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(async () => 'https://cloudinary.test/defects/mock.png'),
 }));
+// Every export routes/cv.js registers must be present: Express throws
+// "argument handler must be a function" at require time on an undefined handler,
+// which fails the whole suite before a single test runs. This page never calls
+// CV, so the bodies only need to exist.
 jest.mock('../../src/controllers/cvController', () => ({
   detect: jest.fn(async () => ({ cvDetection: null, inspection: null })),
   batchScan: jest.fn(async () => ({ processed: 0, failed: 0, remaining: 0 })),
   listDetections: jest.fn((req, res) => res.json({ data: [], total: 0 })),
+  createTicketFromDetection: jest.fn((req, res) => res.status(201).json({})),
+  dismissDetection: jest.fn((req, res) => res.json({})),
 }));
 jest.mock('../../src/services/socketService', () => ({
   emitToRoom: jest.fn(),
