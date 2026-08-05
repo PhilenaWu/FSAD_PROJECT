@@ -86,6 +86,18 @@ function requireRole(...roles) {
       req.user.status = status;
     }
 
+    // G16: a suspended account gets the specific ACCOUNT_SUSPENDED code, not a
+    // generic FORBIDDEN — the frontend signs them out on it, and "your account
+    // is suspended" is a different message from "you're the wrong role".
+    // requireAuth normally catches this first; this covers the fallback path
+    // above, where the profile was loaded here.
+    if (status === 'suspended') {
+      const err = new Error('This account is suspended. Contact the administrator.');
+      err.statusCode = 403;
+      err.code = 'ACCOUNT_SUSPENDED';
+      return next(err);
+    }
+
     if (!role || status !== 'active' || !roles.includes(role)) {
       const err = new Error('Insufficient permissions');
       err.statusCode = 403;

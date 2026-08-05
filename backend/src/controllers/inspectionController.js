@@ -727,6 +727,20 @@ async function updateInspection(req, res, next) {
       return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
     }
 
+    // A reassignment is a contractor change on a record that already had a
+    // (different) contractor — the outgoing one has to be told the job left
+    // their inbox, and the incoming one gets reassignment wording rather than
+    // the first-assignment mail. Setting the same contractor again is neither.
+    const previousContractorId = inspection.previous_contractor_id;
+    const isReassignment =
+      contractor_id !== undefined &&
+      previousContractorId != null &&
+      // String compare: the body's id arrives as text, the DB's as a number.
+      String(previousContractorId) !== String(contractor_id);
+    const previousAssignee = isReassignment
+      ? await contractorRecipient(previousContractorId)
+      : null;
+
     // Real-time push; a socket hiccup must never fail the HTTP update.
     try {
       // insp-{id}: the originator's own room (UC-003) — a resident's block room
@@ -739,6 +753,11 @@ async function updateInspection(req, res, next) {
       // A vendor with no linked login has no room; the assignment still stands.
       if (assignedContractorUserId) {
         rooms.push(`contractor-${assignedContractorUserId}`);
+      }
+      // The outgoing contractor's room too, otherwise a reassigned-away job sits
+      // in their open inbox until they reload.
+      if (previousAssignee) {
+        rooms.push(...previousAssignee.scope.rooms);
       }
       socketService.emitToRooms(rooms, 'status_update', {
         id: inspection.id,
@@ -759,7 +778,8 @@ async function updateInspection(req, res, next) {
         recipients.push(config.DEFECT_ALERT_RECIPIENTS);
       }
       try {
-        await emailService.sendDefectAlert(inspection, recipients.filter(Boolean).join(','));
+        await emailService.sendDefectAlert(inspection, recipients.filter(Boolean).join(','),
+          isReassignment ? { email_type: 'reassignment' } : {});
       } catch (err) {
         console.error('[inspectionController] Defect alert email failed:', err.message);
         // The manager is the only one who can chase an undelivered alert, and
@@ -783,10 +803,22 @@ async function updateInspection(req, res, next) {
       const assignee = await contractorRecipient(contractor_id);
       if (assignee) {
         await notificationService.notifyEvent({
-          event_type: 'defect_assigned',
+          event_type: isReassignment ? 'defect_reassigned' : 'defect_assigned',
           scope: assignee.scope,
-          message: `${recordLabel(inspection)} has been assigned to you — due ${new Date(inspection.target_deadline).toLocaleDateString('en-SG')}.`,
+          message: `${recordLabel(inspection)} has been ${isReassignment ? 'reassigned' : 'assigned'} to you — due ${new Date(inspection.target_deadline).toLocaleDateString('en-SG')}.`,
           urgency: 'Warning',
+          link: '/contractor-inbox',
+        });
+      }
+      // The contractor who lost the job needs to know as much as the one who
+      // gained it — otherwise they keep working a record that is no longer
+      // theirs, and their inbox silently drops it.
+      if (previousAssignee) {
+        await notificationService.notifyEvent({
+          event_type: 'defect_unassigned',
+          scope: previousAssignee.scope,
+          message: `${recordLabel(inspection)} has been reassigned to another contractor — it is no longer in your inbox.`,
+          urgency: 'Informational',
           link: '/contractor-inbox',
         });
       }

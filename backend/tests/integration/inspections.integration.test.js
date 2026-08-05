@@ -450,11 +450,12 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   // SELECT user_id, name FROM contractors WHERE id = $1. Distinct from the branch
   // above — that one starts 'SELECT id', this one 'SELECT user_id'.
   if (/SELECT user_id, name FROM contractors/i.test(sql)) {
-    return {
-      rows: params[0] === 'con-1'
-        ? [{ user_id: 'con-user-1', name: 'Otis Service SG' }]
-        : [],
+    const recipients = {
+      'con-1': { user_id: 'con-user-1', name: 'Otis Service SG' },
+      'con-2': { user_id: 'con-user-2', name: 'Schindler SG' },
     };
+    const row = recipients[params[0]];
+    return { rows: row ? [row] : [] };
   }
   // status board: SELECT id, location_block, ... WHERE source_type = 'resident_complaint'
   if (/SELECT id, location_block/i.test(sql)) {
@@ -1224,6 +1225,58 @@ describe('PATCH /api/inspections/:id', () => {
     expect(res.body.contractor_id).toBe('con-2');
     expect(store.history.map((h) => h.action)).toEqual(['Assigned', 'Reassigned']);
     expect(store.history[1].note).toBe('Otis unavailable this week');
+  });
+
+  // A reassignment is two contractors' business: the incoming one gets
+  // reassignment wording, and the outgoing one has to learn the job left their
+  // inbox (both the live room and a persisted notification).
+  test('a reassignment tells the outgoing contractor and mails the new one as a reassignment', async () => {
+    const id = await seedComplaint('Lift alarm not sounding');
+
+    await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ contractor_id: 'con-1' });
+
+    const socketService = require('../../src/services/socketService');
+    socketService.emitToRooms.mockClear();
+    emailService.sendDefectAlert.mockClear();
+    // Spied rather than asserted through the db mock: notifyEvent persists via
+    // SQL this suite's in-memory store doesn't model, and swallows the failure.
+    const notificationService = require('../../src/services/notificationService');
+    const notify = jest.spyOn(notificationService, 'notifyEvent');
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ contractor_id: 'con-2' });
+
+    expect(res.status).toBe(200);
+
+    // Both contractors' rooms are on the status_update — the old one's inbox has
+    // to drop the record, not just the new one's pick it up.
+    expect(socketService.emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'block-44A', `insp-${id}`, 'contractor-con-user-2', 'contractor-con-user-1'],
+      'status_update',
+      expect.objectContaining({ id })
+    );
+
+    // The new contractor's mail says reassigned, not "a defect has been assigned".
+    const [, , options] = emailService.sendDefectAlert.mock.calls[0];
+    expect(options).toMatchObject({ email_type: 'reassignment' });
+
+    // Persisted notifications: one to each side.
+    const events = notify.mock.calls.map(([e]) => ({
+      event_type: e.event_type,
+      rooms: e.scope.rooms,
+    }));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { event_type: 'defect_reassigned', rooms: ['contractor-con-user-2'] },
+        { event_type: 'defect_unassigned', rooms: ['contractor-con-user-1'] },
+      ])
+    );
+    notify.mockRestore();
   });
 
   // Re-saving the same contractor is not a reassignment — it must not invent a
