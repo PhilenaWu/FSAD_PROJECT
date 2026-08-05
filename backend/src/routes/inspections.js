@@ -41,6 +41,11 @@ const uploadPhoto = multer({
 // '/:id' so 'defect-alert-demo' isn't captured as an id.
 router.get('/defect-alert-demo', cronGuard, inspectionController.defectAlertDemo);
 
+// GET /api/inspections/overdue-chase — daily cron-guarded chase (D.7). Reminds
+// contractors at D−3 and from D+0 onward, skipping On Hold records and anything
+// already chased today. Keep above '/:id'.
+router.get('/overdue-chase', cronGuard, inspectionController.overdueChase);
+
 // GET /api/inspections/status-board — privacy-safe estate-wide feed; any
 // authenticated user. Keep above any future '/:id' route.
 router.get('/status-board', requireAuth, inspectionController.listStatusBoard);

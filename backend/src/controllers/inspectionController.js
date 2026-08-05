@@ -5,6 +5,7 @@
 
 const { query } = require('../config/db');
 const inspectionModel = require('../models/inspectionModel');
+const defectEmailModel = require('../models/defectEmailModel');
 const liftModel = require('../models/liftModel');
 const checklistItemModel = require('../models/checklistItemModel');
 const cloudinaryService = require('../services/cloudinaryService');
@@ -50,6 +51,100 @@ async function contractorRecipient(contractorId) {
     scope: { type: 'users', user_ids: [row.user_id], rooms: [`contractor-${row.user_id}`] },
     name: row.name,
   };
+}
+
+// --- UC-014 outbound defect email (D.3 / D.7) ------------------------------
+// The single place a defect email is sent and recorded, so the spot-check alert
+// and the daily overdue chase cannot drift apart.
+//
+// defect_email_log is written either way: 'sent' on delivery, 'failed' with the
+// reason when there is nobody to email (A4) or SMTP throws. The G12 stamp and the
+// audit row are written only on a successful send — an audit trail claiming an
+// alert went out when it didn't is worse than no row at all.
+//
+// Never throws (G13): every caller has already committed its state change, so a
+// mail or logging problem must not turn a successful transition into a 500.
+//
+// Returns 'sent' | 'failed' | 'skipped' ('skipped' = no contractor to email).
+async function deliverDefectEmail(inspection, {
+  email_type,
+  contact_email,
+  defects = [],
+  lift_code,
+  days_remaining,
+  reason,
+  auditAction,
+  actorId = null,
+}) {
+  // No contractor at all: there is no addressee and no contractor_id to satisfy
+  // defect_email_log's NOT NULL, so there is nothing to record.
+  if (!inspection.contractor_id) return 'skipped';
+
+  const logEntry = {
+    inspection_id: inspection.id,
+    contractor_id: inspection.contractor_id,
+    email_type,
+  };
+  // Best-effort logging: a failed log write must not mask the send's outcome.
+  const log = (fields) =>
+    defectEmailModel.logEmail({ ...logEntry, ...fields }).catch((err) => {
+      console.error('[inspectionController] defect_email_log write failed:', err.message);
+    });
+
+  // A4 — the vendor has no contact email, so the LC cannot be reached. No send is
+  // attempted even when DEFECT_ALERT_RECIPIENTS is configured: that list is a
+  // demo CC, and logging 'sent' because a copy reached the team would tell the
+  // manager their contractor was notified when nobody was. The failure is logged
+  // so the delivery chip can show "LC not reachable"; the record still
+  // files/assigns normally.
+  if (!contact_email) {
+    await log({
+      recipient: defectEmailModel.NO_RECIPIENT,
+      status: 'failed',
+      error_message: 'No contractor contact email on record (UC-014 A4).',
+    });
+    return 'failed';
+  }
+
+  const recipients = [contact_email];
+  if (config.DEFECT_ALERT_RECIPIENTS) {
+    recipients.push(config.DEFECT_ALERT_RECIPIENTS);
+  }
+  const to = recipients.join(',');
+
+  try {
+    await emailService.sendDefectAlert(inspection, to, {
+      email_type,
+      defects,
+      lift_code,
+      days_remaining,
+      reason,
+    });
+  } catch (err) {
+    console.error(`[inspectionController] ${email_type} email failed:`, err.message);
+    await log({ recipient: to, status: 'failed', error_message: err.message });
+    return 'failed';
+  }
+
+  await log({ recipient: to, status: 'sent' });
+  try {
+    // G12 applies to the one-shot spot-check alert only. The chase is meant to
+    // fire repeatedly (D−3 then D+0), guarded per day instead.
+    if (email_type === 'defect_alert') {
+      await defectEmailModel.markDefectEmailSent(inspection.id);
+    }
+    if (auditAction) {
+      await defectEmailModel.logEmailAudit(
+        inspection.id,
+        auditAction,
+        inspection.status,
+        actorId
+      );
+    }
+  } catch (err) {
+    console.error('[inspectionController] post-send bookkeeping failed:', err.message);
+  }
+  return 'sent';
 }
 
 // Who filed the record: a resident complaint is tracked by its author (UC-003),
@@ -372,6 +467,39 @@ async function createLiftInspection(req, res, next) {
           message: `${summary} on a lift you service. Rectification is due within 2 weeks.`,
           urgency: worst,
           link: '/contractor-inbox',
+        });
+      }
+
+      // D.3 — the UC-014 email itself, which is the client's stated headline
+      // benefit ("finding on report will be informed to lift servicing
+      // supervisor"). Until now only the in-app notification above went out, so
+      // a supervisor who never opens the portal learned nothing.
+      //
+      // Fired after the commit, on the ≥1 defect path only (G6 covers the clean
+      // check), and skipped when defect_email_sent_at is already set (G12).
+      // deliverDefectEmail never throws, so the 201 below is unaffected (G13).
+      if (!inspection.defect_email_sent_at) {
+        const emailDefects = await defectEmailModel
+          .findDefectsForEmail(inspection.id)
+          .catch((err) => {
+            // Without the checkpoint rows the alert would be a bare summary,
+            // which is not the D.2 email — better to log and send what we have.
+            console.error('[inspectionController] defect table lookup failed:', err.message);
+            return [];
+          });
+
+        const { rows: vendor } = await query(
+          'SELECT contact_email FROM contractors WHERE id = $1',
+          [inspection.contractor_id]
+        );
+
+        await deliverDefectEmail(inspection, {
+          email_type: 'defect_alert',
+          contact_email: vendor[0]?.contact_email,
+          defects: emailDefects,
+          lift_code: lift.lift_code,
+          auditAction: 'Defect Alert Sent',
+          actorId: inspector_id,
         });
       }
     } else {
@@ -1009,6 +1137,98 @@ async function rejectRectification(req, res, next) {
   }
 }
 
+// GET /api/inspections/overdue-chase — daily cron-guarded job (D.7). Reminds the
+// contractor about defects due in 3 days or already past their deadline, and
+// tells the managers who have to escalate.
+//
+// Scope and exclusions live in defectEmailModel.findDueForChase: Assigned /
+// Acknowledged only (a Rectified record is waiting on the manager, not the
+// contractor) and On Hold excluded, because a hold pauses the rectification clock
+// (G11) and the dashboard's overdue count excludes it too — chasing a held record
+// would make the emails contradict the UI.
+//
+// Idempotent per record per day: a record already chased today is skipped, so a
+// re-run or a manual workflow_dispatch sends nothing twice. One record's failure
+// never stops the rest of the run.
+async function overdueChase(req, res, next) {
+  try {
+    const due = await defectEmailModel.findDueForChase();
+
+    const chased = [];
+    const skipped = [];
+
+    for (const record of due) {
+      const days = Number(record.days_remaining);
+
+      try {
+        if (await defectEmailModel.sentToday(record.id, 'overdue_chase')) {
+          skipped.push({ id: record.id, reason: 'already_chased_today' });
+          continue;
+        }
+
+        const outcome = await deliverDefectEmail(record, {
+          email_type: 'overdue_chase',
+          contact_email: record.contact_email,
+          lift_code: record.lift_code,
+          days_remaining: days,
+          auditAction: 'Overdue Reminder Sent',
+        });
+
+        if (outcome !== 'sent') {
+          skipped.push({ id: record.id, reason: outcome });
+          continue;
+        }
+
+        chased.push({
+          id: record.id,
+          title: record.title,
+          contractor: record.contractor_name,
+          days_remaining: days,
+        });
+
+        // Durable notifications alongside the mail: the manager escalates, and
+        // the contractor sees it in the portal even if the email is missed.
+        const label = days < 0
+          ? `${Math.abs(days)} day(s) overdue`
+          : `due in ${days} day(s)`;
+        await notificationService.notifyEvent({
+          event_type: 'overdue_chase',
+          scope: { type: 'managers' },
+          message: `${recordLabel(record)} is ${label} — ${record.contractor_name} reminded.`,
+          urgency: days < 0 ? 'Critical' : 'Warning',
+          link: `/inspections/${record.id}`,
+        });
+        if (record.contractor_user_id) {
+          await notificationService.notifyEvent({
+            event_type: 'overdue_chase',
+            scope: {
+              type: 'users',
+              user_ids: [record.contractor_user_id],
+              rooms: [`contractor-${record.contractor_user_id}`],
+            },
+            message: `${recordLabel(record)} is ${label}. Please rectify and submit your completion proof.`,
+            urgency: days < 0 ? 'Critical' : 'Warning',
+            link: '/contractor-inbox',
+          });
+        }
+      } catch (err) {
+        // One bad record must not abort the whole daily run.
+        console.error(`[overdueChase] ${record.id} failed:`, err.message);
+        skipped.push({ id: record.id, reason: 'error' });
+      }
+    }
+
+    res.json({
+      due: due.length,
+      chased: chased.length,
+      skipped: skipped.length,
+      records: chased,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/inspections/defect-alert-demo — cron-guarded trigger used by the
 // GitHub Actions demo workflow. Sends a fixed sample defect-assignment alert to
 // everyone on DEFECT_ALERT_RECIPIENTS so the whole team receives the email live
@@ -1051,6 +1271,7 @@ module.exports = {
   listMine,
   listStatusBoard,
   ocrPrefill,
+  overdueChase,
   rejectRectification,
   reviewInspection,
   updateInspection,

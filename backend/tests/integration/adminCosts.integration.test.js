@@ -206,10 +206,13 @@ describe.each([
     expect(res.body.code).toBe('FORBIDDEN');
   });
 
-  test('403 for an admin whose account is suspended', async () => {
+  // Distinct from the wrong-role 403 above: requireAuth refuses a suspended
+  // account outright (G16) so the frontend can sign them out rather than show a
+  // generic permissions error.
+  test('403 ACCOUNT_SUSPENDED for an admin whose account is suspended', async () => {
     const res = await request(app).get(path).set('Authorization', 'Bearer suspended-admin-token');
     expect(res.status).toBe(403);
-    expect(res.body.code).toBe('FORBIDDEN');
+    expect(res.body.code).toBe('ACCOUNT_SUSPENDED');
   });
 
   test('200 for an admin', async () => {

@@ -523,8 +523,17 @@ async function updateByManager(id, changes, actorId, note) {
     const after = updated.rows[0];
 
     // Audit trail: who changed what, from which status to which.
+    //
+    // A contractor change is 'Reassigned' when the record already had a different
+    // contractor, and 'Assigned' only the first time (UC-015's required action
+    // list has both). Setting the same contractor again is not a reassignment, so
+    // it keeps the 'Assigned' label rather than inventing a transition.
+    const isReassignment =
+      changes.contractor_id !== undefined &&
+      before.contractor_id != null &&
+      before.contractor_id !== changes.contractor_id;
     const action = changes.contractor_id !== undefined
-      ? 'Assigned'
+      ? (isReassignment ? 'Reassigned' : 'Assigned')
       : changes.status !== undefined
         ? 'Status Updated'
         : 'Priority Escalated';
