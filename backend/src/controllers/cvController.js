@@ -216,8 +216,24 @@ async function batchScan() {
       if (err.status === 429) {
         await retryQueueModel.reschedule(item.id);
       } else {
+        // A give-up used to be entirely silent: the row flipped to 'failed', the
+        // error was swallowed without even a log line, and nobody was told. CV is
+        // assistive — a human confirms every detection — so a photo that will
+        // never be scanned needs to reach a manager, or the defect it contained
+        // is simply lost.
         await retryQueueModel.markFailed(item.id);
         failed += 1;
+        console.error(`[cvController] batch scan gave up on ${item.image_url}:`, err.message);
+        await notificationService.notifyEvent({
+          event_type: 'cv_scan_failed',
+          scope: { type: 'managers' },
+          message:
+            `Defect detection failed permanently for an uploaded photo` +
+            `${item.inspection_id ? ` on record ${item.inspection_id}` : ''} — ` +
+            `review it manually.`,
+          urgency: 'Warning',
+          link: item.inspection_id ? `/inspections/${item.inspection_id}` : '/dashboard',
+        });
       }
     }
   }

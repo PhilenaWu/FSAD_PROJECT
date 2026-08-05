@@ -468,7 +468,7 @@ Every state transition appends an `inspection_history` row carrying actor, actio
 
 **Required actions (completeness check):** `Created` · `Defect Alert Sent` · `Filed — no defects` · `Assigned` · `Reassigned` · `Acknowledged` · `Work Progress Saved` · `On Hold — {reason}` · `Resumed` · `Rectified & Signed` · `Rectification Rejected` · `Overdue Reminder Sent` · `Priority Escalated` · `Jointly Endorsed & Closed`.
 
-**Status — 11 of 14 written.** Verified against `backend/src/`:
+**Status — all 14 written.** Verified against `backend/src/`:
 
 | Action | State |
 |---|---|
@@ -483,9 +483,9 @@ Every state transition appends an `inspection_history` row carrying actor, actio
 | `Rectification Rejected` | ✅ |
 | `Priority Escalated` | ✅ (fall-through label when a PATCH changes neither contractor nor status) |
 | `Jointly Endorsed & Closed` | ✅ |
-| `Reassigned` | ❌ a reassign still logs as `Assigned` |
-| `Defect Alert Sent` | ❌ blocked on UC-014 (D.3) |
-| `Overdue Reminder Sent` | ❌ blocked on the overdue chase (D.7) |
+| `Defect Alert Sent` | ✅ written by the D.3 send path on a successful spot-check alert |
+| `Overdue Reminder Sent` | ✅ written by the D.7 chase on each successful reminder |
+| `Reassigned` | ✅ `updateByManager` labels a contractor change `Reassigned` when the record already had a different one; the first assignment stays `Assigned` |
 
 `Status Updated` is also written but is not in the required list above.
 

@@ -19,6 +19,11 @@ jest.mock('../../src/config/supabase', () => ({
       if (token === 'manager-token') {
         return { data: { claims: { sub: 'mgr-1', email: 'mgr@example.com' } }, error: null };
       }
+      // ins-2 is suspended but still holds a valid Supabase token — Supabase has
+      // no idea the app suspended them (G16).
+      if (token === 'suspended-token') {
+        return { data: { claims: { sub: 'ins-2', email: 'old@example.com' } }, error: null };
+      }
       return { data: null, error: { message: 'invalid token' } };
     }),
   },
@@ -94,6 +99,37 @@ describe('GET /api/users/me', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('403 ACCOUNT_SUSPENDED for a suspended account', async () => {
+    const res = await request(app)
+      .get('/api/users/me')
+      .set('Authorization', 'Bearer suspended-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ACCOUNT_SUSPENDED');
+  });
+});
+
+// G16: the suspension gate belongs in requireAuth, not only in getMe. Before it
+// moved there, a suspended account was refused its own profile but could still
+// call every requireAuth-only route — the estate status board among them.
+describe('suspended accounts on requireAuth-only routes', () => {
+  test('403 ACCOUNT_SUSPENDED on the status board, which has no role guard', async () => {
+    const res = await request(app)
+      .get('/api/inspections/status-board')
+      .set('Authorization', 'Bearer suspended-token');
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ACCOUNT_SUSPENDED');
+  });
+
+  test('an active account still reaches the same route', async () => {
+    const res = await request(app)
+      .get('/api/inspections/status-board')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(200);
   });
 });
 

@@ -98,6 +98,8 @@ const checklistItems = [
 ];
 const store = {
   inspections: [], checklist_results: [], history: [], signatures: [], ai_jobs: [], cv_detections: [],
+  // UC-014 defect_email_log rows (migration 036) — D.3's proof of send.
+  emailLog: [],
 };
 
 const mockQuery = jest.fn(async (sql, params = []) => {
@@ -244,6 +246,48 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   // contractor dropdown: SELECT * FROM contractors ORDER BY name
   if (/SELECT \* FROM contractors/i.test(sql)) {
     return { rows: [{ id: 'con-1', name: 'Otis Service SG', brands_serviced: 'Otis' }] };
+  }
+  // --- UC-014 defect email (D.3, migration 036) ----------------------------
+  // The email's defect table. Keyed on the item_no alias so it wins over the
+  // generic checklist_results + checklist_items branch further down, and returns
+  // defects only, in form order.
+  if (/display_order AS item_no/i.test(sql)) {
+    const rows = store.checklist_results
+      .filter((r) => r.inspection_id === params[0] && r.result === 'Defect')
+      .map((r) => {
+        const tpl = checklistItems.find((i) => i.id === r.checklist_item_id);
+        return {
+          section: tpl?.section,
+          item_no: tpl?.display_order,
+          item_text: tpl?.item_text,
+          severity: r.severity,
+          remark: r.remark ?? null,
+          photo_url: r.photo_url ?? null,
+        };
+      })
+      .sort((a, b) => a.item_no - b.item_no);
+    return { rows };
+  }
+  // The addressee lookup: SELECT contact_email FROM contractors WHERE id = $1.
+  if (/SELECT contact_email FROM contractors/i.test(sql)) {
+    return {
+      rows: params[0] === 'con-1' ? [{ contact_email: 'lc@example.com' }] : [],
+    };
+  }
+  if (/INSERT INTO defect_email_log/i.test(sql)) {
+    const [inspection_id, contractor_id, recipient, email_type, status, error_message] = params;
+    const row = {
+      id: `log-${store.emailLog.length + 1}`,
+      inspection_id, contractor_id, recipient, email_type, status, error_message,
+    };
+    store.emailLog.push(row);
+    return { rows: [row] };
+  }
+  // G12 stamp — set only after a successful send.
+  if (/UPDATE inspections SET defect_email_sent_at/i.test(sql)) {
+    const row = store.inspections.find((i) => i.id === params[0]);
+    if (row) row.defect_email_sent_at = new Date().toISOString();
+    return { rows: [] };
   }
   // G8 gate: unrectified defects joined to the template for their item numbers.
   // Must precede the generic checklist_results branch below.
@@ -394,11 +438,13 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   // SELECT id, contact_email, user_id FROM contractors WHERE id = $1
   // user_id is the account holder's users.id — the D.5 socket room is keyed by it.
   if (/SELECT id.* FROM contractors/i.test(sql)) {
-    return {
-      rows: params[0] === 'con-1'
-        ? [{ id: 'con-1', contact_email: 'lc@example.com', user_id: 'con-user-1' }]
-        : [],
+    // con-2 exists so a reassignment has somewhere to go (UC-015 `Reassigned`).
+    const contractors = {
+      'con-1': { id: 'con-1', contact_email: 'lc@example.com', user_id: 'con-user-1' },
+      'con-2': { id: 'con-2', contact_email: 'lc2@example.com', user_id: 'con-user-2' },
     };
+    const row = contractors[params[0]];
+    return { rows: row ? [row] : [] };
   }
   // contractorRecipient (UC-008 assignee notifications + the D.5 reject room):
   // SELECT user_id, name FROM contractors WHERE id = $1. Distinct from the branch
@@ -464,6 +510,7 @@ beforeEach(() => {
   store.signatures.length = 0;
   store.ai_jobs.length = 0;
   store.cv_detections.length = 0;
+  store.emailLog.length = 0;
   jest.clearAllMocks();
 });
 
@@ -627,6 +674,74 @@ describe('POST /api/inspections/lift', () => {
       signer_id: 'ins-1',
     });
     expect(store.history.some((h) => h.action === 'Created')).toBe(true);
+  });
+
+  // D.3 — the client's headline benefit: "finding on report (defect) will be
+  // informed to lift servicing supervisor". Only an in-app notification went out
+  // before this, so a supervisor who never opened the portal learned nothing.
+  test('emails the servicing contractor the UC-014 defect alert', async () => {
+    const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+
+    expect(res.status).toBe(201);
+    expect(emailService.sendDefectAlert).toHaveBeenCalledTimes(1);
+
+    const [record, to, options] = emailService.sendDefectAlert.mock.calls[0];
+    expect(record.id).toBe(res.body.id);
+    expect(to).toContain('lc@example.com');
+    expect(options.email_type).toBe('defect_alert');
+    expect(options.lift_code).toBe('44A-L1');
+    // The failed checkpoints travel with it (D.2), not just a bare summary.
+    expect(options.defects).toHaveLength(1);
+    expect(options.defects[0]).toMatchObject({ severity: 'Major' });
+  });
+
+  test('records the send in defect_email_log, stamps G12, and audits it', async () => {
+    const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+
+    expect(store.emailLog).toEqual([
+      expect.objectContaining({
+        inspection_id: res.body.id,
+        contractor_id: 'con-1',
+        email_type: 'defect_alert',
+        status: 'sent',
+      }),
+    ]);
+    // G12: the replay guard is stamped, so a resubmit cannot double-send.
+    const row = store.inspections.find((i) => i.id === res.body.id);
+    expect(row.defect_email_sent_at).toBeTruthy();
+    // UC-015: one of the two audit actions the completeness check was missing.
+    expect(store.history.some((h) => h.action === 'Defect Alert Sent')).toBe(true);
+  });
+
+  // G6: a clean spot-check involves no contractor, so no alert and no log row.
+  test('a zero-defect spot-check sends no defect alert', async () => {
+    const res = await submitLift([
+      { checklist_item_id: 'item-1', result: 'Pass' },
+      { checklist_item_id: 'item-2', result: 'Pass' },
+    ]);
+
+    expect(res.status).toBe(201);
+    expect(emailService.sendDefectAlert).not.toHaveBeenCalled();
+    expect(store.emailLog).toHaveLength(0);
+    expect(store.history.some((h) => h.action === 'Defect Alert Sent')).toBe(false);
+  });
+
+  // G13: the record is already committed when the mail goes out.
+  test('a failed defect alert never fails the submission', async () => {
+    emailService.sendDefectAlert.mockRejectedValueOnce(new Error('smtp down'));
+    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await submitLift(majorChecklist).attach('photo_item-2', PNG, 'defect.png');
+
+    expect(res.status).toBe(201);
+    expect(store.emailLog).toEqual([
+      expect.objectContaining({ status: 'failed', error_message: 'smtp down' }),
+    ]);
+    // Nothing claims an alert was sent.
+    expect(store.history.some((h) => h.action === 'Defect Alert Sent')).toBe(false);
+    const row = store.inspections.find((i) => i.id === res.body.id);
+    expect(row.defect_email_sent_at).toBeUndefined();
+    logged.mockRestore();
   });
 
   // Every other transition pushes status_update; creation was the one that
@@ -1087,6 +1202,43 @@ describe('PATCH /api/inspections/:id', () => {
       'status_update',
       expect.objectContaining({ id, status: 'Assigned' })
     );
+  });
+
+  // UC-015 requires `Reassigned` as a distinct action; every contractor change
+  // used to log `Assigned`, so the audit trail couldn't show that work had moved
+  // from one vendor to another.
+  test('a contractor change logs Assigned first, then Reassigned', async () => {
+    const id = await seedComplaint('Lift juddering between floors');
+
+    await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ contractor_id: 'con-1' });
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ contractor_id: 'con-2', note: 'Otis unavailable this week' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.contractor_id).toBe('con-2');
+    expect(store.history.map((h) => h.action)).toEqual(['Assigned', 'Reassigned']);
+    expect(store.history[1].note).toBe('Otis unavailable this week');
+  });
+
+  // Re-saving the same contractor is not a reassignment — it must not invent a
+  // transition that never happened.
+  test('re-saving the same contractor stays Assigned', async () => {
+    const id = await seedComplaint('Lobby door sticking');
+
+    for (let i = 0; i < 2; i += 1) {
+      await request(app)
+        .patch(`/api/inspections/${id}`)
+        .set('Authorization', 'Bearer manager-token')
+        .send({ contractor_id: 'con-1' });
+    }
+
+    expect(store.history.map((h) => h.action)).toEqual(['Assigned', 'Assigned']);
   });
 
   // A vendor with no linked login has no room to push to, and the assignment

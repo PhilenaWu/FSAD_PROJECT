@@ -528,6 +528,9 @@ describe('cvController.batchScan', () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: 'rq-1', image_url: 'https://example.com/a.jpg', inspection_id: null }] })
       .mockResolvedValueOnce({ rows: [{ id: 'rq-1', status: 'failed' }] }) // markFailed()
+      // Giving up now raises a cv_scan_failed notification, so the row insert
+      // sits between markFailed() and countPending() in this sequence.
+      .mockResolvedValueOnce({ rows: [{ id: 'ntf-1' }] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] }); // countPending()
 
     jest.spyOn(roboflowService, 'detectDefect').mockRejectedValue(new Error('model unavailable'));
