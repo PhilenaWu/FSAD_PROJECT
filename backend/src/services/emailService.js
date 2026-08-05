@@ -106,6 +106,7 @@ function renderDefectTable(defects) {
  *   - 'defect_alert' (default) — the defect has just been raised or assigned.
  *     When `defects` is supplied this is a spot-check alert and takes the D.2
  *     subject naming the block, lift and defect count.
+ *   - 'reassignment'  — the defect moved off another contractor onto this one.
  *   - 'rejection'     — the manager refused the rectification, so the same defect
  *     is back on a fresh deadline. Quotes the reason (UC-014 A2).
  *   - 'overdue_chase' — D−3 or past due; wording depends on `days_remaining`.
@@ -120,7 +121,7 @@ function renderDefectTable(defects) {
  * @param {string} [defect.target_deadline] - ISO timestamp of the deadline.
  * @param {string} recipientEmail - recipient address(es); comma-separated for many.
  * @param {Object} [options]
- * @param {'defect_alert'|'rejection'|'overdue_chase'} [options.email_type='defect_alert']
+ * @param {'defect_alert'|'reassignment'|'rejection'|'overdue_chase'} [options.email_type='defect_alert']
  * @param {string} [options.reason] - rejection reason; quoted for 'rejection'.
  * @param {Object[]} [options.defects] - failed checkpoints: { section, item_no,
  *   item_text, severity, remark, photo_url }. Presence switches the defect_alert
@@ -141,9 +142,10 @@ async function sendDefectAlert(defect, recipientEmail, options = {}) {
   } = options;
   const isRejection = email_type === 'rejection';
   const isChase = email_type === 'overdue_chase';
+  const isReassignment = email_type === 'reassignment';
   // A spot-check alert carries its failed checkpoints; a resident complaint
   // assigned from the triage queue has none, and keeps the generic wording.
-  const isSpotCheck = !isRejection && !isChase && defects.length > 0;
+  const isSpotCheck = !isRejection && !isChase && !isReassignment && defects.length > 0;
 
   const location = defect.location_unit
     ? `Block ${defect.location_block}, Unit ${defect.location_unit}`
@@ -180,6 +182,13 @@ async function sendDefectAlert(defect, recipientEmail, options = {}) {
     lead =
       `A lift spot-check recorded ${defects.length} defect(s) on equipment you ` +
       `service. The failed checkpoints are listed below for rectification.`;
+  } else if (isReassignment) {
+    // A reassignment lands on a contractor who may already have history on the
+    // record, so the mail says it moved rather than implying it is brand new.
+    subject = `Defect Reassigned to You — ${defect.title} (${location})`;
+    lead =
+      'A defect previously assigned to another contractor has been reassigned ' +
+      'to you for rectification.';
   } else {
     subject = `Defect Assigned — ${defect.title} (${location})`;
     lead = 'A defect has been assigned to you for rectification.';

@@ -531,7 +531,8 @@ async function updateByManager(id, changes, actorId, note) {
     const isReassignment =
       changes.contractor_id !== undefined &&
       before.contractor_id != null &&
-      before.contractor_id !== changes.contractor_id;
+      // String compare: the request's id arrives as text, the DB's as a number.
+      String(before.contractor_id) !== String(changes.contractor_id);
     const action = changes.contractor_id !== undefined
       ? (isReassignment ? 'Reassigned' : 'Assigned')
       : changes.status !== undefined
@@ -546,7 +547,14 @@ async function updateByManager(id, changes, actorId, note) {
     );
 
     await client.query('COMMIT');
-    return { ...after, previous_status: before.status };
+    // previous_contractor_id lets the caller tell a first assignment from a
+    // reassignment (different email wording, and the outgoing contractor has to
+    // be told the job was pulled).
+    return {
+      ...after,
+      previous_status: before.status,
+      previous_contractor_id: before.contractor_id,
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
