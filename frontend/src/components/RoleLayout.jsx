@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import ResidentLayout from './ResidentLayout';
 import ManagerLayout from './ManagerLayout';
 import AdminLayout from './AdminLayout';
+import ContractorLayout from './ContractorLayout';
 
 export default function RoleLayout() {
   const { profile, profileLoading, suspended, logout } = useAuth();
@@ -81,5 +82,6 @@ export default function RoleLayout() {
   // the safe default.
   if (profile?.role === 'manager') return <ManagerLayout />;
   if (profile?.role === 'admin') return <AdminLayout />;
+  if (profile?.role === 'contractor') return <ContractorLayout />;
   return <ResidentLayout />;
 }

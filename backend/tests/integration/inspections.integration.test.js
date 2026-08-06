@@ -268,10 +268,26 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       .sort((a, b) => a.item_no - b.item_no);
     return { rows };
   }
-  // The addressee lookup: SELECT contact_email FROM contractors WHERE id = $1.
-  if (/SELECT contact_email FROM contractors/i.test(sql)) {
+  // The addressee lookup and the assign path's existence check both run
+  // CONTRACTOR_RECIPIENT_SQL, which COALESCEs the account holder's login over
+  // the company alias. The fake mirrors that COALESCE so a regression to the
+  // bare `SELECT contact_email FROM contractors` shows up as mail going to the
+  // alias. con-3 has no login, and so falls back to its alias.
+  if (/COALESCE\(u\.email, c\.contact_email\)/i.test(sql)) {
+    const contractors = {
+      'con-1': { user_id: 'con-user-1', login: 'lc@example.com', alias: 'alerts@lc.example.com' },
+      // con-2 exists so a reassignment has somewhere to go (UC-015 `Reassigned`).
+      'con-2': { user_id: 'con-user-2', login: 'lc2@example.com', alias: 'alerts@lc2.example.com' },
+      'con-3': { user_id: null, login: null, alias: 'alerts@lc3.example.com' },
+    };
+    const row = contractors[params[0]];
+    if (!row) return { rows: [] };
     return {
-      rows: params[0] === 'con-1' ? [{ contact_email: 'lc@example.com' }] : [],
+      rows: [{
+        id: params[0],
+        user_id: row.user_id,
+        contact_email: row.login ?? row.alias,
+      }],
     };
   }
   if (/INSERT INTO defect_email_log/i.test(sql)) {
@@ -434,18 +450,10 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.history.push({ inspection_id, actor_id, action, previous_status, new_status, note });
     return { rows: [] };
   }
-  // contractor existence check:
-  // SELECT id, contact_email, user_id FROM contractors WHERE id = $1
-  // user_id is the account holder's users.id — the D.5 socket room is keyed by it.
-  if (/SELECT id.* FROM contractors/i.test(sql)) {
-    // con-2 exists so a reassignment has somewhere to go (UC-015 `Reassigned`).
-    const contractors = {
-      'con-1': { id: 'con-1', contact_email: 'lc@example.com', user_id: 'con-user-1' },
-      'con-2': { id: 'con-2', contact_email: 'lc2@example.com', user_id: 'con-user-2' },
-    };
-    const row = contractors[params[0]];
-    return { rows: row ? [row] : [] };
-  }
+  // The assign path's contractor existence check now runs the same
+  // CONTRACTOR_RECIPIENT_SQL as the addressee lookup, handled above — con-2 is
+  // there so a reassignment has somewhere to go (UC-015 `Reassigned`), and an
+  // unknown id returns no rows so the 404 branch still fires.
   // contractorRecipient (UC-008 assignee notifications + the D.5 reject room):
   // SELECT user_id, name FROM contractors WHERE id = $1. Distinct from the branch
   // above — that one starts 'SELECT id', this one 'SELECT user_id'.
@@ -691,6 +699,9 @@ describe('POST /api/inspections/lift', () => {
     expect(to).toContain('lc@example.com');
     expect(options.email_type).toBe('defect_alert');
     expect(options.lift_code).toBe('44A-L1');
+    // Addressed to the account holder who can sign in and action it, never the
+    // company alias — the mail's deep link is useless to an alias inbox.
+    expect(to).not.toContain('alerts@lc.example.com');
     // The failed checkpoints travel with it (D.2), not just a bare summary.
     expect(options.defects).toHaveLength(1);
     expect(options.defects[0]).toMatchObject({ severity: 'Major' });

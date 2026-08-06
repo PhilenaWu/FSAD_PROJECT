@@ -1,6 +1,8 @@
-// Shared RESIDENT app layout: a top header (logo, nav, notification placeholder,
-// user menu) above the routed page via <Outlet />. Nav is driven by role so a
-// manager variant can be added later without reworking this component.
+// Shared CONTRACTOR app layout (UC-010): a top header (logo, nav, notification
+// bell, user menu) above the routed page via <Outlet />. Structural clone of
+// ManagerLayout.jsx — contractors previously fell through to ResidentLayout and
+// were shown resident links (Report issue / My reports / Status board) they have
+// no business with.
 // On small screens (below md) the nav links collapse into a hamburger drawer;
 // the brand, bell, and avatar stay visible. Uses theme tokens only — no hex.
 import { useEffect, useState } from 'react';
@@ -27,41 +29,20 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import MenuIcon from '@mui/icons-material/Menu';
-import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
-import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
-import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
-import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
-import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './notifications/NotificationBell';
 
-// Nav items per role. Managers, admins and contractors have their own layout
-// components; this one serves residents and inspectors.
-const NAV_BY_ROLE = {
-  resident: [
-    { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
-    { label: 'Report issue', to: '/report', icon: AddCircleOutlineIcon },
-    { label: 'My reports', to: '/my-reports', icon: AssignmentOutlinedIcon },
-    { label: 'Status board', to: '/status-board', icon: GridViewOutlinedIcon },
-  ],
-  inspector: [
-    { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
-    { label: 'New inspection', to: '/inspections/new', icon: AddCircleOutlineIcon },
-    { label: 'My inspections', to: '/my-reports', icon: AssignmentOutlinedIcon },
-    { label: 'Completed work', to: '/inspections', icon: FactCheckOutlinedIcon },
-  ],
-};
+// The inbox is the contractor's whole workspace — no dashboard, no archive.
+const NAV_ITEMS = [
+  { label: 'My jobs', to: '/contractor-inbox', icon: BuildOutlinedIcon },
+  { label: 'Notifications', to: '/notifications', icon: CampaignOutlinedIcon },
+];
 
-const ROLE_LABEL = {
-  resident: 'Resident',
-  inspector: 'Inspector',
-  manager: 'Manager',
-  contractor: 'Contractor',
-};
-
-// "Marcus Tan" -> "MT". Falls back to the email's first letter.
+// "Sarah Chen" -> "SC". Falls back to the email's first letter.
 function initialsFrom(fullName, email) {
   const name = (fullName || '').trim();
   if (name) {
@@ -73,7 +54,7 @@ function initialsFrom(fullName, email) {
   return (email?.[0] ?? '?').toUpperCase();
 }
 
-export default function ResidentLayout() {
+export default function ContractorLayout() {
   const { user, profile, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -88,16 +69,10 @@ export default function ResidentLayout() {
     if (isDesktop) setMobileNavOpen(false);
   }, [isDesktop]);
 
-  const role = profile?.role ?? 'resident';
-  const navItems = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.resident;
-
   const fullName = profile?.full_name ?? '';
-  const roleLabel = ROLE_LABEL[role] ?? role;
-  // e.g. "Resident · Block 44A #12-05" — block/unit fill in once profile loads.
-  const subtitle =
-    profile?.block_number || profile?.unit_number
-      ? `${roleLabel} · Block ${profile.block_number ?? '—'} #${profile.unit_number ?? '—'}`
-      : roleLabel;
+  // e.g. "Contractor · VP Operations" — job_title is the vendor account
+  // holder's position (migration 020) and is often blank.
+  const subtitle = profile?.job_title ? `Contractor · ${profile.job_title}` : 'Contractor';
 
   async function handleLogout() {
     setMenuAnchor(null);
@@ -153,14 +128,14 @@ export default function ResidentLayout() {
               </Typography>
             </Stack>
 
-            {/* Nav (role-driven). Inline on md+; hidden on xs/sm (see drawer). */}
+            {/* Nav. Inline on md+; hidden on xs/sm (see drawer). */}
             <Stack
               direction="row"
               spacing={{ xs: 1, sm: 2 }}
               alignItems="center"
               sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' } }}
             >
-              {navItems.map(({ label, to, icon: Icon }) => {
+              {NAV_ITEMS.map(({ label, to, icon: Icon }) => {
                 const active = location.pathname === to;
                 return (
                   <Stack
@@ -238,8 +213,7 @@ export default function ResidentLayout() {
 
               <Divider />
 
-              {/* Stub — no profile page yet (disabled placeholder). */}
-              <MenuItem disabled>
+              <MenuItem onClick={() => { setMenuAnchor(null); navigate('/profile'); }}>
                 <PersonOutlineIcon fontSize="small" sx={{ mr: 1.5 }} />
                 Profile
               </MenuItem>
@@ -253,7 +227,7 @@ export default function ResidentLayout() {
         </Container>
       </AppBar>
 
-      {/* Mobile navigation drawer — same role-driven items as the inline nav. */}
+      {/* Mobile navigation drawer — same nav items as the inline nav. */}
       <Drawer
         anchor="left"
         open={mobileNavOpen}
@@ -284,7 +258,7 @@ export default function ResidentLayout() {
           <Divider />
 
           <List>
-            {navItems.map(({ label, to, icon: Icon }) => {
+            {NAV_ITEMS.map(({ label, to, icon: Icon }) => {
               const active = location.pathname === to;
               return (
                 <ListItemButton

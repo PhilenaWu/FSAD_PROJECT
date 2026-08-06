@@ -54,6 +54,18 @@ async function contractorRecipient(contractorId) {
 }
 
 // --- UC-014 outbound defect email (D.3 / D.7) ------------------------------
+// Where a defect email is addressed: the vendor's account holder, i.e. the
+// person who can actually sign in and action it from /contractor-inbox. The
+// company alias (contractors.contact_email) is only the fallback, for a vendor
+// with no linked login or whose account is suspended — the link in that mail
+// still lands on the login page, but at least somebody receives it.
+const CONTRACTOR_RECIPIENT_SQL =
+  `SELECT c.id, c.user_id,
+          COALESCE(u.email, c.contact_email) AS contact_email
+     FROM contractors c
+     LEFT JOIN users u ON u.id = c.user_id AND u.status = 'active'
+    WHERE c.id = $1`;
+
 // The single place a defect email is sent and recorded, so the spot-check alert
 // and the daily overdue chase cannot drift apart.
 //
@@ -489,7 +501,7 @@ async function createLiftInspection(req, res, next) {
           });
 
         const { rows: vendor } = await query(
-          'SELECT contact_email FROM contractors WHERE id = $1',
+          CONTRACTOR_RECIPIENT_SQL,
           [inspection.contractor_id]
         );
 
@@ -698,10 +710,7 @@ async function updateInspection(req, res, next) {
     let assignedContractorEmail = null;
     let assignedContractorUserId = null;
     if (contractor_id !== undefined) {
-      const { rows } = await query(
-        'SELECT id, contact_email, user_id FROM contractors WHERE id = $1',
-        [contractor_id]
-      );
+      const { rows } = await query(CONTRACTOR_RECIPIENT_SQL, [contractor_id]);
       if (rows.length === 0) {
         return res.status(404).json({ code: 'NOT_FOUND', message: 'Contractor not found.' });
       }
@@ -1130,10 +1139,7 @@ async function rejectRectification(req, res, next) {
     // mail failure must never fail the rejection (G13).
     if (inspection.contractor_id) {
       try {
-        const { rows } = await query(
-          'SELECT id, contact_email FROM contractors WHERE id = $1',
-          [inspection.contractor_id]
-        );
+        const { rows } = await query(CONTRACTOR_RECIPIENT_SQL, [inspection.contractor_id]);
         const recipients = [rows[0]?.contact_email];
         if (config.DEFECT_ALERT_RECIPIENTS) {
           recipients.push(config.DEFECT_ALERT_RECIPIENTS);
