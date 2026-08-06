@@ -452,6 +452,16 @@ export default function DashboardPage() {
     }
   }
 
+  // Last ~14 points of the same daily series the trend chart plots, for the
+  // "Reports filed" KPI tile's sparkline. undefined (not []) when there's no
+  // data yet, so the tile skips rendering an empty chart rather than a flat line.
+  // Computed before the resident early-return below — hooks must run
+  // unconditionally on every render.
+  const reportsSparkline = useMemo(
+    () => (trends.length ? trends.slice(-14).map((t) => t.count) : undefined),
+    [trends]
+  );
+
   // Non-managers: keep the untouched resident home placeholder.
   if (!isManager) {
     return <ResidentPlaceholder />;
@@ -551,7 +561,7 @@ export default function DashboardPage() {
 
       {/* KPI summary row — leads with what changed, not just what is. */}
       {summary ? (
-        <KpiRow summary={summary} />
+        <KpiRow summary={summary} trendSparkline={reportsSparkline} />
       ) : (
         <Grid container spacing={2} sx={{ mb: 3 }}>
           {[0, 1, 2, 3].map((i) => (

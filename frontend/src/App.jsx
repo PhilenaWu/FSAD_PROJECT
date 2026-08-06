@@ -11,18 +11,23 @@ import InspectionDetailPage from './pages/InspectionDetailPage'
 import InspectionHistoryPage from './pages/InspectionHistoryPage'
 import MyReportsPage from './pages/MyReportsPage'
 import NewInspectionPage from './pages/NewInspectionPage'
-import StatusBoardPage from './pages/StatusBoardPage'
 import ReportsArchivePage from './pages/ReportsArchivePage'
 import NotificationsPage from './pages/NotificationsPage'
 import ProfilePage from './pages/ProfilePage'
 import ContractorInboxPage from './pages/ContractorInboxPage'
+import EmergencyContactsPage from './pages/EmergencyContactsPage'
+import FAQPage from './pages/FAQPage'
+import FeedbackPage from './pages/FeedbackPage'
+import NoticesPage from './pages/NoticesPage'
 
 // Admin pages are lazy-loaded: only the admin role ever visits them, and the
 // cost dashboard carries its own Chart.js panels — no other role should pay
 // for that in the initial bundle. (RoleHome lazy-loads the UC-005 dashboard
-// the same way.)
+// the same way.) StatusBoardPage's KPI sparklines pull in Chart.js too, and
+// it's resident/inspector-only, so it gets the same treatment.
 const AdminCostPage = lazy(() => import('./pages/AdminCostPage'))
 const AdminVendorPage = lazy(() => import('./pages/AdminVendorPage'))
+const StatusBoardPage = lazy(() => import('./pages/StatusBoardPage'))
 
 function App() {
   return (
@@ -38,7 +43,14 @@ function App() {
           <Route path="/dashboard" element={<RoleHome />} />
           <Route path="/report" element={<ReportIssuePage />} />
           <Route path="/my-reports" element={<MyReportsPage />} />
-          <Route path="/status-board" element={<StatusBoardPage />} />
+          <Route
+            path="/status-board"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <StatusBoardPage />
+              </Suspense>
+            }
+          />
           <Route path="/inspections/new" element={<NewInspectionPage />} />
           <Route path="/inspections" element={<InspectionListPage />} />
           {/* Ahead of /:id so 'history' isn't captured as an inspection id. */}
@@ -49,6 +61,11 @@ function App() {
           <Route path="/profile" element={<ProfilePage />} />
           {/* Contractor portal (UC-010). */}
           <Route path="/contractor-inbox" element={<ContractorInboxPage />} />
+          {/* Sidebar "quick access" pages. */}
+          <Route path="/emergency-contacts" element={<EmergencyContactsPage />} />
+          <Route path="/faq" element={<FAQPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/notices" element={<NoticesPage />} />
           <Route
             path="/admin/costs"
             element={

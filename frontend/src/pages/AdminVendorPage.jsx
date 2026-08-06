@@ -40,8 +40,10 @@ import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined';
 import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import SearchIcon from '@mui/icons-material/Search';
+import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined';
 import { downloadCsv } from '../utils/csvDownload';
 import useTableSort from '../components/common/useTableSort';
+import EmptyState from '../components/common/EmptyState';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
@@ -648,10 +650,16 @@ export default function AdminVendorPage() {
                 ))}
                 {visible.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                      {vendors.length === 0
-                        ? 'No vendors yet — onboard the first one.'
-                        : 'No vendors match the current search/filter.'}
+                    <TableCell colSpan={7} sx={{ border: 0 }}>
+                      <EmptyState
+                        dense
+                        icon={HandshakeOutlinedIcon}
+                        description={
+                          vendors.length === 0
+                            ? 'No vendors yet — onboard the first one.'
+                            : 'No vendors match the current search/filter.'
+                        }
+                      />
                     </TableCell>
                   </TableRow>
                 )}

@@ -1,16 +1,16 @@
 // /dashboard content switch: managers get the UC-005 analytics dashboard,
 // inspectors get their own landing page, everyone else (residents) gets the
 // resident home page.
-// The analytics dashboard is lazy-loaded: it pulls in Chart.js and the whole
-// chart component tree, which residents and inspectors never need — splitting
-// it keeps their first paint free of that weight.
+// DashboardPage and HomePage are both lazy-loaded: each pulls in Chart.js and
+// its own chart component tree, which the other roles never need — splitting
+// keeps every role's first paint free of the chart weight it doesn't use.
 import { lazy, Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
 import PageLoader from './PageLoader';
-import HomePage from '../pages/HomePage';
 import InspectorHomePage from '../pages/InspectorHomePage';
 
 const DashboardPage = lazy(() => import('../pages/DashboardPage'));
+const HomePage = lazy(() => import('../pages/HomePage'));
 
 export default function RoleHome() {
   const { profile } = useAuth();
@@ -22,5 +22,9 @@ export default function RoleHome() {
     );
   }
   if (profile?.role === 'inspector') return <InspectorHomePage />;
-  return <HomePage />;
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <HomePage />
+    </Suspense>
+  );
 }
