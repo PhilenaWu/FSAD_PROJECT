@@ -29,24 +29,45 @@ import {
   DialogTitle,
   Divider,
   FormControlLabel,
+  Grid2 as Grid,
+  Menu,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from '@mui/material';
+import AssignmentLateOutlinedIcon from '@mui/icons-material/AssignmentLateOutlined';
 import AssignmentTurnedInOutlinedIcon from '@mui/icons-material/AssignmentTurnedInOutlined';
+import AccessTimeOutlinedIcon from '@mui/icons-material/AccessTimeOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import FilterListOutlinedIcon from '@mui/icons-material/FilterListOutlined';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined';
+import SwapVertOutlinedIcon from '@mui/icons-material/SwapVertOutlined';
+import EmptyState from '../components/common/EmptyState';
+import StatTile from '../components/common/StatTile';
 import SignaturePad from '../components/SignaturePad';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { compressImage } from '../utils/imageCompress';
 import { statusDisplay } from '../utils/statusDisplay';
 import { getAssigned, acknowledge, rectify, hold, resume } from '../services/contractorService';
+
+// Statuses excluded from the Overdue/Due-soon counts: On Hold pauses the
+// deadline (matching the manager scorecard's G11-consistent definition), and
+// a finished record has nothing left "due". Not the same set as the
+// "Completed" stat tile below, which excludes On Hold — a paused defect is
+// still in-progress work, not done.
+const DEADLINE_INACTIVE_STATUSES = ['On Hold', 'Rectified', 'Resolved', 'Closed'];
+const DUE_SOON_DAYS = 3; // matches DeadlineChip's own amber threshold below
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -97,10 +118,105 @@ export default function ContractorInboxPage() {
   const [toast, setToast] = useState({ open: false, message: '' });
   const [highlightId, setHighlightId] = useState(null); // newly-arrived card
 
+  // Top-of-page filtering/sorting. `bucket` covers both the visible Tabs
+  // ('all' | 'overdue' | 'dueSoon') and the invisible-in-tabs values the stat
+  // tiles jump to ('newlyAssigned' | 'inProgress' | 'completed') — the Tabs
+  // component just shows none selected when one of those is active.
+  const [bucket, setBucket] = useState('all');
+  const [sortBy, setSortBy] = useState('newest'); // 'newest' | 'deadline' | 'oldest'
+  const [blockFilter, setBlockFilter] = useState(''); // '' = every block
+  const [sortAnchor, setSortAnchor] = useState(null);
+  const [filterAnchor, setFilterAnchor] = useState(null);
+
   const selected = useMemo(
     () => items.find((it) => it.id === selectedId) ?? null,
     [items, selectedId]
   );
+
+  // Stat-tile counts, computed from the full (unfiltered) inbox.
+  const counts = useMemo(() => {
+    let newlyAssigned = 0;
+    let inProgress = 0;
+    let completed = 0;
+    for (const it of items) {
+      if (it.status === 'Assigned') newlyAssigned += 1;
+      else if (it.status === 'Acknowledged' || it.status === 'On Hold') inProgress += 1;
+      else completed += 1;
+    }
+    return { newlyAssigned, inProgress, completed, total: items.length };
+  }, [items]);
+
+  const overdueCount = useMemo(
+    () =>
+      items.filter(
+        (it) =>
+          it.days_remaining != null &&
+          it.days_remaining < 0 &&
+          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+      ).length,
+    [items]
+  );
+  const dueSoonCount = useMemo(
+    () =>
+      items.filter(
+        (it) =>
+          it.days_remaining != null &&
+          it.days_remaining >= 0 &&
+          it.days_remaining <= DUE_SOON_DAYS &&
+          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+      ).length,
+    [items]
+  );
+
+  // Distinct blocks present in the inbox, for the Filter menu.
+  const blocks = useMemo(
+    () => [...new Set(items.map((it) => it.location_block).filter(Boolean))].sort(),
+    [items]
+  );
+
+  // The inbox list, filtered by the active bucket/block and sorted.
+  const visibleItems = useMemo(() => {
+    let list = items;
+    if (bucket === 'overdue') {
+      list = list.filter(
+        (it) =>
+          it.days_remaining != null &&
+          it.days_remaining < 0 &&
+          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+      );
+    } else if (bucket === 'dueSoon') {
+      list = list.filter(
+        (it) =>
+          it.days_remaining != null &&
+          it.days_remaining >= 0 &&
+          it.days_remaining <= DUE_SOON_DAYS &&
+          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+      );
+    } else if (bucket === 'newlyAssigned') {
+      list = list.filter((it) => it.status === 'Assigned');
+    } else if (bucket === 'inProgress') {
+      list = list.filter((it) => it.status === 'Acknowledged' || it.status === 'On Hold');
+    } else if (bucket === 'completed') {
+      list = list.filter((it) => it.status !== 'Assigned' && it.status !== 'Acknowledged' && it.status !== 'On Hold');
+    }
+    if (blockFilter) list = list.filter((it) => it.location_block === blockFilter);
+
+    const sorted = [...list];
+    if (sortBy === 'newest') {
+      sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    } else if (sortBy === 'oldest') {
+      sorted.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    } else if (sortBy === 'deadline') {
+      sorted.sort((a, b) => {
+        if (a.days_remaining == null) return 1;
+        if (b.days_remaining == null) return -1;
+        return a.days_remaining - b.days_remaining;
+      });
+    }
+    return sorted;
+  }, [items, bucket, blockFilter, sortBy]);
+
+  const SORT_LABELS = { newest: 'Newest first', deadline: 'Deadline soonest', oldest: 'Oldest first' };
 
   // Latest completion mirrored to a ref so cleanup (defect switch / unmount) can
   // revoke the object URLs of attached-photo previews without re-subscribing.
@@ -370,6 +486,125 @@ export default function ContractorInboxPage() {
           )}
         </Stack>
 
+        {!loading && !loadError && (
+          <>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <StatTile
+                  label="Newly assigned"
+                  value={counts.newlyAssigned}
+                  sub="Awaiting your action"
+                  icon={AssignmentLateOutlinedIcon}
+                  iconColor="primary"
+                  onClick={() => setBucket('newlyAssigned')}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <StatTile
+                  label="In progress"
+                  value={counts.inProgress}
+                  sub="Work in progress"
+                  icon={AccessTimeOutlinedIcon}
+                  iconColor="warning"
+                  onClick={() => setBucket('inProgress')}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <StatTile
+                  label="Completed"
+                  value={counts.completed}
+                  sub="Work completed"
+                  icon={CheckCircleOutlineIcon}
+                  iconColor="success"
+                  onClick={() => setBucket('completed')}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <StatTile
+                  label="Total defects"
+                  value={counts.total}
+                  sub="All time"
+                  icon={DescriptionOutlinedIcon}
+                  iconColor="secondary"
+                  onClick={() => setBucket('all')}
+                />
+              </Grid>
+            </Grid>
+
+            <Paper variant="outlined" sx={{ borderRadius: 2, mb: 3 }}>
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                alignItems={{ xs: 'stretch', md: 'center' }}
+                justifyContent="space-between"
+                spacing={1.5}
+                sx={{ px: 2, py: 1 }}
+              >
+                <Tabs
+                  value={['all', 'overdue', 'dueSoon'].includes(bucket) ? bucket : false}
+                  onChange={(_, v) => setBucket(v)}
+                  textColor="primary"
+                  indicatorColor="primary"
+                  variant="scrollable"
+                  scrollButtons="auto"
+                >
+                  <Tab label={`All (${counts.total})`} value="all" />
+                  <Tab label={`Overdue (${overdueCount})`} value="overdue" />
+                  <Tab label={`Due soon (${dueSoonCount})`} value="dueSoon" />
+                </Tabs>
+
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<FilterListOutlinedIcon />}
+                    onClick={(e) => setFilterAnchor(e.currentTarget)}
+                  >
+                    {blockFilter ? `Block ${blockFilter}` : 'Filter'}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<SwapVertOutlinedIcon />}
+                    onClick={(e) => setSortAnchor(e.currentTarget)}
+                  >
+                    Sort by: {SORT_LABELS[sortBy]}
+                  </Button>
+                </Stack>
+
+                <Menu anchorEl={filterAnchor} open={Boolean(filterAnchor)} onClose={() => setFilterAnchor(null)}>
+                  <MenuItem
+                    selected={!blockFilter}
+                    onClick={() => { setBlockFilter(''); setFilterAnchor(null); }}
+                  >
+                    All blocks
+                  </MenuItem>
+                  {blocks.map((b) => (
+                    <MenuItem
+                      key={b}
+                      selected={blockFilter === b}
+                      onClick={() => { setBlockFilter(b); setFilterAnchor(null); }}
+                    >
+                      Block {b}
+                    </MenuItem>
+                  ))}
+                </Menu>
+
+                <Menu anchorEl={sortAnchor} open={Boolean(sortAnchor)} onClose={() => setSortAnchor(null)}>
+                  {Object.entries(SORT_LABELS).map(([key, label]) => (
+                    <MenuItem
+                      key={key}
+                      selected={sortBy === key}
+                      onClick={() => { setSortBy(key); setSortAnchor(null); }}
+                    >
+                      {label}
+                    </MenuItem>
+                  ))}
+                </Menu>
+              </Stack>
+            </Paper>
+          </>
+        )}
+
         {loading ? (
           <Stack alignItems="center" sx={{ py: 6 }}>
             <CircularProgress />
@@ -377,20 +612,34 @@ export default function ContractorInboxPage() {
         ) : loadError ? (
           <Alert severity="error">Could not load your assigned defects.</Alert>
         ) : items.length === 0 ? (
-          <Paper elevation={1} sx={{ p: 6, borderRadius: 3, textAlign: 'center' }}>
-            <InboxOutlinedIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
-            <Typography variant="h6" fontWeight={700}>
-              Nothing assigned yet
+          <Paper elevation={1} sx={{ borderRadius: 3 }}>
+            <EmptyState
+              icon={InboxOutlinedIcon}
+              title="Nothing assigned yet"
+              description="Defects the manager assigns to you will appear here."
+              actionLabel="Check for new assignments"
+              onAction={() => load()}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', pb: 3 }}>
+              Pull down to refresh or check back later.
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Defects the manager assigns to you will appear here.
-            </Typography>
+          </Paper>
+        ) : visibleItems.length === 0 ? (
+          <Paper elevation={1} sx={{ borderRadius: 3 }}>
+            <EmptyState
+              icon={InboxOutlinedIcon}
+              title="No defects match"
+              description="Nothing in this view — try a different tab or filter."
+              actionLabel="Clear filters"
+              onAction={() => { setBucket('all'); setBlockFilter(''); }}
+              dense
+            />
           </Paper>
         ) : (
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems="flex-start">
             {/* Inbox list */}
             <Stack spacing={1.5} sx={{ width: { xs: '100%', md: 320 }, flexShrink: 0 }}>
-              {items.map((it) => {
+              {visibleItems.map((it) => {
                 const active = it.id === selectedId;
                 const highlight = it.id === highlightId;
                 return (
@@ -668,6 +917,24 @@ export default function ContractorInboxPage() {
               </Paper>
             )}
           </Stack>
+        )}
+
+        {!loading && !loadError && (
+          <Paper
+            variant="outlined"
+            sx={{ mt: 3, p: 2, borderRadius: 2, bgcolor: 'action.hover' }}
+          >
+            <Stack direction="row" spacing={1} alignItems="center">
+              <InfoOutlinedIcon fontSize="small" color="action" />
+              <Typography variant="subtitle2" fontWeight={700}>
+                How it works
+              </Typography>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Manager assigns a defect → You acknowledge it → Complete the work → Upload
+              proof and e-sign → Manager reviews and closes
+            </Typography>
+          </Paper>
         )}
 
         {/* Hold reason dialog (Alt Flow A). */}
