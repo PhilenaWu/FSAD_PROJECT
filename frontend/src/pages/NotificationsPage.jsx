@@ -6,31 +6,74 @@ import {
   Alert,
   Box,
   Button,
-  Container,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Grid2 as Grid,
+  InputAdornment,
   MenuItem,
   Paper,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import SendIcon from '@mui/icons-material/Send';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
+import ApartmentOutlinedIcon from '@mui/icons-material/ApartmentOutlined';
+import LocationCityOutlinedIcon from '@mui/icons-material/LocationCityOutlined';
+import WorkOutlineOutlinedIcon from '@mui/icons-material/WorkOutlineOutlined';
+import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
+import ErrorOutlineOutlinedIcon from '@mui/icons-material/ErrorOutlineOutlined';
 import ReadReceiptBadge from '../components/notifications/ReadReceiptBadge';
 import { send } from '../services/notificationService';
 import { listContractors } from '../services/contractorService';
 
+// Card options for "Send to". `all_blocks` isn't in the reference mockup
+// (which only showed 3 cards) but is real, already-working scope this page
+// supported before the redesign — dropping it would remove functionality, so
+// it stays as a 4th card instead.
 const SCOPE_TYPES = [
-  { value: 'blocks', label: 'Specific block(s)' },
-  { value: 'all_blocks', label: 'All blocks (all residents)' },
-  { value: 'contractor', label: 'A contractor' },
-  { value: 'inspector_team', label: 'Inspector team' },
+  {
+    value: 'blocks',
+    label: 'Specific block(s)',
+    description: 'Notify residents in one or more blocks',
+    icon: ApartmentOutlinedIcon,
+    color: 'primary',
+  },
+  {
+    value: 'all_blocks',
+    label: 'All blocks',
+    description: 'Notify residents in every block',
+    icon: LocationCityOutlinedIcon,
+    color: 'info',
+  },
+  {
+    value: 'contractor',
+    label: 'Specific contractor',
+    description: 'Notify a contractor directly',
+    icon: WorkOutlineOutlinedIcon,
+    color: 'secondary',
+  },
+  {
+    value: 'inspector_team',
+    label: 'Inspector team',
+    description: 'Notify all inspectors on the team',
+    icon: GroupsOutlinedIcon,
+    color: 'success',
+  },
 ];
 
-const URGENCIES = ['Informational', 'Warning', 'Critical'];
+const URGENCIES = [
+  { value: 'Informational', icon: InfoOutlinedIcon, color: 'info' },
+  { value: 'Warning', icon: WarningAmberOutlinedIcon, color: 'warning' },
+  { value: 'Critical', icon: ErrorOutlineOutlinedIcon, color: 'error' },
+];
 
 // Human-readable summary of the chosen scope for the confirm dialog.
 // `contractorName` falls back to the id so the dialog is still meaningful if the
@@ -84,6 +127,7 @@ export default function NotificationsPage() {
   }, []);
 
   const scheduled = Boolean(sendTime);
+  const selectedUrgency = URGENCIES.find((u) => u.value === urgency);
 
   // Build the scope object the API expects from the form state.
   function buildScope() {
@@ -127,6 +171,17 @@ export default function NotificationsPage() {
     setConfirmOpen(true);
   }
 
+  function handleClear() {
+    setScopeType('blocks');
+    setBlocks('');
+    setContractorId('');
+    setMessage('');
+    setUrgency('Informational');
+    setSendTime('');
+    setError('');
+    setResult(null);
+  }
+
   async function handleConfirm() {
     setConfirmOpen(false);
     setSending(true);
@@ -149,37 +204,97 @@ export default function NotificationsPage() {
   }
 
   return (
-    <Container maxWidth="sm" sx={{ py: 4 }}>
-      <Typography variant="h5" fontWeight={700} gutterBottom>
-        Send a notification
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Notify residents, a contractor, or the inspector team. Scheduled
-        notifications are sent within about a minute of the selected time.
-      </Typography>
+    <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 900, mx: 'auto' }}>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 44,
+            height: 44,
+            borderRadius: '50%',
+            color: 'primary.main',
+            bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+          }}
+        >
+          <CampaignOutlinedIcon />
+        </Box>
+        <Box>
+          <Typography variant="h4" fontWeight={700}>
+            Send a notification
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Notify residents, a contractor, or the inspector team. Scheduled notifications are
+            sent within about a minute of the selected time.
+          </Typography>
+        </Box>
+      </Stack>
 
-      <Paper variant="outlined" sx={{ p: 3 }}>
-        <Stack spacing={2.5}>
-          <TextField
-            select
-            label="Send to"
-            value={scopeType}
-            onChange={(e) => setScopeType(e.target.value)}
-          >
-            {SCOPE_TYPES.map((s) => (
-              <MenuItem key={s.value} value={s.value}>
-                {s.label}
-              </MenuItem>
-            ))}
-          </TextField>
+      <Paper variant="outlined" sx={{ p: { xs: 3, sm: 4 }, borderRadius: 3 }}>
+        <Stack spacing={3}>
+          <Box>
+            <Typography variant="body2" fontWeight={600} sx={{ mb: 1.5 }}>
+              Send to
+            </Typography>
+            <Grid container spacing={1.5}>
+              {SCOPE_TYPES.map(({ value, label, description, icon: Icon, color }) => {
+                const selected = scopeType === value;
+                return (
+                  <Grid key={value} size={{ xs: 12, sm: 6 }}>
+                    <Paper
+                      variant="outlined"
+                      onClick={() => setScopeType(value)}
+                      sx={{
+                        p: 2,
+                        borderRadius: 2,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        gap: 1.5,
+                        alignItems: 'flex-start',
+                        borderColor: selected ? 'primary.main' : 'divider',
+                        borderWidth: selected ? 2 : 1,
+                        bgcolor: selected ? (t) => alpha(t.palette.primary.main, 0.04) : 'transparent',
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 40,
+                          height: 40,
+                          borderRadius: '50%',
+                          flexShrink: 0,
+                          color: `${color}.main`,
+                          bgcolor: (t) => alpha(t.palette[color].main, 0.12),
+                        }}
+                      >
+                        <Icon fontSize="small" />
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" fontWeight={700}>
+                          {label}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {description}
+                        </Typography>
+                      </Box>
+                    </Paper>
+                  </Grid>
+                );
+              })}
+            </Grid>
+          </Box>
 
           {scopeType === 'blocks' && (
             <TextField
               label="Block number(s)"
-              placeholder="e.g. 44A, 44B"
+              placeholder="e.g. 44A, 44B, 90C"
               value={blocks}
               onChange={(e) => setBlocks(e.target.value)}
               helperText="Comma-separated for multiple blocks."
+              fullWidth
             />
           )}
 
@@ -198,6 +313,7 @@ export default function NotificationsPage() {
                     : 'Only contractors with a login account can be messaged.'
               }
               error={contractorsError}
+              fullWidth
             >
               {contractors.map((c) => (
                 <MenuItem key={c.user_id} value={c.user_id}>
@@ -209,46 +325,80 @@ export default function NotificationsPage() {
 
           <TextField
             label="Message"
+            placeholder="Type your message here..."
             multiline
-            minRows={3}
+            minRows={4}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            inputProps={{ maxLength: 500 }}
-            helperText={`${message.length}/500`}
+            slotProps={{ htmlInput: { maxLength: 500 } }}
+            helperText={`${message.length} / 500 characters`}
+            fullWidth
           />
 
-          <TextField
-            select
-            label="Urgency"
-            value={urgency}
-            onChange={(e) => setUrgency(e.target.value)}
-          >
-            {URGENCIES.map((u) => (
-              <MenuItem key={u} value={u}>
-                {u}
-              </MenuItem>
-            ))}
-          </TextField>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <TextField
+              select
+              label="Urgency"
+              value={urgency}
+              onChange={(e) => setUrgency(e.target.value)}
+              helperText="Choose the urgency level of this notification."
+              fullWidth
+              slotProps={{
+                input: {
+                  startAdornment: selectedUrgency && (
+                    <InputAdornment position="start">
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 22,
+                          height: 22,
+                          borderRadius: '50%',
+                          color: 'common.white',
+                          bgcolor: `${selectedUrgency.color}.main`,
+                        }}
+                      >
+                        <selectedUrgency.icon sx={{ fontSize: 14 }} />
+                      </Box>
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            >
+              {URGENCIES.map((u) => (
+                <MenuItem key={u.value} value={u.value}>
+                  {u.value}
+                </MenuItem>
+              ))}
+            </TextField>
 
-          <TextField
-            type="datetime-local"
-            label="Schedule (optional)"
-            value={sendTime}
-            onChange={(e) => setSendTime(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            helperText="Leave blank to send immediately."
-          />
+            <TextField
+              type="datetime-local"
+              label="Schedule (optional)"
+              value={sendTime}
+              onChange={(e) => setSendTime(e.target.value)}
+              helperText="Leave blank to send immediately."
+              fullWidth
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+          </Stack>
 
           {error && <Alert severity="error">{error}</Alert>}
 
-          <Button
-            variant="contained"
-            startIcon={<SendIcon />}
-            onClick={handleSendClick}
-            disabled={sending}
-          >
-            {scheduled ? 'Schedule' : 'Send'}
-          </Button>
+          <Stack direction="row" justifyContent="space-between">
+            <Button variant="outlined" startIcon={<RestartAltIcon />} onClick={handleClear}>
+              Clear
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<SendIcon />}
+              onClick={handleSendClick}
+              disabled={sending}
+            >
+              {scheduled ? 'Schedule notification' : 'Send notification'}
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 
@@ -289,6 +439,6 @@ export default function NotificationsPage() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 }

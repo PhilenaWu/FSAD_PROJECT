@@ -31,7 +31,7 @@ export default function AIAlertCard({ alert, onAccept, onDismiss, busy }) {
           <Button size="small" variant="contained" color="warning" disabled={busy} onClick={() => onAccept(alert.id)}>
             Accept
           </Button>
-          <Button size="small" color="inherit" disabled={busy} onClick={() => onDismiss(alert.id)}>
+          <Button size="small" variant="outlined" color="inherit" disabled={busy} onClick={() => onDismiss(alert.id)}>
             Dismiss
           </Button>
         </Stack>

@@ -1,9 +1,12 @@
 // DB inspection status (migration 004 CHECK) → resident-friendly label + MUI
 // chip colour. Residents shouldn't see internal ops terms like "Open".
 // Shared by MyReportsPage and StatusBoardPage.
+// Colour keys are theme palette tokens (Chip `color` prop) — "default" is
+// reserved for genuinely inactive/archived states (Closed) so live states
+// don't read as flat grey.
 export const STATUS_DISPLAY = {
-  Open: { label: 'Submitted', color: 'default' },
-  'Pending Assignment': { label: 'Being reviewed', color: 'default' },
+  Open: { label: 'Submitted', color: 'info' },
+  'Pending Assignment': { label: 'Being reviewed', color: 'secondary' },
   Assigned: { label: 'Contractor assigned', color: 'primary' },
   Acknowledged: { label: 'In progress', color: 'primary' },
   'On Hold': { label: 'On hold', color: 'warning' },

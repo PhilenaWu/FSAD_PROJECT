@@ -23,6 +23,7 @@ const notificationRoutes = require('./routes/notifications');
 const vendorRoutes = require('./routes/vendors');
 const reportRoutes = require('./routes/reports');
 const adminRoutes = require('./routes/admin');
+const feedbackRoutes = require('./routes/feedback');
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.use('/api/reports', reportRoutes);
 // UC-011 admin cost analytics. Mounted after /api/admin/vendors so the more
 // specific vendor router matches first and is not shadowed by this prefix.
 app.use('/api/admin', adminRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);

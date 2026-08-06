@@ -45,6 +45,10 @@ import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
 import SlideshowOutlinedIcon from '@mui/icons-material/SlideshowOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
+import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
+import ReceiptLongOutlinedIcon from '@mui/icons-material/ReceiptLongOutlined';
+import ShowChartOutlinedIcon from '@mui/icons-material/ShowChartOutlined';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { downloadCsv } from '../utils/csvDownload';
@@ -462,8 +466,11 @@ export default function AdminCostPage() {
           <Grid size={{ xs: 6, md: 3 }}>
             <CostTile
               label="Total maintenance spend"
-              value={fmtMoney(summary.total_actual)}
+              value={summary.total_actual}
+              format={fmtMoney}
               sub={`${summary.jobs} closed job${summary.jobs === 1 ? '' : 's'}, ${periodLabel}`}
+              icon={PaymentsOutlinedIcon}
+              iconColor="secondary"
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
@@ -481,6 +488,8 @@ export default function AdminCostPage() {
                   ? 'no prior-period spend to compare'
                   : `prior period: ${fmtMoney(summary.prior_actual)}`
               }
+              icon={ShowChartOutlinedIcon}
+              iconColor="secondary"
             />
           </Grid>
           {/* AI alerts carry block+category only — no contractor. With a
@@ -489,19 +498,25 @@ export default function AdminCostPage() {
           <Grid size={{ xs: 6, md: 3 }}>
             <CostTile
               label="Projected exposure"
-              value={filters.contractorId ? '—' : fmtMoney(summary.total_projected)}
+              value={filters.contractorId ? '—' : summary.total_projected}
+              format={fmtMoney}
               sub={
                 filters.contractorId
                   ? 'not shown per contractor — AI alerts are not attributed to one'
                   : 'active AI risk alerts, if left unaddressed'
               }
+              icon={WarningAmberOutlinedIcon}
+              iconColor="warning"
             />
           </Grid>
           <Grid size={{ xs: 6, md: 3 }}>
             <CostTile
               label="Avg cost per job"
-              value={fmtMoney(avgPerJob)}
+              value={avgPerJob}
+              format={fmtMoney}
               sub="total spend ÷ closed jobs"
+              icon={ReceiptLongOutlinedIcon}
+              iconColor="info"
             />
           </Grid>
         </Grid>

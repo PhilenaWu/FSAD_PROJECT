@@ -8,10 +8,10 @@ import { lazy, Suspense } from 'react';
 import { Navigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import PageLoader from './PageLoader';
-import HomePage from '../pages/HomePage';
 import InspectorHomePage from '../pages/InspectorHomePage';
 
 const DashboardPage = lazy(() => import('../pages/DashboardPage'));
+const HomePage = lazy(() => import('../pages/HomePage'));
 
 export default function RoleHome() {
   const { profile } = useAuth();
@@ -25,5 +25,10 @@ export default function RoleHome() {
   if (profile?.role === 'inspector') return <InspectorHomePage />;
   // Contractors have no home page of their own — their inbox is the workspace.
   if (profile?.role === 'contractor') return <Navigate to="/contractor-inbox" replace />;
-  return <HomePage />;
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <HomePage />
+    </Suspense>
+  );
+
 }
