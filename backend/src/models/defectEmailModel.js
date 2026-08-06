@@ -135,13 +135,16 @@ async function findDueForChase() {
             i.description,
             i.target_deadline,
             i.contractor_id,
-            c.contact_email,
+            -- The chase goes to the account holder who can action it, not the
+            -- company alias; see CONTRACTOR_RECIPIENT_SQL in inspectionController.
+            COALESCE(u.email, c.contact_email) AS contact_email,
             c.user_id  AS contractor_user_id,
             c.name     AS contractor_name,
             l.lift_code,
             (i.target_deadline::date - CURRENT_DATE) AS days_remaining
        FROM inspections i
        JOIN contractors c ON c.id = i.contractor_id
+       LEFT JOIN users u  ON u.id = c.user_id AND u.status = 'active'
        LEFT JOIN lifts l  ON l.id = i.lift_id
       WHERE i.status IN ('Assigned', 'Acknowledged')
         AND i.target_deadline IS NOT NULL

@@ -13,8 +13,8 @@ import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import StarOutlinedIcon from '@mui/icons-material/StarOutlined';
 
-// Nav items per role. Add a `manager` key here when the manager header lands —
-// the rest of this component stays unchanged.
+// Nav items per role. Managers, admins and contractors have their own layout
+// components; this one serves residents and inspectors.
 const NAV_BY_ROLE = {
   resident: [
     { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
