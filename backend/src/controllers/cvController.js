@@ -107,13 +107,21 @@ async function recordDetection({
     return { cvDetection, inspection: null };
   }
 
+  // Same confidence-to-score mapping as the blend path, so a standalone
+  // ticket's priority actually reflects how confident the detection was
+  // instead of defaulting to inspectionModel.create()'s hardcoded 'Medium' —
+  // and so it sorts correctly in the manager queue (ORDER BY
+  // ai_priority_score), instead of sinking to the bottom as a NULL.
+  const cvScore = Math.round(confidence * 100);
   const inspection = await inspectionModel.create({
     source_type: 'cv_auto_detected',
     title: `Auto-detected: ${defect_class}`,
-    description: `CV detected a ${defect_class} defect at ${Math.round(confidence * 100)}% confidence.`,
+    description: `CV detected a ${defect_class} defect at ${cvScore}% confidence.`,
     location_block,
     location_unit,
     photo_url: imageUrl,
+    priority: priorityFromScore(cvScore),
+    ai_priority_score: cvScore,
     source_flag: 'Auto-Detected',
     cv_detection_id: cvDetection.id,
   });

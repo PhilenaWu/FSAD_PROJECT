@@ -275,6 +275,13 @@ describe('cvController.detect', () => {
     // — inspections.category is NOT NULL with no way for the DB's own DEFAULT
     // to kick in once a column is explicitly listed in the INSERT.
     expect(inspectionParams).toContain('Uncategorised');
+    // Regression: a standalone ticket's priority/score must derive from the
+    // detection confidence (80% → score 80 → 'Critical'), not fall back to
+    // inspectionModel.create()'s hardcoded 'Medium'/null — a confident
+    // detection must not sink to the bottom of the ai_priority_score-sorted
+    // manager queue as a NULL.
+    expect(inspectionParams).toContain('Critical');
+    expect(inspectionParams).toContain(80);
 
     // CV-T01: manager alert pushed on ticket creation (same rooms/pattern as
     // inspectionController's status_update emit).

@@ -1,12 +1,18 @@
 // Computer-vision defect detection via a Roboflow workflow. Used by the CV
 // pipeline to classify a defect photo and return one clean, deduplicated result.
+//
+// The deployed workflow wraps an RF-DETR Large object-detection model
+// (estate-damage-detection, project version 2) — a plain bounding-box
+// detector, not the SAM segmentation workflow this originally shipped with.
+// Its output shape is the standard Roboflow detection format, which already
+// matches the field names boxIoU/dedupePredictions expect below.
 'use strict';
 
 const ROBOFLOW_API_KEY = process.env.ROBOFLOW_API_KEY;
 const ROBOFLOW_WORKFLOW_URL = process.env.ROBOFLOW_WORKFLOW_URL;
-// e.g. https://serverless.roboflow.com/infer/workflows/<your-workspace>/sam-3
+// e.g. https://serverless.roboflow.com/mahdiyas-workspace/workflows/<workflow-id>
 
-const CONFIDENCE_THRESHOLD = 0.7;
+const CONFIDENCE_THRESHOLD = 0.55;
 const IOU_OVERLAP_THRESHOLD = 0.5; // how much boxes must overlap to be treated as "the same defect"
 
 function boxIoU(a, b) {
@@ -31,9 +37,9 @@ function boxIoU(a, b) {
   return unionArea === 0 ? 0 : interArea / unionArea;
 }
 
-// Roboflow's SAM workflow often returns many overlapping boxes for the same
-// physical defect. Sort by confidence and drop anything that overlaps a
-// box we've already kept, so one defect region yields one prediction.
+// The detector can return multiple overlapping boxes for the same physical
+// defect. Sort by confidence and drop anything that overlaps a box we've
+// already kept, so one defect region yields one prediction.
 function dedupePredictions(predictions) {
   const sorted = [...predictions].sort((a, b) => b.confidence - a.confidence);
   const kept = [];
@@ -59,11 +65,7 @@ async function detectDefect(imageUrl) {
       inputs: {
         // Must match the input parameter name defined in the deployed
         // Roboflow workflow (Deploy tab > code snippet shows the exact key).
-        // Confirmed as `test_image_1` for this workflow's currently deployed
-        // version — the builder's input block has been renamed to `image`
-        // in the editor, but that rename hasn't reached the deployed
-        // endpoint yet (needs a Publish/Deploy step, not just autosave).
-        test_image_1: { type: 'url', value: imageUrl },
+        image: { type: 'url', value: imageUrl },
       },
     }),
   });
@@ -76,7 +78,7 @@ async function detectDefect(imageUrl) {
   }
 
   const data = await response.json();
-  const predictions = data?.outputs?.[0]?.sam?.predictions || [];
+  const predictions = data?.outputs?.[0]?.predictions?.predictions || [];
 
   if (predictions.length === 0) {
     return { defect_class: null, confidence: 0, bounding_box: null };

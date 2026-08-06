@@ -1,0 +1,80 @@
+name: CV Batch Scan
+on:
+  schedule:
+    # Every 15 minutes — more frequent than retry_queue's 5-minute backoff
+    # window, so a rate-limited photo is picked up again within one or two
+    # windows of becoming eligible, not left sitting indefinitely.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      # Fail early with a readable message rather than letting curl die on an
+      # empty URL — a missing secret otherwise surfaces only as "exit code 3".
+      - name: Check required secrets are set
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=0
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::error::Repository secret RENDER_BACKEND_URL is not set. Add it under Settings > Secrets and variables > Actions, e.g. https://your-app.onrender.com (no trailing slash)."
+            missing=1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is not set. It must be the same value as the CRON_SECRET environment variable on the Render service."
+            missing=1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Call CV batch-scan endpoint
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # Strip a trailing slash so we never build a //api/... URL (404).
+          url="${BACKEND_URL%/}/api/cv/batch-scan"
+          echo "Calling ${url}"
+
+          # Render's free tier sleeps, so the first connect can take ~50 s.
+          # Capture status separately from body: without --fail, curl exits
+          # non-zero only on a connection failure, so the || branch means
+          # "could not reach the server" and the case means "server said no".
+          #
+          # Safe to re-run: batch-scan only touches rows whose backoff window
+          # has elapsed, so an overlapping manual workflow_dispatch just finds
+          # nothing pending to do.
+          status=$(curl -sS -o response.json -w '%{http_code}' \
+            --max-time 120 --retry 2 --retry-delay 15 --retry-connrefused \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "$url") || {
+              echo "::error::Could not reach the backend at ${url}. Check the Render service is deployed and that RENDER_BACKEND_URL is correct."
+              exit 1
+            }
+
+          echo "HTTP ${status}"
+          cat response.json || true
+          echo
+
+          case "$status" in
+            200)
+              echo "CV batch scan completed."
+              ;;
+            401)
+              echo "::error::401 UNAUTHORIZED — the CRON_SECRET repository secret does not match CRON_SECRET on the Render service."
+              exit 1
+              ;;
+            404)
+              echo "::error::404 NOT FOUND — route not mounted. Confirm the deployed build includes GET /api/cv/batch-scan and that RENDER_BACKEND_URL points at the backend, not the frontend."
+              exit 1
+              ;;
+            5*)
+              echo "::error::HTTP ${status} — the endpoint errored. See the response body above and the Render logs."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected HTTP ${status} from the CV batch-scan endpoint."
+              exit 1
+              ;;
+          esac
