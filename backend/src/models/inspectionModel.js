@@ -934,9 +934,13 @@ async function resumeByContractor(id, contractorId, actorId) {
 // Privacy-safe estate-wide feed for the resident status board. The column list
 // is a deliberate allow-list — NEVER add resident_id, location_unit, title,
 // description, photo/audio URLs, GPS, or any identifying field here.
+// Privacy guard (tested in inspections.integration.test.js): title and
+// description are free text a resident wrote themselves and can incidentally
+// contain identifying details, so they — along with resident_id, unit, and
+// photo — never appear here. updated_at is just a timestamp, safe to include.
 async function findForStatusBoard() {
   const result = await query(
-    `SELECT id, location_block, category, status, created_at
+    `SELECT id, location_block, category, status, created_at, updated_at
      FROM inspections
      WHERE source_type = 'resident_complaint' AND is_deleted = FALSE
      ORDER BY created_at DESC`
