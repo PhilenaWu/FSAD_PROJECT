@@ -4,7 +4,7 @@
 // /api/inspections/lift: lift_id + checklist JSON fields, plus one
 // photo_<checklist_item_id> file part per photographed defect.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Link as RouterLink, Navigate } from 'react-router';
 import {
   Accordion,
   AccordionDetails,
@@ -14,10 +14,12 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Divider,
   FormControlLabel,
+  Grid2 as Grid,
   IconButton,
+  InputAdornment,
+  Link,
   MenuItem,
   Paper,
   Radio,
@@ -27,17 +29,71 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CloseIcon from '@mui/icons-material/Close';
 import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
+import ElevatorOutlinedIcon from '@mui/icons-material/ElevatorOutlined';
+import EventOutlinedIcon from '@mui/icons-material/EventOutlined';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
+import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
+import ShowChartOutlinedIcon from '@mui/icons-material/ShowChartOutlined';
 import LocationCapture from '../components/LocationCapture';
 import SignaturePad from '../components/SignaturePad';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { compressImage } from '../utils/imageCompress';
+
+// "What happens next" — kept accurate to the real workflow. Not "reviewed by
+// the inspector team" (the submitter already is the inspector) or "tracked
+// from the status board" (that board only shows resident complaints, not
+// lift inspections — see inspectionModel.findForStatusBoard).
+const NEXT_STEPS = [
+  {
+    title: 'Complete the inspection',
+    description: 'Go through all checklist items and mark their status.',
+    icon: FactCheckOutlinedIcon,
+  },
+  {
+    title: 'Submit for review',
+    description:
+      'If defects are found, the estate manager reviews it and assigns a contractor. A clean check is filed automatically.',
+    icon: SendOutlinedIcon,
+  },
+  {
+    title: 'Track progress',
+    description: 'Monitor updates and actions from My inspections.',
+    icon: ShowChartOutlinedIcon,
+  },
+];
+
+// Small decorative header illustration — purely visual, no data.
+function LiftIllustration() {
+  return (
+    <Box component="svg" viewBox="0 0 220 130" sx={{ width: 200, height: 118, display: { xs: 'none', sm: 'block' } }}>
+      <rect x="10" y="10" width="200" height="110" rx="24" fill="#EFF6FF" />
+      <rect x="70" y="20" width="90" height="95" rx="6" fill="#DBEAFE" />
+      <rect x="76" y="26" width="38" height="83" rx="3" fill="#BFDBFE" stroke="#2563EB" strokeWidth="2" />
+      <rect x="116" y="26" width="38" height="83" rx="3" fill="#BFDBFE" stroke="#2563EB" strokeWidth="2" />
+      <rect x="100" y="14" width="30" height="6" rx="3" fill="#1D4ED8" />
+      <circle cx="112" cy="66" r="3" fill="#1D4ED8" />
+      <rect x="30" y="95" width="6" height="18" fill="#16A34A" />
+      <circle cx="33" cy="88" r="13" fill="#22C55E" />
+      <rect x="26" y="105" width="14" height="10" rx="2" fill="#92400E" />
+      <rect x="165" y="70" width="34" height="46" rx="4" fill="#ffffff" stroke="#94A3B8" strokeWidth="2" />
+      <rect x="171" y="78" width="22" height="4" rx="2" fill="#2563EB" />
+      <rect x="171" y="86" width="22" height="4" rx="2" fill="#2563EB" />
+      <rect x="171" y="94" width="22" height="4" rx="2" fill="#2563EB" />
+      <circle cx="192" cy="106" r="9" fill="#2563EB" />
+      <path d="M188 106 l3 3 6-6" stroke="#ffffff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </Box>
+  );
+}
 
 const SEVERITIES = ['Minor', 'Major', 'Critical']; // checklist_results CHECK
 
@@ -372,18 +428,32 @@ export default function NewInspectionPage() {
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', py: { xs: 4, sm: 6 }, px: 2 }}>
-      <Container maxWidth="sm" disableGutters sx={{ maxWidth: 720 }}>
-        <Typography
-          variant="h4"
-          component="h1"
-          fontWeight={700}
-          sx={{ mb: 3, color: 'primary.main', textAlign: 'center' }}
-        >
-          New lift inspection
-        </Typography>
+    <Box sx={{ p: { xs: 2, sm: 4 } }}>
+      <Link
+        component={RouterLink}
+        to="/dashboard"
+        underline="hover"
+        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontWeight: 600, mb: 2 }}
+      >
+        <ArrowBackIcon fontSize="small" />
+        Back to Home
+      </Link>
 
-        <Paper elevation={2} sx={{ p: { xs: 3, sm: 4 }, borderRadius: 3 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+        <Box>
+          <Typography variant="h4" component="h1" fontWeight={700}>
+            New lift inspection
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Start a new lift inspection by filling in the details below.
+          </Typography>
+        </Box>
+        <LiftIllustration />
+      </Stack>
+
+      <Grid container spacing={3}>
+      <Grid size={{ xs: 12, md: 8 }}>
+        <Paper variant="outlined" sx={{ p: { xs: 3, sm: 4 }, borderRadius: 3 }}>
           {loading ? (
             <Stack alignItems="center" sx={{ py: 6 }}>
               <CircularProgress />
@@ -407,31 +477,61 @@ export default function NewInspectionPage() {
 
                 {/* UC-013: prefer paper on site? Scan the completed form
                     instead of ticking every item by hand. */}
-                <Stack spacing={1} alignItems="flex-start">
+                <Stack spacing={1} alignItems="stretch">
                   <Tooltip
                     title={ocrUnavailable ? 'OCR is temporarily unavailable — fill in the checklist manually.' : ''}
                   >
-                    <span>
-                      <Button
-                        variant="outlined"
-                        component="label"
-                        size="small"
+                    <Box
+                      component="label"
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        p: 2,
+                        border: '1px dashed',
+                        borderColor: 'primary.main',
+                        borderRadius: 2,
+                        cursor: scanning || ocrUnavailable ? 'default' : 'pointer',
+                        opacity: ocrUnavailable ? 0.6 : 1,
+                        bgcolor: (t) => alpha(t.palette.primary.main, 0.03),
+                        '&:hover': !scanning && !ocrUnavailable ? { bgcolor: (t) => alpha(t.palette.primary.main, 0.06) } : undefined,
+                      }}
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
                         disabled={scanning || ocrUnavailable}
-                        startIcon={
-                          scanning ? (
-                            <CircularProgress size={16} color="inherit" />
-                          ) : (
-                            <DocumentScannerOutlinedIcon />
-                          )
-                        }
+                        onChange={handleScanForm}
+                      />
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 44,
+                          height: 44,
+                          borderRadius: 2,
+                          flexShrink: 0,
+                          color: 'primary.main',
+                          bgcolor: (t) => alpha(t.palette.primary.main, 0.1),
+                        }}
                       >
-                        {scanning ? 'Reading form…' : 'Scan a paper form'}
-                        <input type="file" accept="image/*" hidden onChange={handleScanForm} />
-                      </Button>
-                    </span>
+                        {scanning ? <CircularProgress size={20} /> : <DocumentScannerOutlinedIcon />}
+                      </Box>
+                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight={700} color="primary.main">
+                          {scanning ? 'Reading form…' : 'Scan a paper form'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Use your camera to scan and auto-fill inspection details
+                        </Typography>
+                      </Box>
+                      <ChevronRightIcon sx={{ color: 'primary.main', flexShrink: 0 }} />
+                    </Box>
                   </Tooltip>
                   {ocrError && (
-                    <Alert severity="warning" sx={{ width: '100%' }} onClose={() => setOcrError(null)}>
+                    <Alert severity="warning" onClose={() => setOcrError(null)}>
                       {ocrError}
                     </Alert>
                   )}
@@ -462,6 +562,15 @@ export default function NewInspectionPage() {
                   required
                   fullWidth
                   helperText="Defects are assigned to the lift's maintenance contractor"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <ElevatorOutlinedIcon fontSize="small" color="action" />
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
                 >
                   <MenuItem value="" disabled>
                     Select lift
@@ -509,8 +618,17 @@ export default function NewInspectionPage() {
                   onChange={(e) => setServicedAt(e.target.value)}
                   required
                   fullWidth
-                  slotProps={{ inputLabel: { shrink: true } }}
                   helperText="Date the lift company serviced this lift"
+                  slotProps={{
+                    inputLabel: { shrink: true },
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <EventOutlinedIcon fontSize="small" color="action" />
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
                 />
 
                 {/* Optional GPS — supplements (never replaces) the lift choice. */}
@@ -766,33 +884,85 @@ export default function NewInspectionPage() {
                   />
                 )}
 
-                <Button
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  size="large"
-                  disabled={submitting}
-                  startIcon={
-                    submitting ? (
-                      <CircularProgress size={18} color="inherit" />
-                    ) : (
-                      <SendOutlinedIcon />
-                    )
-                  }
-                  sx={{ alignSelf: 'flex-start', px: 4 }}
-                >
-                  {submitting ? 'Submitting…' : 'Submit inspection'}
-                </Button>
-
                 <Typography variant="caption" color="text.secondary">
                   Select a lift, enter the servicing date, mark every checklist
                   item, and sign. Severity and remarks apply to defects only.
                 </Typography>
+
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  justifyContent="space-between"
+                  alignItems={{ xs: 'flex-start', sm: 'center' }}
+                  spacing={2}
+                >
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    color="primary"
+                    size="large"
+                    fullWidth
+                    disabled={submitting}
+                    startIcon={
+                      submitting ? (
+                        <CircularProgress size={18} color="inherit" />
+                      ) : (
+                        <SendOutlinedIcon />
+                      )
+                    }
+                    sx={{ px: 4 }}
+                  >
+                    {submitting ? 'Submitting…' : 'Submit inspection'}
+                  </Button>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
+                    <ShieldOutlinedIcon fontSize="small" color="action" />
+                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { sm: 'nowrap' } }}>
+                      Nothing is saved until you submit — review your answers first.
+                    </Typography>
+                  </Stack>
+                </Stack>
               </Stack>
             </Box>
           )}
         </Paper>
-      </Container>
+      </Grid>
+
+      <Grid size={{ xs: 12, md: 4 }}>
+        <Paper variant="outlined" sx={{ p: 3, borderRadius: 3, bgcolor: (t) => alpha(t.palette.primary.main, 0.03) }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 2 }}>
+            What happens next?
+          </Typography>
+          <Stack spacing={2.5}>
+            {NEXT_STEPS.map(({ title, description, icon: Icon }) => (
+              <Stack key={title} direction="row" spacing={1.5} alignItems="flex-start">
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    flexShrink: 0,
+                    color: 'primary.main',
+                    bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+                  }}
+                >
+                  <Icon fontSize="small" />
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight={700}>
+                    {title}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {description}
+                  </Typography>
+                </Box>
+              </Stack>
+            ))}
+          </Stack>
+        </Paper>
+      </Grid>
+      </Grid>
     </Box>
   );
 }

@@ -16,7 +16,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   LinearProgress,
   MenuItem,
   Paper,
@@ -32,14 +31,19 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
 import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
+import { statusDisplay } from '../utils/statusDisplay';
+import { categoryDisplay } from '../utils/categoryDisplay';
 import { CATEGORIES, QUEUE_TABS } from '../utils/inspectionOptions';
 import ManualReviewQueue from '../components/cv/ManualReviewQueue';
+import EmptyState from '../components/common/EmptyState';
 
 // The CV manual-review queue sits alongside the status-group tabs — it's
 // another bucket of work to look at, just sourced from cv_detections.
@@ -161,32 +165,51 @@ export default function InspectionListPage() {
     return <Navigate to="/dashboard" replace />;
   }
 
+  const pageTitle = isInspector
+    ? 'Completed work'
+    : tab === REVIEW_TAB
+    ? 'Needs Manual Review'
+    : 'Triage queue';
+  const pageSubtitle = isInspector
+    ? 'Lift inspections with rectified defects, awaiting your review'
+    : tab === REVIEW_TAB
+    ? 'Low-confidence CV detections awaiting a manual call'
+    : 'Open work, most urgent first — sorted by AI priority score';
+
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', py: { xs: 3, sm: 4 }, px: 2 }}>
-      <Container maxWidth="lg" disableGutters>
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          justifyContent="space-between"
-          alignItems={{ xs: 'flex-start', md: 'center' }}
-          spacing={2}
-          sx={{ mb: 3 }}
-        >
+    <Box sx={{ p: { xs: 2, sm: 4 } }}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        justifyContent="space-between"
+        alignItems={{ xs: 'flex-start', md: 'center' }}
+        spacing={2}
+        sx={{ mb: 3 }}
+      >
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 44,
+              height: 44,
+              borderRadius: '50%',
+              flexShrink: 0,
+              color: 'primary.main',
+              bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+            }}
+          >
+            <FactCheckOutlinedIcon />
+          </Box>
           <Box>
-            <Typography variant="h5" component="h1" fontWeight={700}>
-              {isInspector
-                ? 'Completed work'
-                : tab === REVIEW_TAB
-                ? 'Needs Manual Review'
-                : 'Triage queue'}
+            <Typography variant="h4" component="h1" fontWeight={700}>
+              {pageTitle}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {isInspector
-                ? 'Lift inspections with rectified defects, awaiting your review'
-                : tab === REVIEW_TAB
-                ? 'Low-confidence CV detections awaiting a manual call'
-                : 'Open work, most urgent first — sorted by AI priority score'}
+              {pageSubtitle}
             </Typography>
           </Box>
+        </Stack>
 
           <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
             {/* Filters narrow within a tab; the tab chooses which statuses. The
@@ -275,13 +298,18 @@ export default function InspectionListPage() {
           ) : loadError ? (
             <Alert severity="error">Could not load the queue. Refresh to try again.</Alert>
           ) : rows.length === 0 ? (
-            <Paper elevation={1} sx={{ p: 4, borderRadius: 3, textAlign: 'center' }}>
-              <Typography variant="body1" color="text.secondary">
-                No inspections match the current filters.
-              </Typography>
+            <Paper variant="outlined" sx={{ borderRadius: 2 }}>
+              <EmptyState
+                icon={FactCheckOutlinedIcon}
+                description={
+                  isInspector
+                    ? 'No completed work is awaiting your review right now.'
+                    : 'No inspections match the current filters.'
+                }
+              />
             </Paper>
           ) : (
-            <TableContainer component={Paper} elevation={1} sx={{ borderRadius: 3 }}>
+            <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
               <Table size="small">
                 <TableHead>
                   <TableRow>
@@ -296,6 +324,9 @@ export default function InspectionListPage() {
                 <TableBody>
                   {rows.map((r) => {
                     const p = priorityDisplay(r.priority);
+                    const display = statusDisplay(r.status);
+                    const cat = categoryDisplay(r.category);
+                    const CatIcon = cat.icon;
                     return (
                     <TableRow
                       key={r.id}
@@ -309,7 +340,26 @@ export default function InspectionListPage() {
                         </Typography>
                       </TableCell>
                       <TableCell>{r.location_block}</TableCell>
-                      <TableCell>{r.category}</TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: 26,
+                              height: 26,
+                              borderRadius: 1,
+                              flexShrink: 0,
+                              color: `${cat.color}.main`,
+                              bgcolor: (t) => alpha(t.palette[cat.color].main, 0.12),
+                            }}
+                          >
+                            <CatIcon sx={{ fontSize: 15 }} />
+                          </Box>
+                          <Typography variant="body2">{r.category}</Typography>
+                        </Stack>
+                      </TableCell>
                       <TableCell>
                         <Chip
                           size="small"
@@ -319,7 +369,7 @@ export default function InspectionListPage() {
                       </TableCell>
                       <TableCell align="right">{r.ai_priority_score ?? '—'}</TableCell>
                       <TableCell>
-                        <Chip size="small" variant="outlined" label={r.status} />
+                        <Chip size="small" color={display.color} label={display.label} />
                       </TableCell>
                     </TableRow>
                     );
@@ -331,7 +381,6 @@ export default function InspectionListPage() {
         ) : (
           <ManualReviewQueue />
         )}
-      </Container>
     </Box>
   );
 }
