@@ -236,6 +236,17 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       : [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
     return { rows };
   }
+  // close gate: SELECT 1 FROM inspection_history WHERE ... AND action = '...'.
+  // Must precede the detail-history branch below, which matches the same table
+  // but ignores the action filter — without this the gate would read as
+  // satisfied by any history row, including the one creation writes.
+  if (/SELECT 1 FROM inspection_history/i.test(sql)) {
+    const action = sql.match(/action = '([^']+)'/)?.[1];
+    const rows = store.history.filter(
+      (h) => h.inspection_id === params[0] && h.action === action
+    );
+    return { rows: rows.slice(0, 1) };
+  }
   // detail history: SELECT ... FROM inspection_history h LEFT JOIN users ...
   if (/FROM inspection_history/i.test(sql)) {
     const rows = store.history
@@ -1465,6 +1476,11 @@ describe('GET /api/inspections (manager queue)', () => {
       .patch(`/api/inspections/${toClose}`)
       .set('Authorization', 'Bearer manager-token')
       .send({ status: 'Rectified' });
+    // An inspector's check is a close precondition (UC-004).
+    await request(app)
+      .post(`/api/inspections/${toClose}/review`)
+      .set('Authorization', 'Bearer inspector-token')
+      .send({});
     await request(app)
       .post(`/api/inspections/${toClose}/close`)
       .set('Authorization', 'Bearer manager-token')
@@ -1680,10 +1696,20 @@ describe('POST /api/inspections/:id/close', () => {
       .send({ status: 'Rectified' });
   }
 
-  // Seed a complaint and advance it to 'Rectified', ready to close.
+  // An inspector checks the contractor's work — the second half of the close
+  // precondition, alongside the record being Rectified.
+  async function review(id) {
+    await request(app)
+      .post(`/api/inspections/${id}/review`)
+      .set('Authorization', 'Bearer inspector-token')
+      .send({});
+  }
+
+  // Seed a complaint and advance it to 'Rectified' + reviewed, ready to close.
   async function seedRectified(title) {
     const id = await seedComplaint(title);
     await rectify(id);
+    await review(id);
     return id;
   }
 
@@ -1714,6 +1740,7 @@ describe('POST /api/inspections/:id/close', () => {
       }
     }
     await rectify(id);
+    await review(id);
     expect((await closeRecord(id)).status).toBe(200);
 
     const res = await request(app)
@@ -1739,6 +1766,43 @@ describe('POST /api/inspections/:id/close', () => {
 
     expect(again.status).toBe(404);
     expect(again.body.code).toBe('NOT_FOUND');
+  });
+
+  // Both halves of the UC-004 precondition are enforced: the contractor
+  // finishing the work is not enough on its own. Unlike the unrectified-defect
+  // rule below, this one takes no waiver.
+  test('409 — a Rectified record no inspector has reviewed cannot be closed', async () => {
+    const id = await seedComplaint('Rectified but unchecked');
+    await rectify(id); // contractor done, inspector has not looked
+
+    const res = await closeRecord(id);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NOT_REVIEWED');
+    // Still open: a refused close must not archive the record.
+    expect(store.inspections.find((i) => i.id === id).is_deleted).toBe(false);
+  });
+
+  test('200 once an inspector reviews it, the same record closes', async () => {
+    const id = await seedComplaint('Reviewed then closed');
+    await rectify(id);
+    expect((await closeRecord(id)).status).toBe(409);
+
+    await review(id);
+
+    expect((await closeRecord(id)).status).toBe(200);
+  });
+
+  test('a waiver note does not buy past the inspector check', async () => {
+    const id = await seedComplaint('Waiver attempt');
+    await rectify(id);
+
+    const res = await closeRecord(id, {
+      waiver_note: 'Contractor unreachable and the lift is back in service.',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NOT_REVIEWED');
   });
 
   test('200 closes with remark + dual signatures, computes fields, archives', async () => {
@@ -1861,6 +1925,7 @@ describe('POST /api/inspections/:id/close', () => {
       'defect.png'
     );
     await rectify(create.body.id);
+    await review(create.body.id);
     return create.body.id;
   }
 

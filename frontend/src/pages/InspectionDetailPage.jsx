@@ -34,6 +34,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
 import { PRIORITIES } from '../utils/inspectionOptions';
+import { nearestBlock } from '../utils/blocks';
 
 // Statuses a manager may set here — everything except Closed (UC-004 flow).
 const SETTABLE_STATUSES = [
@@ -163,6 +164,14 @@ export default function InspectionDetailPage() {
         .filter((r) => !r.rectified || !r.completion_photo_url)
         .map((r) => r.display_order),
     [defectResults]
+  );
+
+  // The other half of the close precondition: an inspector has to have checked
+  // the contractor's work. The review is an audit row, not a column, so it is
+  // read back off the history the detail endpoint already returns.
+  const reviewedByInspector = useMemo(
+    () => (inspection?.history ?? []).some((h) => h.action === 'Reviewed by Inspector'),
+    [inspection]
   );
 
   // Second endorser for the dual e-signature. G7/R9: the endorsing signature
@@ -512,11 +521,20 @@ export default function InspectionDetailPage() {
                   </Box>
                 )}
 
+                {/* Lead with the nearest block: whoever reads this is at a desk
+                    and cannot check the coordinates against the estate. The raw
+                    lat/lng stays — this record is the audit trail, and the
+                    block is only derived from it. */}
                 {inspection.gps_lat && inspection.gps_lng && (
                   <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: 'text.secondary' }}>
                     <PlaceOutlinedIcon fontSize="small" />
                     <Typography variant="caption">
-                      GPS {Number(inspection.gps_lat).toFixed(5)},{' '}
+                      Near Block{' '}
+                      {nearestBlock({
+                        lat: Number(inspection.gps_lat),
+                        lng: Number(inspection.gps_lng),
+                      })}{' '}
+                      · GPS {Number(inspection.gps_lat).toFixed(5)},{' '}
                       {Number(inspection.gps_lng).toFixed(5)}
                       {inspection.gps_accuracy_m
                         ? ` (±${Math.round(inspection.gps_accuracy_m)}m)`
@@ -857,6 +875,16 @@ export default function InspectionDetailPage() {
                   disabled={closed}
                 />
 
+                {/* The inspector's check is the one precondition with no
+                    override, so say it here rather than letting the manager
+                    fill the whole panel in and fail on submit. */}
+                {!reviewedByInspector && (
+                  <Alert severity="warning">
+                    No inspector has marked this record as reviewed yet. Closing
+                    stays disabled until one does — this cannot be waived.
+                  </Alert>
+                )}
+
                 {/* G8: closing over unrectified defects is allowed, but only as
                     an explicit, recorded exception. */}
                 {outstandingItems.length > 0 && (
@@ -926,7 +954,7 @@ export default function InspectionDetailPage() {
                   type="submit"
                   variant="contained"
                   color="error"
-                  disabled={!endorser || closing || closed}
+                  disabled={!endorser || !reviewedByInspector || closing || closed}
                   startIcon={
                     closing ? (
                       <CircularProgress size={16} color="inherit" />

@@ -383,12 +383,18 @@ export default function ContractorInboxPage() {
       }
 
       await rectify(selected.id, formData);
-      setFeedback({
-        severity: 'success',
-        message: finalize
-          ? 'Work submitted and signed — awaiting manager endorsement.'
-          : 'Progress saved — finish the remaining items when ready.',
-      });
+      // Finalising moves the defect to 'Rectified', and the status banner lower
+      // down already announces that it is awaiting the manager's endorsement —
+      // a success message here too put two identical green alerts on screen at
+      // once. Saving progress changes no status, so that path still needs one.
+      setFeedback(
+        finalize
+          ? null
+          : {
+              severity: 'success',
+              message: 'Progress saved — finish the remaining items when ready.',
+            }
+      );
       load(true);
     } catch (err) {
       setFeedback({

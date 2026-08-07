@@ -925,6 +925,19 @@ async function closeInspection(req, res, next) {
       });
     }
 
+    // UC-004 precondition, second half: the contractor finishing the work is
+    // not enough — an inspector must have checked it. That check is the
+    // /review action, which until now only wrote an audit row nobody consulted,
+    // so a manager could endorse and close work no inspector had ever seen.
+    // Deliberately not waivable, unlike G8 below.
+    if (!(await inspectionModel.hasInspectorReview(req.params.id))) {
+      return res.status(409).json({
+        code: 'NOT_REVIEWED',
+        message:
+          'An inspector must mark this record as reviewed before it can be closed.',
+      });
+    }
+
     // The endorser must be a real user (signatures.signer_id FK) whose stored
     // role actually matches the role being attributed to their signature —
     // without this, a signature could record a role the signer doesn't hold.
