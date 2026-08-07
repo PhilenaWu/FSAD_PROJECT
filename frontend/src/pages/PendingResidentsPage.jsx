@@ -76,8 +76,14 @@ export default function PendingResidentsPage() {
     setBusyId(row.id);
     try {
       if (decision === 'approve') {
-        await approveResident(row.id);
-        setSuccess(`${row.full_name} can now sign in.`);
+        const res = await approveResident(row.id);
+        // Don't claim the resident was emailed when SMTP refused it — they'd
+        // be waiting on a message that never arrives.
+        setSuccess(
+          res.data.email_sent
+            ? `${row.full_name} can now sign in, and has been emailed at ${row.email}.`
+            : `${row.full_name} can now sign in, but the notification email could not be sent — let them know another way.`
+        );
       } else {
         await rejectResident(row.id);
         setSuccess(`${row.full_name}'s request was rejected.`);

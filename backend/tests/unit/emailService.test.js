@@ -9,7 +9,10 @@ jest.mock('nodemailer', () => ({
   createTransport: jest.fn(() => ({ sendMail: mockSendMail })),
 }));
 
-const { sendDefectAlert } = require('../../src/services/emailService');
+const {
+  sendDefectAlert,
+  sendResidentApprovedEmail,
+} = require('../../src/services/emailService');
 
 const DEFECT = {
   title: 'Lift cabin door fault',
@@ -84,5 +87,43 @@ describe('sendDefectAlert — rejection variant (D.4)', () => {
   test('an unrecognised email_type falls back to the assignment wording', async () => {
     await sendDefectAlert(DEFECT, TO, { email_type: 'something_else' });
     expect(sent().subject).toMatch(/^Defect Assigned/);
+  });
+});
+
+describe('sendResidentApprovedEmail', () => {
+  const RESIDENT = {
+    email: 'nadia@example.com',
+    full_name: 'Nadia Rahman',
+    block_number: '44B',
+    unit_number: '#08-12',
+  };
+
+  test('tells the approved resident they can now sign in, and where', async () => {
+    await sendResidentApprovedEmail(RESIDENT);
+
+    const mail = sent();
+    expect(mail.to).toBe('nadia@example.com');
+    expect(mail.subject).toBe('Your EM Services account has been approved');
+    expect(mail.text).toContain('Hello Nadia Rahman');
+    expect(mail.text).toContain('approved');
+    // The address they claimed, so they can spot a mistake before signing in.
+    expect(mail.text).toContain('Registered address: Block 44B, Unit #08-12');
+    // A link straight to login — the whole point of the message.
+    expect(mail.text).toContain('http://localhost/login');
+    expect(mail.html).toContain('href="http://localhost/login"');
+  });
+
+  test('never includes a password — Supabase holds it and we never see it', async () => {
+    await sendResidentApprovedEmail(RESIDENT);
+
+    const mail = sent();
+    expect(mail.text).toContain('password you registered with');
+    expect(mail.text).not.toMatch(/password:/i);
+  });
+
+  test('omits the unit when the resident did not give one', async () => {
+    await sendResidentApprovedEmail({ ...RESIDENT, unit_number: null });
+
+    expect(sent().text).toContain('Registered address: Block 44B\n');
   });
 });

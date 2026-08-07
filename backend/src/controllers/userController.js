@@ -3,6 +3,7 @@
 'use strict';
 
 const userModel = require('../models/userModel');
+const emailService = require('../services/emailService');
 
 // Blocks a registration may claim. Mirrors the frontend's placeholder BLOCKS
 // list (frontend/src/utils/blocks.js) — both move to a real blocks table when
@@ -137,7 +138,24 @@ async function decidePendingResident(req, res, next, status) {
         message: 'No pending resident registration with that id.',
       });
     }
-    res.json(await userModel.setStatus(req.params.id, status));
+    const updated = await userModel.setStatus(req.params.id, status);
+
+    // Approval is invisible from the resident's side — nothing changes for them
+    // until they happen to try logging in again — so tell them. Failures are
+    // swallowed (G13): the account is approved either way, and the manager is
+    // told the mail didn't go out rather than the approval being rolled back.
+    let emailSent = null;
+    if (status === 'active') {
+      try {
+        await emailService.sendResidentApprovedEmail(updated);
+        emailSent = true;
+      } catch (err) {
+        console.error('[userController] approval email failed:', err.message);
+        emailSent = false;
+      }
+    }
+
+    res.json(emailSent === null ? updated : { ...updated, email_sent: emailSent });
   } catch (err) {
     next(err);
   }

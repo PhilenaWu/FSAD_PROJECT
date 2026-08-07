@@ -79,9 +79,15 @@ jest.mock('../../src/config/db', () => ({
   }),
 }));
 
+// --- Mock: outbound mail. Nothing leaves the process. ---
+jest.mock('../../src/services/emailService', () => ({
+  sendResidentApprovedEmail: jest.fn(),
+}));
+
 const request = require('supertest');
 
 let app;
+let emailService;
 
 beforeEach(() => {
   mockUsers = {
@@ -119,6 +125,10 @@ beforeEach(() => {
   // rejecting partway through the suite.
   jest.resetModules();
   app = require('../../src/app');
+  // Re-required after resetModules so the handle matches the instance the app
+  // just loaded; default to a clean successful send.
+  emailService = require('../../src/services/emailService');
+  emailService.sendResidentApprovedEmail.mockReset().mockResolvedValue(undefined);
 });
 
 describe('POST /api/users/register-profile', () => {
@@ -300,6 +310,44 @@ describe('manager approval queue', () => {
     expect(me.status).toBe(200);
     expect(me.body.role).toBe('resident');
     expect(me.body.status).toBe('active');
+  });
+
+  test('approve emails the resident that they can now sign in', async () => {
+    const res = await request(app)
+      .post('/api/users/pending-residents/pen-1/approve')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.email_sent).toBe(true);
+    expect(emailService.sendResidentApprovedEmail).toHaveBeenCalledTimes(1);
+    // Sent the updated row, so the mail can't describe them as still pending.
+    const [resident] = emailService.sendResidentApprovedEmail.mock.calls[0];
+    expect(resident.email).toBe('pen@example.com');
+    expect(resident.full_name).toBe('Nadia Rahman');
+    expect(resident.status).toBe('active');
+  });
+
+  // G13: mail is best-effort. Un-approving someone because SMTP blipped would
+  // be worse than the manager having to tell them by other means.
+  test('a failed send still approves the account, and says so', async () => {
+    emailService.sendResidentApprovedEmail.mockRejectedValueOnce(new Error('smtp down'));
+
+    const res = await request(app)
+      .post('/api/users/pending-residents/pen-1/approve')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('active');
+    expect(res.body.email_sent).toBe(false);
+    expect(mockUsers['pen-1'].status).toBe('active');
+  });
+
+  test('reject sends no email', async () => {
+    await request(app)
+      .post('/api/users/pending-residents/pen-1/reject')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(emailService.sendResidentApprovedEmail).not.toHaveBeenCalled();
   });
 
   test('reject marks the account rejected and keeps it locked out', async () => {
