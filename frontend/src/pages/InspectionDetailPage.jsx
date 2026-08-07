@@ -476,7 +476,7 @@ export default function InspectionDetailPage() {
                           variant="outlined"
                           color={inspection.cv_detection.status === 'low_confidence' ? 'warning' : 'default'}
                           icon={<AutoAwesomeOutlinedIcon fontSize="small" />}
-                          label={`CV: ${inspection.cv_detection.defect_class ?? 'unclassified'} · ${Math.round(
+                          label={`Detected: ${inspection.cv_detection.defect_class ?? 'unclassified'} · ${Math.round(
                             Number(inspection.cv_detection.confidence) * 100
                           )}% confidence`}
                         />
