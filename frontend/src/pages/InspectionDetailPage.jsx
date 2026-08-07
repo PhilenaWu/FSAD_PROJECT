@@ -166,6 +166,14 @@ export default function InspectionDetailPage() {
     [defectResults]
   );
 
+  // The other half of the close precondition: an inspector has to have checked
+  // the contractor's work. The review is an audit row, not a column, so it is
+  // read back off the history the detail endpoint already returns.
+  const reviewedByInspector = useMemo(
+    () => (inspection?.history ?? []).some((h) => h.action === 'Reviewed by Inspector'),
+    [inspection]
+  );
+
   // Second endorser for the dual e-signature. G7/R9: the endorsing signature
   // must belong to an inspector — the client asked for sign-off from EM
   // Services, so the contractor who did the work can't endorse it. Defaults to
@@ -867,6 +875,16 @@ export default function InspectionDetailPage() {
                   disabled={closed}
                 />
 
+                {/* The inspector's check is the one precondition with no
+                    override, so say it here rather than letting the manager
+                    fill the whole panel in and fail on submit. */}
+                {!reviewedByInspector && (
+                  <Alert severity="warning">
+                    No inspector has marked this record as reviewed yet. Closing
+                    stays disabled until one does — this cannot be waived.
+                  </Alert>
+                )}
+
                 {/* G8: closing over unrectified defects is allowed, but only as
                     an explicit, recorded exception. */}
                 {outstandingItems.length > 0 && (
@@ -936,7 +954,7 @@ export default function InspectionDetailPage() {
                   type="submit"
                   variant="contained"
                   color="error"
-                  disabled={!endorser || closing || closed}
+                  disabled={!endorser || !reviewedByInspector || closing || closed}
                   startIcon={
                     closing ? (
                       <CircularProgress size={16} color="inherit" />
