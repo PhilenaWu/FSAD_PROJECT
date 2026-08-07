@@ -1,4 +1,4 @@
-# Estate Incident Management System
+# Lift Inspection & Estate Defect Management System
 
 A full-stack web application that lets estate residents report defects and lets estate managers triage, assign, and resolve them — backed by real-time notifications, computer-vision defect detection, AI categorisation and risk analysis, and automated weekly PDF reporting.
 
@@ -6,21 +6,29 @@ A full-stack web application that lets estate residents report defects and lets 
 
 ## What it does
 
-Residents submit incident reports (with photos); managers track, prioritise, assign, and close them. On top of the basic workflow, the system layers in:
+Residents submit defect reports (with photos); managers track, prioritise, assign, and close them. Inspectors file scheduled lift spot-checks against the same records — both live in the `inspections` table, told apart by a `source_type` discriminator (`resident_complaint` | `lift_inspection`). On top of that workflow, the system layers in:
 
 - **Real-time updates** — managers and residents see status changes live via Socket.IO rooms.
 - **Computer vision** — uploaded photos are run through a Roboflow model; high-confidence defects (≥ 70%) auto-create tickets.
-- **AI categorisation & risk alerts** — OpenAI (`gpt-4o-mini`) categorises incidents and flags recurring failure patterns by block and category.
+- **AI categorisation & risk alerts** — OpenAI (`gpt-4o-mini`) categorises defects and flags recurring failure patterns by block and category.
 - **Automated weekly reports** — pdfkit renders a weekly PDF, stored on Cloudinary and emailed to managers.
 - **Analytics dashboards** — heatmaps, trend lines, and SLA-compliance gauges built with Chart.js.
 
 ## User roles
 
+The five roles below are the ones enforced by `requireRole(...)` and allowed by the
+`users.role` CHECK constraint (migration `001`).
+
 | Role | What they can do |
 |------|------------------|
 | `resident` | Submit reports, track status, leave satisfaction ratings |
-| `manager` | Review, assign, prioritise, and close incidents; view analytics; send notifications |
-| `system` | Automated actor — CV pipeline, AI recommendations, weekly report generation |
+| `inspector` | File lift spot-checks; endorse a close with a signature (UC-004) |
+| `manager` | Review, assign, prioritise, and close records; view analytics; send notifications |
+| `contractor` | Work assigned defects in the contractor portal and e-sign completions |
+| `admin` | Cost analytics (UC-011) and vendor account lifecycle (UC-012) |
+
+Scheduled jobs (CV pipeline, AI recommendations, weekly reports) run as an automated
+actor authenticated by `CRON_SECRET` rather than by a role.
 
 ---
 
@@ -34,9 +42,9 @@ Residents submit incident reports (with photos); managers track, prioritise, ass
                                  │ HTTPS + WSS
 ┌────────────────────────────────▼─────────────── BACKEND (Render) ─┐
 │  Node.js / Express                                                │
-│  ├── REST routes (auth, incidents, analytics, reports, …)         │
-│  ├── Socket.IO server (manager / block-N / incident-N rooms)      │
-│  ├── JWT middleware (role-based)                                   │
+│  ├── REST routes (inspections, analytics, admin, reports, …)      │
+│  ├── Socket.IO server (manager / block-N / inspection-N rooms)    │
+│  ├── Supabase token verification + requireRole middleware         │
 │  └── CRON_SECRET guard for scheduled endpoints                    │
 └──────┬──────────────┬──────────────┬───────────────┬──────────────┘
        ▼              ▼              ▼               ▼
@@ -65,7 +73,7 @@ Residents submit incident reports (with photos); managers track, prioritise, ass
 | AI / NLP | OpenAI API (`gpt-4o-mini`) |
 | PDF generation | pdfkit |
 | Email | Nodemailer (SMTP) |
-| Auth | JWT (`jsonwebtoken`) + bcrypt |
+| Auth | Supabase Auth (`@supabase/supabase-js`) — see [Security at a glance](#security-at-a-glance) |
 | Scheduling | GitHub Actions (cron) |
 | Uptime | UptimeRobot |
 
@@ -92,7 +100,7 @@ You'll need accounts/keys for Supabase, Cloudinary, Roboflow, OpenAI, and an SMT
 cd backend
 npm install
 cp .env.example .env        # fill in your values
-# run the 10 migration files in migrations/ against your Supabase DB, in order
+npm run migrate             # applies every migrations/*.sql in order
 npm run dev
 ```
 
@@ -113,7 +121,7 @@ npm run dev
 .
 ├── backend/        # Express REST API + Socket.IO + integrations
 │   ├── src/        # routes, controllers, services, middleware, models, config
-│   ├── migrations/ # 001–010 SQL files (run in order)
+│   ├── migrations/ # numbered SQL files (schema source of truth)
 │   └── tests/      # unit + integration
 │
 ├── frontend/       # React app (Vite)
@@ -126,8 +134,13 @@ npm run dev
 
 ## Documentation
 
-- **High-Level Design** — system overview, full database schema (10 tables), API endpoint reference, auth & security model, environment variables.
-- **Implementation Phases** — 6-week phase plan, ownership, dependencies, test cases, and risk register.
+- **[High-Level Design](./HIGH_LEVEL_DESIGN.md)** — system overview, database schema, API endpoint reference, auth & security model, environment variables.
+- **[Use Case Specifications](./USE_CASES.md)** — the numbered UC-0xx specs the features below implement.
+- **[Implementation Phases](./PROJECT_IMPLEMENTATION_PHASES.md)** — 6-week phase plan, ownership, dependencies, test cases, and risk register.
+- **[Admin accounts](./backend/SEED_ADMIN.md)** — the seeded admin logins and how to add another.
+
+The schema is 18 tables, defined across the numbered files in `backend/migrations/`
+— those files, not this README, are the source of truth.
 
 ---
 
@@ -141,9 +154,11 @@ npm run dev
   `inspector`, `manager`, `contractor`, `admin`) — enforcement is server-side;
   UI role checks are convenience only.
 - Scheduled endpoints protected by a `CRON_SECRET` bearer token.
-- Request filters/bodies validated before any SQL runs (joi + per-controller
-  validation); every query is parameterised — no string-built SQL. Errors use
-  the `{ code, message }` contract throughout.
+- Request filters/bodies are validated in the controller before any SQL runs, and
+  every query is parameterised — no string-built SQL. Errors use the
+  `{ code, message }` contract throughout.
+- `helmet` security headers, CORS locked to `FRONTEND_URL` (Express and
+  Socket.IO), a 1 MB body cap, and `express-rate-limit` across all routes.
 
 ---
 
@@ -309,16 +324,16 @@ account also gets a `vendor_history` entry (`Contract Renewed`).
 - Migrations `019`–`022` add the contract fields, holder fields
   (`users.job_title`, `contractors.access_reason`), the `vendor_history`
   table, and idempotent demo data: six vendors with staggered contracts and
-  named account holders, each with its own working login (see the table
-  below — no shared password). One vendor (Schindler Care / Ahmad Faizal) is
-  pre-suspended with an expired contract to demo the offboarding state.
-- Migration `029` seeds two EM Services inspector logins (each its own
-  password): `weijie.tan.inspector@emservices.sg` (Wei Jie Tan) and
-  `nurul.aisyah.inspector@emservices.sg` (Nurul Aisyah). At least one **active**
-  inspector must exist or UC-004 close is blocked — the endorsing signature has
-  to belong to a user whose role is `inspector` (§11 G7), and the close panel
-  populates its picker from `GET /api/users/inspectors`. These accounts also
-  file UC-001 spot-checks.
+  named account holders, all with working logins (password `TempPass123!`).
+  One vendor (Schindler Care / Ahmad Faizal) is pre-suspended with an expired
+  contract to demo the offboarding state.
+- Migration `029` seeds two EM Services inspector logins (same password,
+  `TempPass123!`): `inspector1@emservices.sg` (Wei Jie Tan) and
+  `inspector2@emservices.sg` (Nurul Aisyah). At least one **active** inspector
+  must exist or UC-004 close is blocked — the endorsing signature has to belong
+  to a user whose role is `inspector` (§11 G7), and the close panel populates
+  its picker from `GET /api/users/inspectors`. These accounts also file UC-001
+  spot-checks.
 - Migration `030` attributes the 12 `Demo:` lift spot-checks from `018` to those
   inspectors (alternating), so the close panel pre-selects an endorser instead
   of asking for one on every demo record. Scoped to `Demo:%` rows with a NULL
@@ -327,31 +342,32 @@ account also gets a `vendor_history` entry (`Contract Renewed`).
   own password). **Additive only** — the pre-existing developer accounts are
   left active and untouched, so teammates keep working; deleting them would be
   destructive anyway, since `inspections.resident_id` is `ON DELETE CASCADE`.
+- Migration `037` seeds the admin logins, so a freshly migrated database can
+  reach `/admin/costs` and `/admin/vendors` without a manual Supabase step. See
+  [backend/SEED_ADMIN.md](./backend/SEED_ADMIN.md).
 
 ### Demo logins
 
-Every seeded account has its own unique password — there's no shared demo
-password. Re-running `npm run migrate` re-applies these passwords even to
-already-seeded accounts, so changing one here and migrating takes effect.
+All seeded accounts use the password `TempPass123!`.
 
 Staff addresses carry the role so the account is self-describing on screen;
 residents use personal-looking addresses, as they would in reality.
 
-| Role | Email | Name | Password |
-|---|---|---|---|
-| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim | `Beacon15!Sail` |
-| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan | `Falcon77!Reed` |
-| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah | `Marble46#Dawn` |
-| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) | `Cedar88#Pine` |
-| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) | `Lotus52!Brook` |
-| Contractor | `marcus.tan@konemaint.com.sg` | Marcus Tan (KONE Maintenance) | `Harbor72!Vale` |
-| Contractor | `priya.nair@kone-sg.com` | Priya Nair (KONE Pte Ltd) | `Nimbus93#Kite` |
-| Contractor | `wei.jie.lim@otiselevator.sg` | Wei Jie Lim (Otis Elevator Co.) | `Cobalt58!Reef` |
-| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) | `Willow24#Fern` |
-| Contractor | `ahmad.faizal@schindlercare.sg` | Ahmad Faizal (Schindler Care, suspended) | `Ember61!Trail` |
-| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) | `Quartz39#Moss` |
+| Role | Email | Name |
+|---|---|---|
+| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim |
+| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan |
+| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah |
+| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) |
+| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) |
+| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) |
+| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) |
 
 Admin is created manually — see `backend/SEED_ADMIN.md`.
+
+> Two vendor logins seeded by `022` (`marcus.tan@konemaint.com.sg`,
+> `priya.nair@kone-sg.com`) have no `auth.identities` row and **cannot sign in**;
+> use the two contractors listed above instead. Tracked against UC-012.
 - The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
   repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
   backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.

@@ -1,136 +1,208 @@
-Estate Incident Management System — Backend
+# Lift Inspection & Estate Defect Management System — Backend
 
-REST API and real-time server for the Estate Incident Management System. Built with Node.js, Express, and Socket.IO; backed by Supabase (PostgreSQL) and integrated with Cloudinary, Roboflow, and OpenAI. Deployed on Render.
+REST API and real-time server. Node.js + Express + Socket.IO, backed by Supabase
+(PostgreSQL) and integrated with Cloudinary, Roboflow, OpenAI and SMTP. Deployed
+on Render.
 
+For the system-wide picture see the root [README](../README.md); for the schema
+and full endpoint reference see [HIGH_LEVEL_DESIGN.md](../HIGH_LEVEL_DESIGN.md).
 
-Features:
-Auth — register / login / logout with JWT (30-minute sliding expiry) and bcrypt-hashed passwords.
-Incidents — full CRUD: create (with photo upload), list/filter, view, update status, close, rate.
-Real-time — Socket.IO server with manager, per-block, and per-incident rooms for live updates.
-Computer vision — sends uploaded photos to Roboflow; auto-creates tickets above a 70% confidence threshold.
-AI engine — OpenAI categorises incidents, generates risk alerts on recurring failures, and summarises reports.
-Analytics — issues-by-block heatmap, trends, and SLA-compliance endpoints.
-Reports — pdfkit weekly PDF generation, stored on Cloudinary, emailed via Nodemailer.
-Notifications — block-scoped notifications with scheduled dispatch and read receipts.
-Scheduled jobs — cron-protected endpoints for nightly AI recommendations and weekly reports.
+---
 
+## Authentication
 
-Tech stack:
-ConcernLibraryRuntimeNode.js 20FrameworkExpress 4Real-timeSocket.IO 4DatabasePostgreSQL (Supabase) via pgAuthjsonwebtoken, bcryptUploadsmulterImage / PDF storageCloudinary SDKCVRoboflow Inference APIAIOpenAI API (gpt-4o-mini)PDFpdfkitEmailnodemailerValidationjoi / zodRate limitingexpress-rate-limit
+**Authentication is Supabase Auth.** Sign-up, login, logout, password hashing and
+session refresh all happen on the client via `@supabase/supabase-js`. This service
+has **no** `/api/auth/*` endpoints, no `jsonwebtoken`, no `bcrypt`, no
+`JWT_SECRET`, and no `password_hash` column — credentials live in Supabase's own
+`auth.users` table and never in ours.
 
+The request flow is:
 
-Project structure:
+1. The frontend obtains a Supabase access token and sends
+   `Authorization: Bearer <token>`.
+2. `middleware/auth.js` → `requireAuth` verifies that token against Supabase.
+3. It then loads the caller's profile row from `users` (keyed by the Supabase auth
+   user id) and reads `role` from it.
+4. `requireRole('manager', 'admin', …)` gates the route on that role.
+
+`GET /api/users/me` returns the caller's profile row. Roles are `resident`,
+`inspector`, `manager`, `contractor`, `admin`, enforced by a CHECK constraint in
+migration `001`.
+
+Scheduled-job endpoints are not user-authenticated: `middleware/cronGuard.js`
+requires `Authorization: Bearer <CRON_SECRET>` instead.
+
+---
+
+## Getting started
+
+**Prerequisites:** Node.js 20+, a Supabase project, and — for the feature-gated
+integrations — Cloudinary, Roboflow, OpenAI and SMTP credentials.
+
+```bash
+npm install
+cp .env.example .env    # fill in your values
+npm run migrate         # apply migrations/*.sql in order
+npm run dev             # node --watch server.js
+```
+
+| Script | Does |
+|---|---|
+| `npm run dev` | Local development (`node --watch server.js`) |
+| `npm start` | Production (`node server.js`) |
+| `npm run migrate` | Apply every `migrations/*.sql` in filename order |
+| `npm test` | Jest — `tests/unit` and `tests/integration` |
+
+### Environment variables
+
+`src/config/env.js` validates the required set on boot and exits with the missing
+names if any are absent. Every variable, required and optional, is documented in
+[`.env.example`](./.env.example).
+
+| Variable | Status | Purpose |
+|---|---|---|
+| `FRONTEND_URL` | required | Allowed origin for CORS + Socket.IO |
+| `DATABASE_URL` | required | Supabase PostgreSQL connection string (pooler, SSL) |
+| `SUPABASE_URL` | required | Supabase project URL, for access-token verification |
+| `SUPABASE_PUBLISHABLE_KEY` | required | Publishable key (`sb_publishable_…`). Never put the secret key in this project |
+| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | required | Photo + PDF storage |
+| `PORT` / `NODE_ENV` | optional | Default `5000` / `development` |
+| `CRON_SECRET` | optional | Bearer token guarding scheduled endpoints |
+| `OPENAI_API_KEY` | optional | Real risk-alert text; falls back to a template when unset |
+| `SMTP_HOST` / `_PORT` / `_USER` / `_PASS` | optional | Report + defect-alert email. A missing transport fails only the email, not the operation |
+| `DEFECT_ALERT_RECIPIENTS` | optional | Comma-separated addresses CC'd on every defect-assignment alert |
+| `ROBOFLOW_API_KEY` / `ROBOFLOW_WORKFLOW_URL` | optional | CV defect detection (UC-007) |
+
+---
+
+## Project structure
+
+```
 backend/
 ├── src/
-│   ├── routes/            # auth, incidents, analytics, recommendations,
-│   │                      # reports, notifications, cv
-│   ├── controllers/       # request handlers per resource
-│   ├── services/          # openai, cloudinary, roboflow, pdf, email, socket
-│   ├── middleware/        # auth, cronGuard, rateLimiter, errorHandler, validate
-│   ├── models/            # DB query layer per table
-│   ├── config/            # db, cloudinary, socket, env validation
-│   ├── utils/             # notificationDispatcher, jwtHelpers, velocity, sla, csv
-│   └── app.js             # Express app, middleware chain, route mounting
-├── migrations/            # 001–010 SQL files (run in order)
-├── tests/                 # unit + integration
-├── server.js              # HTTP server + Socket.IO attach + listen
-├── .env.example
-└── package.json
+│   ├── routes/       # one file per mounted resource (see the table below)
+│   ├── controllers/  # request handlers per resource
+│   ├── services/     # cloudinary, roboflow, openai, pdf, pptx, email,
+│   │                 # socket, notification
+│   ├── middleware/   # auth (requireAuth/requireRole), cronGuard,
+│   │                 # rateLimiter, errorHandler
+│   ├── models/       # DB query layer per table — raw parameterised SQL
+│   ├── config/       # db pool, env validation, cloudinary, socket
+│   ├── utils/        # notificationDispatcher, velocityCalculator,
+│   │                 # slaHelpers, priorityFromScore, csvExporter
+│   └── app.js        # Express app, middleware chain, route mounting
+├── migrations/       # numbered .sql files — the schema source of truth
+├── scripts/          # migrate.js
+├── tests/            # unit + integration (Jest)
+├── server.js         # HTTP server + Socket.IO attach + listen
+└── SEED_ADMIN.md     # seeded admin logins
+```
 
+---
 
-Getting started
+## API surface
 
-Prerequisites: 
-- Node.js 20+
-- A Supabase project (PostgreSQL)
-- Accounts/keys for Cloudinary, Roboflow, OpenAI, and an SMTP provider
+Mounted in `src/app.js`. All user routes take `Authorization: Bearer <Supabase
+access token>`; scheduled routes take `Authorization: Bearer <CRON_SECRET>`.
+Responses are JSON. The per-endpoint reference lives in
+[HIGH_LEVEL_DESIGN.md](../HIGH_LEVEL_DESIGN.md); the routers are the authority.
 
+| Mount | Router | Covers |
+|---|---|---|
+| `/api/inspections` | `inspections.js` | Core records — create, list/filter, status board, assign, close |
+| `/api/my-reports` | `myReports.js` | A resident's own submissions |
+| `/api/lifts` | `lifts.js` | Lift register (inspector) |
+| `/api/checklist-items` | `checklistItems.js` | Spot-check checklist template |
+| `/api/contractors` | `contractors.js` | Contractor directory (manager) |
+| `/api/contractor` | `contractor.js` | Contractor portal — assigned work, hold/resume |
+| `/api/users` | `users.js` | `GET /me`, inspector picker |
+| `/api/analytics` | `analytics.js` | Heatmap, trends, SLA, scorecard, priority queue (manager) |
+| `/api/recommendations` | `recommendations.js` | AI risk alerts + the analysis run |
+| `/api/export` | `export.js` | PPTX export (manager, admin) |
+| `/api/cv` | `cv.js` | Roboflow detections, dismissal, batch rescan |
+| `/api/notifications` | `notifications.js` | Send, list, mark read |
+| `/api/admin/vendors` | `vendors.js` | UC-012 vendor lifecycle (admin) |
+| `/api/reports` | `reports.js` | PDF generation + listing |
+| `/api/admin` | `admin.js` | UC-011 cost analytics (admin) |
+| `/api/feedback` | `feedback.js` | Satisfaction feedback |
+| `/health` | `app.js` | Liveness check (UptimeRobot) |
 
-Install:
-bashnpm install
+`/api/admin/vendors` is mounted **before** `/api/admin` so the more specific
+vendor router matches first.
 
-Environment:
-bashcp .env.example .env
+Scheduled notification dispatch is not an HTTP endpoint — it runs in-process via
+`utils/notificationDispatcher.js` on a 60-second `setInterval` loop.
 
+### Error format
 
-VariableDescriptionDATABASE_URLSupabase PostgreSQL connection stringJWT_SECRETSecret for signing JWTsFRONTEND_URLAllowed origin for CORS + Socket.IONODE_ENVdevelopment or productionCLOUDINARY_CLOUD_NAMECloudinary cloud nameCLOUDINARY_API_KEYCloudinary API keyCLOUDINARY_API_SECRETCloudinary API secretOPENAI_API_KEYOpenAI API keyROBOFLOW_API_KEYRoboflow API keyCRON_SECRETBearer token guarding scheduled endpointsSMTP_HOSTSMTP server hostSMTP_USERSMTP usernameSMTP_PASSSMTP password / app password
+Every error returns the same shape:
 
-Database:
-Run the 10 migration files in migrations/ in order (001 → 010) against your Supabase database — e.g. paste each into the Supabase SQL editor, or apply with your preferred migration runner.
+```json
+{ "code": "ERROR_CODE", "message": "Human-readable message" }
+```
 
-Run:
-- bashnpm run dev     # local development
-- npm start       # production (node server.js)
-- npm test        # run the test suite
+Common codes: `UNAUTHORIZED` (401, missing/invalid token), `FORBIDDEN` (403, role
+lacks access), `ACCOUNT_SUSPENDED` (403), `VALIDATION_ERROR` (400),
+`NOT_FOUND` (404), `EMAIL_ALREADY_EXISTS` (409), `SERVER_ERROR` (500). Feature
+routes add their own — the UC-012 set is tabulated in the root README.
 
-The server attaches Socket.IO to the same HTTP server and listens on the configured port.
+---
 
+## Database
 
-API reference:
-All authenticated routes require Authorization: Bearer <JWT>. All scheduled routes require Authorization: Bearer <CRON_SECRET>. Responses are JSON.
+Raw parameterised SQL over the `pg` Pool — **no ORM**. The numbered files in
+`migrations/` are the source of truth for the schema; `scripts/migrate.js` applies
+every file in filename order, each in its own transaction, and replays them all on
+every run (there is no applied-migrations ledger), so **every migration must be
+idempotent**.
 
-Auth:
-MethodPathAuthDescriptionPOST/api/auth/register—Create a resident accountPOST/api/auth/login—Authenticate, returns JWTPOST/api/auth/logoutuserEnd session (client drops token)
+18 tables: `users`, `contractors`, `lifts`, `inspections`, `inspection_history`,
+`checklist_items`, `checklist_results`, `signatures`, `cv_detections`,
+`ai_predictions`, `ai_jobs`, `notifications`, `notification_recipients`,
+`reports`, `retry_queue`, `vendor_history`, `defect_email_log`, `feedback`.
 
-Incidents:
-MethodPathAuthDescriptionPOST/api/incidentsresidentCreate report (multipart, optional photo)GET/api/incidentsmanagerList all (filterable), sorted by AI priorityGET/api/incidents/myresidentList the caller's reportsGET/api/incidents/:iduserGet one incidentPATCH/api/incidents/:id/statusmanagerUpdate status / assignmentPOST/api/incidents/:id/closemanagerClose an incident
+`inspections` is the core table; a `source_type` discriminator
+(`resident_complaint` | `lift_inspection`) separates resident-filed defects from
+scheduled lift spot-checks.
 
-Analytics:
-MethodPathAuthDescriptionGET/api/analytics/issues-by-blockmanagerHeatmap dataGET/api/analytics/trendsmanagerTrend linesGET/api/analytics/sla-compliancemanagerSLA gauge data
+Seed accounts and demo data are covered in the root README; admin logins are in
+[SEED_ADMIN.md](./SEED_ADMIN.md).
 
-Recommendations (AI):
-MethodPathAuthDescriptionGET/api/recommendations/runCRON_SECRETDrain ai_jobs queue, run velocity scan, generate alerts
+---
 
-Reports:
-MethodPathAuthDescriptionGET/api/reports/generateCRON_SECRETGenerate + store + email weekly PDFPOST/api/reports/generate-manualmanagerTrigger a report manually
+## Security
 
-Notifications:
-MethodPathAuthDescriptionPOST/api/notificationsmanagerSend / schedule a block-scoped notificationGET/api/notifications/:id/receiptsmanagerRead-receipt countsPATCH/api/notifications/:id/readresidentMark a notification read
+- Supabase Auth token verification on every authenticated route; `requireRole(...)`
+  for role gating. Enforcement is server-side — UI role checks are convenience only.
+- `cronGuard` validates `CRON_SECRET` on scheduled endpoints.
+- `helmet` security headers (also drops `x-powered-by`).
+- CORS restricted to `FRONTEND_URL`, for both Express and Socket.IO.
+- `express.json` / `urlencoded` capped at 1 MB.
+- `express-rate-limit` applied across all routes.
+- All SQL is parameterised; request input is validated in the controller before
+  any query runs.
 
-Scheduled notification dispatch is not an HTTP endpoint — it runs in-process via notificationDispatcher.js on a 60-second setInterval loop.
+---
 
+## Deployment (Render)
 
+1. Create a Render Web Service from this repo.
+2. Start command: `node server.js`.
+3. Add the environment variables above; set `FRONTEND_URL` to the deployed Vercel URL.
+4. Point an UptimeRobot HTTP(s) monitor at `/health` (5-minute interval) to avoid
+   free-tier cold starts.
 
-Computer vision:
-MethodPathAuthDescriptionPOST/api/cv/detectinternalRun Roboflow detection on an imageGET/api/cv/batch-scanCRON_SECRETReprocess failed images from retry_queue
+### Scheduled jobs
 
-Health:
-MethodPathAuthDescriptionGET/health—Liveness check (used by UptimeRobot)
+GitHub Actions workflows call the cron-guarded endpoints, with `CRON_SECRET` and
+the Render backend URL stored as repo secrets. Each supports `workflow_dispatch`
+for manual runs.
 
-
-Error format:
-All errors return a consistent shape:
-
-json{ "code": "ERROR_CODE", "message": "Human-readable message" }
-
-CodeHTTPMeaningINVALID_CREDENTIALS401Wrong email or passwordUNAUTHORIZED401Missing or expired JWTFORBIDDEN403Role lacks accessVALIDATION_ERROR400Request body failed validationNOT_FOUND404Resource does not existDUPLICATE_SUBMISSION409Duplicate record detectedALREADY_RATED409Satisfaction rating already submittedEMAIL_ALREADY_EXISTS400Registration email conflictSERVER_ERROR500Unhandled internal error
-
-
-Database:
-Ten PostgreSQL tables: users, incidents, incident_history, cv_detections, ai_predictions, ai_jobs, notifications, notification_recipients, reports, retry_queue. See the migration files and the High-Level Design doc for the full schema and relationships.
-
-
-Security:
-bcrypt password hashing (12 salt rounds).
-JWT auth with 30-minute sliding expiry.
-requireRole('manager') middleware on manager-only routes.
-cronGuard validates CRON_SECRET on scheduled endpoints.
-CORS restricted to FRONTEND_URL (both Express and Socket.IO).
-express-rate-limit: 100 requests / 15 min per IP on auth routes.
-Request bodies validated with joi/zod before reaching controllers.
-
-
-Deployment (Render):
-Create a Render Web Service from this repo.
-Set the start command to node server.js.
-Add all environment variables listed above.
-Set FRONTEND_URL to your deployed Vercel URL.
-Point an UptimeRobot HTTP(s) monitor at /health (5-minute interval) to avoid free-tier cold starts.
-
-
-Scheduled jobs:
-Configure GitHub Actions workflows (with CRON_SECRET and the Render backend URL as secrets) to call:
-
-
-/api/recommendations/run — nightly
-/api/reports/generate — weekly
+| Workflow | Drives |
+|---|---|
+| `contract-expiry-check.yml` | UC-012 vendor contract expiry sweep |
+| `cv-batch-scan.yml` | Reprocess failed images from `retry_queue` |
+| `defect-alert.yml` | Defect-assignment email alerts |
+| `monthly-report.yml` | UC-009 report generation + delivery |
+| `overdue-defect-chase.yml` | Chase-up on overdue defects |
