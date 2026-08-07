@@ -336,28 +336,12 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [isManager]);
 
-  // Live refresh. The backend pushes `status_update` to manager-room on every
-  // assign, rectify and close (HLD §10), so the dashboard must not sit stale
-  // while records move underneath it — every other role's landing page already
-  // updates live. Coalesced on a short timer because a burst of transitions
-  // would otherwise trigger a re-fetch per event.
-  useEffect(() => {
-    if (!isManager || !socket) return;
-    let timer;
-    const onStatusUpdate = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => fetchAll(), 1500);
-    };
-    socket.on('status_update', onStatusUpdate);
-    return () => {
-      clearTimeout(timer);
-      socket.off('status_update', onStatusUpdate);
-    };
-  }, [socket, isManager, fetchAll]);
-
   // The queue re-fetches on its own filters too (priority/status), on top of
-  // the shared dashboard filters.
-  useEffect(() => {
+  // the shared dashboard filters. Declared before the live-refresh effect
+  // below, which calls it: fetchAll deliberately does not cover the queue (it
+  // has extra filters), which is why a live update used to repaint every panel
+  // except this one.
+  const fetchQueue = useCallback(() => {
     if (!isManager || dateRangeInvalid) return;
     const params = Object.fromEntries(
       Object.entries({ ...filters, ...queueFilters }).filter(([, v]) => v)
@@ -366,6 +350,37 @@ export default function DashboardPage() {
       .then((pq) => setQueue(pq.data))
       .catch(() => setQueue([]));
   }, [filters, queueFilters, isManager, dateRangeInvalid]);
+
+  useEffect(() => {
+    fetchQueue();
+  }, [fetchQueue]);
+
+  // Live refresh. The backend pushes `status_update` to manager-room on every
+  // assign, rectify and close (HLD §10), so the dashboard must not sit stale
+  // while records move underneath it — every other role's landing page already
+  // updates live. Coalesced on a short timer because a burst of transitions
+  // would otherwise trigger a re-fetch per event.
+  // `cv_alert` as well as `status_update`: a high-confidence CV detection
+  // auto-creates a record without any status transition, so listening only for
+  // status_update left a brand-new high-priority ticket invisible until reload.
+  useEffect(() => {
+    if (!isManager || !socket) return;
+    let timer;
+    const onLiveChange = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        fetchAll();
+        fetchQueue();
+      }, 1500);
+    };
+    socket.on('status_update', onLiveChange);
+    socket.on('cv_alert', onLiveChange);
+    return () => {
+      clearTimeout(timer);
+      socket.off('status_update', onLiveChange);
+      socket.off('cv_alert', onLiveChange);
+    };
+  }, [socket, isManager, fetchAll, fetchQueue]);
 
   // Writing a filter updates the URL (replace, so back doesn't step through
   // every keystroke); empty values are dropped to keep the URL clean.

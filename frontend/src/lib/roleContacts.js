@@ -27,6 +27,8 @@ import SupervisorAccountOutlinedIcon from '@mui/icons-material/SupervisorAccount
 // inspectors calling "the office" reach the same desk.
 const MANAGING_OFFICE = '6500 0300';
 const ESTATE_MANAGER = '6500 0322';
+// Seeded on the admin profile row by migration 038 (Steven Tan).
+const ESTATE_ADMIN = '6500 0311';
 
 export const ROLE_CONTACTS = {
   // --- resident (item 2) ---
@@ -91,14 +93,29 @@ export const ROLE_CONTACTS = {
     ],
   },
 
-  // --- manager (items 4 + 28: admin contact number, managers' info) ---
-  // manager: { ... },
+  // --- manager (item 4: admin contact number) ---
+  // A manager escalates to the estate admin. The number below is only the
+  // fallback: ManagerLayout reads the live one from users.phone (migration 038)
+  // via GET /api/users/contacts, so it follows whoever holds the role rather
+  // than being pinned here. No contacts[] — item 28's separate admin contacts
+  // page was dropped in favour of this card.
+  manager: {
+    helpPhone: ESTATE_ADMIN,
+    helpCaption: 'Call the estate admin',
+  },
 
   // --- contractor (item 16: manager's number) ---
   // contractor: { ... },
 
-  // --- admin (item 27 drops the help card, so no helpPhone here) ---
-  // admin: { ... },
+  // --- admin (items 27 + 28) ---
+  // Item 27 removed the admin card because it pointed at nobody. It is back
+  // with a real destination: the estate manager who runs the estate day to day.
+  // Fallback only — AdminLayout reads the live number from users.phone the same
+  // way ManagerLayout does.
+  admin: {
+    helpPhone: ESTATE_MANAGER,
+    helpCaption: 'Call the estate manager',
+  },
 };
 
 /** Values for a role; `{}` for a role nobody has filled in yet. */

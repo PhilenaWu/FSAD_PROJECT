@@ -363,7 +363,7 @@ residents use personal-looking addresses, as they would in reality.
 | Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) |
 | Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) |
 
-Admin is created manually — see `backend/SEED_ADMIN.md`.
+Admin logins are seeded by migration `037` — see `backend/SEED_ADMIN.md`.
 
 > Two vendor logins seeded by `022` (`marcus.tan@konemaint.com.sg`,
 > `priya.nair@kone-sg.com`) have no `auth.identities` row and **cannot sign in**;

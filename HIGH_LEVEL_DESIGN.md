@@ -37,7 +37,7 @@ Every sentence of the client brief mapped to a use case, an owner, and its curre
 | R3 | "a structured checklist **matching the existing paper form**" | UC-001 | Philena | **Built** — migration `026` seeds the real 25 items as Motor Room / Lift Car / Hoistway & Lift Pit; the form renders by section |
 | R4 | "photo upload with automatic compression" | UC-001 | Philena | **Built** — `imageCompress.js` ≤100 KB client-side, **and** enforced server-side (`PHOTO_TOO_LARGE`, G4) |
 | R5 | "severity tagging for each defect" | UC-001 | Philena | **Built** — `checklist_results.severity` ∈ Minor/Major/Critical |
-| R6 | "**auto-email to the lift company when defects are flagged**" | UC-014 | Davian | **Gap** — `emailService` exists but is wired only to UC-009 reports |
+| R6 | "**auto-email to the lift company when defects are flagged**" | UC-014 | Davian | **Built** — `emailService.sendDefectAlert` fires from the spot-check submit path, not just UC-009. Recipient resolved by `COALESCE(u.email, c.contact_email)` (§10); every send writes a `defect_email_log` row and stamps `inspections.defect_email_sent_at`. Covered by `tests/unit/defectEmail.test.js` |
 | R7 | "The lift company should be able to acknowledge the defect on the same platform" | UC-010 | Zoe | **Built** — `POST /api/contractor/:id/acknowledge` |
 | R8 | "submit completion photos" | UC-010 | Zoe | **Built** — `submitWork()`, `checklist_results.completion_photo_url` |
 | R9 | "get a **digital sign-off from the EM Services inspector**" | UC-004 | Philena | **Built** — dual e-sign, endorser constrained to an inspector and verified against `users.role` (§11 G7); picker fed by `GET /api/users/inspectors` |
@@ -64,7 +64,7 @@ Daniel Koh's slide 2 is the spine of the system. Nothing in the product exists o
 | **1.** "LMS staff plan the schedule according to monthly lift servicing schedule" | Inspector | Inspector | Inspector picks the lift and records the contractor's **`serviced_at`** on the form header | *(pre-record)* |
 | **2.** "Lift technician completed servicing" | Contractor | *(off-system)* | Captured as the `serviced_at` the inspector enters — we do not schedule the LC's work | *(pre-record)* |
 | **3.** "LMS staff inspect the site on next/following day and fill the inspection report" | Inspector | Inspector | UC-001: 25-item checklist, per-item Pass/Defect + severity + remark + photo, GPS, inspector e-signature | `Open` → `Pending Assignment` (≥1 defect) or `Closed` (0 defects, auto-filed) |
-| **4.** "Finding on report (defect) will be informed to lift servicing supervisor for rectification" | System → Contractor | — | **UC-014 auto-email** to `contractors.contact_email` + Socket.IO to `contractor-{user_id}`; manager confirms/reassigns in UC-002; 14-day deadline starts | `Pending Assignment` → `Assigned` |
+| **4.** "Finding on report (defect) will be informed to lift servicing supervisor for rectification" | System → Contractor | — | **UC-014 auto-email** to the vendor's **account holder** (`COALESCE(users.email, contractors.contact_email)` — see §10) + Socket.IO to `contractor-{user_id}`; manager confirms/reassigns in UC-002; 14-day deadline starts | `Pending Assignment` → `Assigned` |
 | **5.** "Lift technician rectify the defects within 2 weeks" | Contractor | Contractor | UC-010: acknowledge → per-item completion photo + remark → contractor e-signature. Partial saves allowed; `On Hold` pauses the clock | `Assigned` → `Acknowledged` → `Rectified` |
 | **6.** "LMS staff does joint inspection with lift companies · Lift technician will endorse on the clearing of defects" | Inspector + Manager | Manager | UC-004: inspector reviews completion proof. **Accept** → dual e-signature (manager + inspector) + `actual_cost` → closed. **Reject** → back to `Assigned` with a fresh deadline and a re-notify email | `Rectified` → `Closed`, or `Rectified` → `Assigned` |
 | **7.** "File the document" | System | — | UC-015 immutable audit trail + UC-009 monthly PDF + annual export; record enters the 5-year archive | `Closed` |
@@ -106,7 +106,7 @@ The single most important property of this system is that a record **hands off c
         status = Closed                    status = Pending Assignment
         audit "Filed — no defects"         contractor auto-derived from lift.brand
         (no email, no LC involvement)      │
-                                           ├──► UC-014 EMAIL to contractors.contact_email
+                                           ├──► UC-014 EMAIL to the vendor's account holder
                                            │      (defect table, severities, deadline, deep link)
                                            ├──► socket → contractor-{user_id}
                                            └──► socket → manager-room
@@ -298,11 +298,19 @@ The paper's **√ / X** column maps to `checklist_results.result` ∈ `Pass` | `
 
 ## 8. Database Schema
 
-> PostgreSQL on Supabase. Migrations `001`–`025` are **applied and must not be edited**. New work lands in `026`+.
+> PostgreSQL on Supabase. Migrations `001`–`041` are applied; `backend/migrations/`
+> is the source of truth for the schema, not this document. New work lands in `042`+.
+> Two numbers are used twice (`025`, `036`, `037`) because parallel branches
+> claimed them independently; `migrate.js` sorts lexically, so each pair is
+> order-independent and both files apply.
 
-### 8.1 Existing tables (built — do not modify)
+### 8.1 Tables as built
 
-`users` · `contractors` · `lifts` · `inspections` · `inspection_history` · `checklist_items` · `checklist_results` · `signatures` · `cv_detections` · `ai_predictions` · `ai_jobs` · `notifications` · `notification_recipients` · `reports` · `retry_queue` · `vendor_history`
+19 tables. The core set below, plus three added after this section was first
+written: `defect_email_log` (`036`, UC-014 send audit), `feedback` (`036`,
+sidebar feedback form), and `contact_directory` (`039`, §8.4).
+
+`users` · `contractors` · `lifts` · `inspections` · `inspection_history` · `checklist_items` · `checklist_results` · `signatures` · `cv_detections` · `ai_predictions` · `ai_jobs` · `notifications` · `notification_recipients` · `reports` · `retry_queue` · `vendor_history` · `defect_email_log` · `feedback` · `contact_directory`
 
 Key columns already in place and relied on below:
 
@@ -310,7 +318,12 @@ Key columns already in place and relied on below:
 -- users (Supabase auth user id is the PK; NO password_hash — Supabase Auth owns credentials)
 id UUID PK · email · full_name · role CHECK IN
   ('resident','inspector','manager','contractor','admin')
-block_number · unit_number · contractor_id · status CHECK IN ('active','suspended')
+block_number · unit_number · contractor_id
+status CHECK IN ('active','suspended','pending','rejected')  -- 'pending'/'rejected'
+                                                   -- added by migration 037
+job_title    -- vendor account holders (migration 020)
+phone        -- staff contact number (migration 038); NULL for roles that
+             -- publish none. Read by GET /api/users/contacts
 
 -- inspections (core record)
 id · source_type CHECK IN ('lift_inspection','resident_complaint','cv_auto_detected')
@@ -349,8 +362,9 @@ closed_at · created_at · updated_at
 > | `026_add_paper_form_fields` | `027_add_serviced_at_to_inspections.sql` | Column is **`inspections.serviced_at`**, not `servicing_date` |
 > | (same) | `028_add_town_council_address_to_lifts.sql` | **`lifts.town_council` / `lifts.address`**, not on `inspections` — they are properties of the lift, constant per block, so storing them per inspection would duplicate the same value on every record and let two checks of one lift disagree. Shown read-only on the form, auto-filled from the lift |
 > | (same) | `031_add_reopen_count_to_inspections.sql` | Split into its own migration |
-> | (same) | *not built* | `defect_email_sent_at` — waits on UC-014 (D.3) |
+> | (same) | **built** | `inspections.defect_email_sent_at` — landed with UC-014 (D.3) alongside `036_create_defect_email_log.sql`; stamped on every successful send |
 > | `027_reseed_checklist_paper_form` | `026_seed_spot_check_checklist.sql` | Numbering swapped with the above |
+> | `028_create_defect_email_log` | `036_create_defect_email_log.sql` | Same table, later number — UC-014 landed after the `029`–`035` seed/feature migrations |
 >
 > The `idx_inspections_servicing_date` index was not created: the column is
 > queried only via a single record, never ranged over.
@@ -398,6 +412,47 @@ CREATE INDEX idx_defect_email_log_inspection ON defect_email_log(inspection_id);
 
 ---
 
+### 8.4 Contact data — `users.phone` + `contact_directory` (migrations `038`, `039`)
+
+Not in the original design. The sidebar "Need help?" card and the emergency
+contacts page were showing phone numbers hardcoded in the frontend — a
+fabricated `1800-123-4567` in `ResidentLayout`, and a literal `CONTACTS` array
+in `EmergencyContactsPage`. Neither could reflect who actually holds a role, and
+changing a number meant a redeploy. The numbers are split across two places
+because they are two different kinds of thing:
+
+| Kind | Where it lives | Served by |
+|---|---|---|
+| A **person's** number (admin, manager) | `users.phone` — nullable, beside `full_name`/`email` on the profile row it describes | `GET /api/users/contacts` |
+| An **organisation's** number (managing office, Police, Fire & Ambulance) | `contact_directory` — these are not user accounts, so a profile column cannot hold them | `GET /api/contacts` |
+
+```sql
+CREATE TABLE contact_directory (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  label        VARCHAR(120) NOT NULL UNIQUE,   -- UNIQUE ⇒ re-seed is idempotent
+  description  VARCHAR(255),
+  phone        VARCHAR(30)  NOT NULL,
+  category     VARCHAR(20)  NOT NULL CHECK (category IN ('estate','emergency')),
+  icon_key     VARCHAR(30),      -- stable presentation key, NOT a component name:
+                                 -- the frontend maps it to an icon and falls back
+                                 -- to a generic phone icon for anything new
+  is_help_line BOOLEAN NOT NULL DEFAULT FALSE,  -- the one row the sidebar dials
+  sort_order   INT     NOT NULL DEFAULT 0,
+  created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+`is_help_line` is an explicit flag rather than "whichever `estate` row sorts
+first", so changing which number the sidebar dials is a visible one-field edit
+and not a side effect of reordering.
+
+**Scope boundary.** `AppShell.jsx` and `EmergencyContactsPage.jsx` are owned by
+the shared per-role help/contacts component, which had not merged at the time of
+writing. The schema, both endpoints and the layout wiring are built and tested;
+`EmergencyContactsPage` still renders its static array and is the one consumer
+not yet switched over. See §14.9.
+
 ## 9. API Endpoints
 
 > All authenticated routes require `Authorization: Bearer <supabase access token>`.
@@ -413,7 +468,7 @@ CREATE INDEX idx_defect_email_log_inspection ON defect_email_log(inspection_id);
 | `GET /api/lifts` | inspector | Lift picker for UC-001 |
 | `GET /api/checklist-items` | any | Active checklist template, grouped by section |
 | `GET /api/contractors` | manager | Assignment dropdown |
-| `POST /api/inspections/complaint` | resident | UC-001b resident complaint (`upload.single('photo')`) |
+| `POST /api/inspections` | resident | UC-001b resident complaint (`photo` optional). Documented here as `/complaint` until the as-built check below; the mounted path has no suffix |
 | `POST /api/inspections/lift` | inspector | UC-001 spot-check (`upload.any()`) |
 | `GET /api/inspections/my` | resident, inspector | Own submissions |
 | `GET /api/inspections/status-board` | any | Shared status board |
@@ -434,6 +489,20 @@ CREATE INDEX idx_defect_email_log_inspection ON defect_email_log(inspection_id);
 | `POST /api/notifications` · `GET /:id/receipts` · `PATCH /:id/read` | manager / any | UC-008 |
 | `POST /api/admin/vendors` · `GET /` · `GET /expiry-check` · `POST /run-expiry-check` · `POST /:id/renew` · `POST /:id/suspend` · `PATCH /:id` · `GET /:id/history` | admin / cron | UC-012 |
 | `GET /api/reports/generate` · `POST /generate-manual` · `GET /` | cron / manager / admin | UC-009 |
+
+**Also mounted, added after §9.1 was first written.** Verified against
+`backend/src/routes/` — roles are the `requireRole(...)` argument on each route.
+
+| Method + path | Role | Purpose |
+|---|---|---|
+| `POST /api/users/register-profile` | any authed | Resident self-registration. Writes `role='resident', status='pending'` as SQL literals, so no request shape can register another role |
+| `GET /api/users/pending-residents` · `POST /:id/approve` · `POST /:id/reject` | manager | Approval queue for the above |
+| `GET /api/users/contacts` | manager, admin | Role help/contacts block: a manager gets the admins, an admin gets the managers. The counterpart role is a server-side map keyed off the verified token, never a request parameter — a resident cannot enumerate staff numbers |
+| `GET /api/contacts` | any authed | Contact directory (§8.4) — the estate and national emergency numbers behind the sidebar help card and the emergency contacts page |
+| `POST /api/feedback` | any authed | Sidebar feedback form |
+| `POST /api/cv/detections/:id/create-ticket` | manager | Promote a below-threshold CV detection to a record (UC-007 manual review) |
+| `POST /api/export/admin-costs-pptx` | admin | UC-011 cost deck |
+| `GET /api/inspections/defect-alert-demo` | cron | Demo trigger for the UC-014 defect email |
 
 ### 9.2 New endpoints
 
@@ -689,7 +758,7 @@ Re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift
 // GET /api/admin/costs/jobs
 { "data": [ { "id": "660789e7-…", "closed_at": "2026-07-28", "block": "88B",
               "category": "Electrical", "lift": null,
-              "contractor": "Test Lift Co.", "actual_cost": 90.00 } ] }
+              "contractor": "FPTD Services", "actual_cost": 90.00 } ] }
 
 // GET /api/admin/costs/filter-options
 { "blocks": ["44A","44B"], "categories": ["Doors","Electrical"],
@@ -715,7 +784,7 @@ Every off-platform party must be reachable, and every on-platform party must see
 
 | Trigger | Email (Nodemailer) | Socket.IO room(s) | Audit action |
 |---|---|---|---|
-| Spot-check submitted, ≥1 defect | **→ `contractors.contact_email`** (defect table, severities, deadline, deep link) | `manager-room`, `contractor-{user_id}` | `Defect Alert Sent` |
+| Spot-check submitted, ≥1 defect | **→ the vendor's account holder** — `COALESCE(u.email, c.contact_email)` over `LEFT JOIN users u ON u.id = c.user_id AND u.status = 'active'`, i.e. the person who can actually sign in and action it. The company inbox is the fallback only, for a vendor with no linked login or a suspended one (defect table, severities, deadline, deep link) | `manager-room`, `contractor-{user_id}` | `Defect Alert Sent` |
 | Spot-check submitted, 0 defects | — | `manager-room` | `Filed — no defects` |
 | Manager reassigns to a different contractor | → new contractor (`reassignment`) | `manager-room`, both `contractor-{user_id}` rooms | `Reassigned` |
 | Contractor acknowledges | — | `manager-room`, `inspector-team` | `Acknowledged` |
@@ -842,6 +911,8 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 7. **Voice input uses the browser-native Web Speech API** — free, no key, accuracy varies with accent. A type-fallback is always available. Production would use a cloud STT service.
 
 8. **CV (UC-007) is assistive.** Roboflow suggests; a human always confirms. Below 0.70 confidence a detection goes to a manual-review queue rather than creating a record.
+
+9. **Contact data is in the database; one consumer still reads a literal.** `users.phone` and `contact_directory` (§8.4) are built, seeded and served by `GET /api/users/contacts` and `GET /api/contacts`, and all three sidebar help cards read their numbers from them — resident (managing office, via `is_help_line`), manager (the admin's number), admin (the manager's). `EmergencyContactsPage.jsx` is the exception — it still renders its static `CONTACTS` array. That file and `AppShell.jsx` belong to the shared per-role help/contacts component, which is sequenced to merge before anyone else edits them, so switching that page to the endpoint is a follow-up rather than a rewrite. The `helpCaption` this implies (a manager's card currently reads "Call your managing office" while showing the admin's number) is part of the same component's remit.
 
 ---
 
