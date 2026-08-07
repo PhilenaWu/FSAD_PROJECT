@@ -1,57 +1,35 @@
-# Seeding an admin account
+# Admin accounts
 
-Authentication is **Supabase Auth**, so the login credential (email + password)
-lives in Supabase's own `auth.users` table — it can't be created by a SQL
-migration. Creating an admin is therefore two steps: create the auth user in the
-Supabase dashboard, then insert the matching profile row into our `users` table
-with `role = 'admin'`.
+The admin logins are seeded by `migrations/037_seed_admin.sql`, the same way the
+inspector, manager and resident logins are (029 / 032). Both the Supabase auth
+row (`auth.users` + `auth.identities`) and the profile row (`users`, with
+`role = 'admin'`) are created by the migration, so the credentials live entirely
+in the database — there is nothing to create by hand.
 
-Admin emails follow the `<name>@admin.com` convention. The default test account
-below is `admin@admin.com`.
+Run the migrations from `backend/`:
 
-| Field    | Value          |
-|----------|----------------|
-| Email    | `admin@admin.com` |
-| Password | `AdminTest123` |
-| Role     | `admin`        |
-
-## 1. Create the Supabase Auth user
-
-In the Supabase dashboard:
-
-1. **Authentication → Users → Add user → Create new user**.
-2. Email: `admin@admin.com`, Password: `AdminTest123`.
-3. Tick **Auto Confirm User** (skips the email confirmation step so the account
-   can log in immediately).
-4. Create, then copy the new user's **User UID** (a UUID) — you need it below.
-
-## 2. Insert the profile row
-
-Our `users` table keys off the Supabase auth UID (`users.id → auth.users.id`).
-Run this in the **Supabase SQL editor**, pasting the UID from step 1:
-
-```sql
-INSERT INTO users (id, email, full_name, role)
-VALUES (
-  '<PASTE-AUTH-USER-UID-HERE>',
-  'admin@admin.com',
-  'Estate Admin',
-  'admin'
-);
+```bash
+npm run migrate
 ```
 
-Or, without copy-pasting the UID, look it up by email from `auth.users`:
+| Name           | Email                            | Password        |
+|----------------|----------------------------------|-----------------|
+| Steven Tan     | `steven.tan.admin@emservices.sg` | `ChocoPizza_54` |
+| Sophia Collins | `sophia_collins@admin.com`       | `TempPass123!`  |
 
-```sql
-INSERT INTO users (id, email, full_name, role)
-SELECT id, email, 'Estate Admin', 'admin'
-FROM auth.users
-WHERE email = 'admin@admin.com';
-```
+Sign in at `/login`. The app routes `admin` to `/admin/costs` and renders the
+admin layout (Cost Analytics + Vendors tabs).
 
-## 3. Log in
+> Sophia's account predates this migration and was created by hand, so on our
+> shared database her original password still stands — the literal above only
+> applies to a **fresh** database. The migration is idempotent and never
+> overwrites an existing account's password. Passwords are bcrypt-hashed by
+> Supabase and cannot be read back; reset a forgotten one from
+> **Authentication → Users** in the Supabase dashboard.
 
-Sign in at `/login` with the credentials above. The app routes `admin` to
-`/admin/costs` and renders the admin layout (Cost Analytics + Vendors tabs).
+## Adding another admin
 
-> To add more admins, repeat with a different `<name>@admin.com` email.
+Add a `(email, full name, password)` row to the `VALUES` list in
+`037_seed_admin.sql` and re-run the migrations; existing accounts are left
+alone. Either address convention works — `<name>.admin@emservices.sg` matches
+the other staff roles, `<name>@admin.com` is what the earlier admin used.
