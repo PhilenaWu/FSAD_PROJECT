@@ -5,6 +5,8 @@ import RoleLayout from './components/RoleLayout'
 import RoleHome from './components/RoleHome'
 import PageLoader from './components/PageLoader'
 import LoginPage from './pages/LoginPage'
+import RegisterPage from './pages/RegisterPage'
+import PendingResidentsPage from './pages/PendingResidentsPage'
 import ReportIssuePage from './pages/ReportIssuePage'
 import InspectionListPage from './pages/InspectionListPage'
 import InspectionDetailPage from './pages/InspectionDetailPage'
@@ -33,6 +35,9 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public: anyone may submit a registration request. Approval is what
+          gates access, not the route. */}
+      <Route path="/register" element={<RegisterPage />} />
 
       {/* Protected: ProtectedRoute renders these via <Outlet /> only when authed */}
       <Route element={<ProtectedRoute />}>
@@ -58,6 +63,8 @@ function App() {
           <Route path="/inspections/:id" element={<InspectionDetailPage />} />
           <Route path="/reports" element={<ReportsArchivePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          {/* Manager-only approval queue for resident self-registrations. */}
+          <Route path="/pending-residents" element={<PendingResidentsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           {/* Contractor portal (UC-010). */}
           <Route path="/contractor-inbox" element={<ContractorInboxPage />} />

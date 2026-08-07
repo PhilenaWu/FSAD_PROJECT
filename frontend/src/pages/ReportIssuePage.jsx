@@ -29,14 +29,12 @@ import StopIcon from '@mui/icons-material/Stop';
 import LocationCapture from '../components/LocationCapture';
 import api from '../services/api';
 import { compressImage } from '../utils/imageCompress';
+import { BLOCKS } from '../utils/blocks';
 import {
   VOICE_LANGUAGES,
   isSpeechSupported,
   startRecognition,
 } from '../services/voiceService';
-
-// Placeholder block list until a real blocks source exists.
-const BLOCKS = ['44A', '44B', '44C', '45A', '45B'];
 
 // Small decorative header illustration — purely visual, no data.
 function ReportIllustration() {

@@ -5,6 +5,7 @@
 import { useNavigate } from 'react-router';
 import { Alert, Box, Button, CircularProgress, Paper, Stack, Typography } from '@mui/material';
 import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
+import HourglassEmptyOutlinedIcon from '@mui/icons-material/HourglassEmptyOutlined';
 import { useAuth } from '../context/AuthContext';
 import ResidentLayout from './ResidentLayout';
 import ManagerLayout from './ManagerLayout';
@@ -12,7 +13,7 @@ import AdminLayout from './AdminLayout';
 import ContractorLayout from './ContractorLayout';
 
 export default function RoleLayout() {
-  const { profile, profileLoading, suspended, logout } = useAuth();
+  const { profile, profileLoading, suspended, accountBlocked, logout } = useAuth();
   const navigate = useNavigate();
 
   if (profileLoading) {
@@ -62,6 +63,60 @@ export default function RoleLayout() {
               If you believe this is a mistake, contact the estate administrator.
               Vendor accounts are suspended automatically when their contract
               expires.
+            </Typography>
+            <Button
+              variant="contained"
+              onClick={async () => {
+                await logout();
+                navigate('/login', { replace: true });
+              }}
+            >
+              Sign out
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
+  }
+
+  // A self-registered resident whose request is still pending (or was
+  // rejected). Login already turns these away, but a session restored from a
+  // previous tab lands here — same reasoning as the suspended branch above:
+  // say why rather than falling through to resident chrome they cannot use.
+  if (accountBlocked) {
+    const pending = accountBlocked === 'pending';
+    return (
+      <Box
+        sx={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: 'background.default',
+          p: 2,
+        }}
+      >
+        <Paper elevation={2} sx={{ p: 4, borderRadius: 3, maxWidth: 460 }}>
+          <Stack spacing={2} alignItems="flex-start">
+            <Stack direction="row" spacing={1} alignItems="center">
+              {pending ? (
+                <HourglassEmptyOutlinedIcon color="warning" />
+              ) : (
+                <BlockOutlinedIcon color="error" />
+              )}
+              <Typography variant="h6" fontWeight={700}>
+                {pending ? 'Awaiting approval' : 'Request not approved'}
+              </Typography>
+            </Stack>
+            <Alert severity={pending ? 'info' : 'error'} sx={{ width: '100%' }}>
+              {pending
+                ? 'Your account is awaiting manager approval.'
+                : 'Your registration request was not approved.'}
+            </Alert>
+            <Typography variant="body2" color="text.secondary">
+              {pending
+                ? 'A manager is verifying the block and unit you gave against the estate records. You will be able to sign in once they approve your request.'
+                : 'If you believe this is a mistake, contact the managing office.'}
             </Typography>
             <Button
               variant="contained"

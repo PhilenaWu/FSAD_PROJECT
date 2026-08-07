@@ -20,6 +20,11 @@ export function AuthProvider({ children }) {
   // Without this the app fell through to resident chrome, so a suspended user
   // saw a silently wrong workspace instead of being told why.
   const [suspended, setSuspended] = useState(false);
+  // Same idea for self-registered residents: 'pending' until a manager
+  // approves them, 'rejected' if refused. Both hold a valid Supabase session
+  // but are refused by /api/users/me, so without this they would fall through
+  // to resident chrome exactly as suspended accounts used to.
+  const [accountBlocked, setAccountBlocked] = useState(null); // 'pending' | 'rejected'
   const [loading, setLoading] = useState(true);
 
   // Derived, not state: true from the instant a user exists until the profile
@@ -49,12 +54,14 @@ export function AuthProvider({ children }) {
       setProfile(null);
       setProfileError(false);
       setSuspended(false);
+      setAccountBlocked(null);
       return;
     }
     let active = true;
     setProfile(null);
     setProfileError(false);
     setSuspended(false);
+    setAccountBlocked(null);
     api
       .get('/api/users/me')
       .then((res) => {
@@ -63,7 +70,10 @@ export function AuthProvider({ children }) {
       .catch((err) => {
         if (!active) return;
         setProfileError(true);
-        setSuspended(err.response?.data?.code === 'ACCOUNT_SUSPENDED');
+        const code = err.response?.data?.code;
+        setSuspended(code === 'ACCOUNT_SUSPENDED');
+        if (code === 'ACCOUNT_PENDING') setAccountBlocked('pending');
+        if (code === 'ACCOUNT_REJECTED') setAccountBlocked('rejected');
       });
     return () => {
       active = false;
@@ -74,7 +84,16 @@ export function AuthProvider({ children }) {
   const login = (email, password) => signIn(email, password);
   const logout = () => signOut();
 
-  const value = { user, profile, profileLoading, suspended, loading, login, logout };
+  const value = {
+    user,
+    profile,
+    profileLoading,
+    suspended,
+    accountBlocked,
+    loading,
+    login,
+    logout,
+  };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

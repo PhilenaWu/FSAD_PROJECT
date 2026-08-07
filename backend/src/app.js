@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 const config = require('./config/env');
-const rateLimiter = require('./middleware/rateLimiter');
+const { rateLimiter } = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const inspectionRoutes = require('./routes/inspections');
 const myReportRoutes = require('./routes/myReports');

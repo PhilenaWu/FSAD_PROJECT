@@ -11,6 +11,7 @@ import {
   AppBar,
   Box,
   Button,
+  Chip,
   Divider,
   Drawer,
   IconButton,
@@ -80,7 +81,7 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
       }
       sx={{ px: 1.5, py: sectionLabel ? 0 : 1 }}
     >
-      {navItems.map(({ label, to, icon: Icon }) => {
+      {navItems.map(({ label, to, icon: Icon, badgeCount }) => {
         const active = currentPath === to;
         return (
           <ListItemButton
@@ -107,6 +108,16 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
               primary={label}
               primaryTypographyProps={{ fontWeight: active ? 700 : 500, fontSize: '0.9rem' }}
             />
+            {/* Optional count pill (e.g. pending resident requests). Hidden at
+                zero so the sidebar only draws the eye when there's work. */}
+            {badgeCount > 0 && (
+              <Chip
+                size="small"
+                label={badgeCount}
+                color="primary"
+                sx={{ height: 20, minWidth: 20, '& .MuiChip-label': { px: 0.75, fontWeight: 700 } }}
+              />
+            )}
           </ListItemButton>
         );
       })}
@@ -198,7 +209,8 @@ function HelpCard({ helpPhone }) {
 }
 
 /**
- * @param {{label: string, to: string, icon: React.ElementType}[]} navItems
+ * @param {{label: string, to: string, icon: React.ElementType, badgeCount?: number}[]} navItems
+ *   badgeCount renders a small count pill on the row; omitted or 0 renders none
  * @param {string} accountSubtitle - text under the name in the account menu
  * @param {boolean} profileLinkEnabled - whether "Profile" navigates to /profile
  *   (false renders it as a disabled placeholder, matching the pre-redesign
