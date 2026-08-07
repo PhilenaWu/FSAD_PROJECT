@@ -175,7 +175,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 ### Alternate flows
 
 - **A1 — Drill-through to triage.** Clicking a heatmap cell navigates to the triage queue pre-filtered to that block + category. The queue's filters are URL-driven, so back returns to the dashboard with its filters intact. This is the join between analytics and the UC-002 → UC-004 lifecycle.
-- **A2 — Live refresh.** The page subscribes to `status_update` on `manager-room`. Assign, rectify and close events (UC-002 / UC-004 / UC-010) trigger a re-fetch coalesced on a 1.5 s timer, so a burst of transitions causes one refresh, not one per event.
+- **A2 — Live refresh.** The page subscribes to `status_update` **and `cv_alert`** on `manager-room`, coalesced on a 1.5 s timer so a burst of transitions causes one refresh, not one per event. `status_update` covers assign / rectify / close (UC-002 / UC-004 / UC-010); `cv_alert` covers a high-confidence detection auto-creating a record (UC-007), which involves no status transition and so fired no `status_update` at all. **The refresh includes the priority queue.** The queue is fetched separately from the other six panels because it carries its own priority/status filters, and it was originally left out of the socket handler — a live update repainted every panel except the ranked queue, which then disagreed with the charts beside it until a filter changed or the page reloaded.
 - **A3 — CSV what-if preview (Data Playground).** Importing a `block,category[,date][,resolution_time_hours]` CSV blends hypothetical rows into the heatmap, trend and SLA gauge client-side. A Combined / Existing only / Imported only toggle drives all three charts at once; imported data is marked (ring on cells, dashed series, before → after gauge). **Nothing is written to the database**; the preview survives an accidental refresh via `sessionStorage` only, and Clear preview drops the rows from both.
 - **A4 — PowerPoint export.** `POST /api/export/pptx` renders the current filtered view server-side via PptxGenJS. It re-runs the same `fetch*` functions the dashboard used, so the deck cannot drift from the screen — and it always uses database rows, never A3's preview rows.
 - **A5 — Run AI analysis on demand.** "Run AI analysis" calls `GET /api/recommendations/run` rather than waiting for the nightly job, then re-fetches so new alert cards appear.
@@ -199,6 +199,7 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 
 - **Overdue excludes `On Hold`** — a hold pauses the rectification clock (G11), and the overdue-chase job skips held records. Counting them would make the dashboard contradict the emails the contractor actually receives. Soft-deleted records are excluded on the same basis as `open_count`.
 - **Frequency counts open records only** — including resolved history would rank a block that *used to* have problems as urgently as one that has them now. Long-run recurrence is UC-006's velocity analysis.
+- **A record with no AI score still ranks** — `ai_priority_score` is `NULL` until UC-006's nightly job scores a record, so the queue reads `COALESCE(ai_priority_score, 50)`: a neutral midpoint, letting recency and frequency place the record on their own. Treating `NULL` as 0 would push every brand-new record to the bottom of the very queue meant to surface it.
 - **No prior-period data** → `new_records_change_pct` is `null` and the KPI shows "no prior data" rather than a fabricated 0% or a division by zero.
 - **Nothing closed yet** → SLA percentage is 0 with `total_resolved: 0`, not `NaN`.
 - **A job acknowledged but never rectified** → `avg_rectification_days` is `NULL`, rendered `—`.
@@ -220,7 +221,7 @@ Chart.js heatmap (block × category), trend line, SLA gauge, contractor scorecar
 **Connection to the workflow.** The dashboard is not a terminal screen — it is a way into the record lifecycle:
 
 - **Heatmap drill-through** — clicking a block × category cell navigates to `/inspections?block=…&category=…`, landing the manager on the triage queue already filtered to those records, from which UC-002 (assign) and UC-004 (close) proceed normally. The queue's filters are URL-driven, so the link is shareable and the browser back button returns to the dashboard with its own filters intact.
-- **Live refresh** — the dashboard subscribes to `status_update` on `manager-room`, the same event UC-002/UC-004/UC-010 emit on every assign, rectify and close (HLD §10). Re-fetches are coalesced on a 1.5 s timer so a burst of transitions triggers one refresh, not one per event.
+- **Live refresh** — the dashboard subscribes to `status_update` on `manager-room`, the same event UC-002/UC-004/UC-010 emit on every assign, rectify and close (HLD §10), plus `cv_alert` for UC-007 auto-created records. Re-fetches are coalesced on a 1.5 s timer so a burst of transitions triggers one refresh, not one per event, and cover the priority queue as well as the six chart panels (A2).
 - **Priority queue → record** — each row links to `/inspections/:id`, the joint-endorsement view.
 - **Scorecard drill-through** — a non-zero overdue count links to `/inspections?contractor=…&overdue=true`, the triage queue narrowed to that contractor's past-deadline work (shown as a removable filter chip). Overdue uses the scorecard's own definition, so the two screens can never disagree.
 - **Exports carry the current filter state**, and always use database rows, never Data Playground preview rows.
@@ -301,7 +302,7 @@ KPI tiles (total actual, total projected, variance %), cost by category, cost pe
 ### Main flow
 
 1. Admin opens `/admin/costs`; filters are read from the URL, same pattern as UC-005.
-2. **KPI tiles** — total actual spend for the window, projected exposure from active AI predictions, and spend movement against the immediately preceding window of equal length.
+2. **KPI tiles** — total actual spend, projected exposure from active AI predictions, average cost per job, and spend movement against the immediately preceding window of equal length. **The movement tile measures a different span from the total beside it:** with no date filter the total is all-time while the movement compares the trailing 90 days against the 90 before, so the tile names its window and shows both figures (`last 90 days: … · prior: …`) rather than leaving the percentage to be read against the all-time total.
 3. **Cost by category** (bar) and **cost per contractor** (table) render, cost-heaviest first.
 4. **Cost trend** (line) plots one point per calendar month, with a **damped-trend exponential-smoothing projection** for the next 3 months carrying an ~80% confidence band.
 5. **Repair-vs-replace watchlist** ranks lifts by *lifetime* spend against a review threshold, projecting how many months until each crosses it.
@@ -363,10 +364,10 @@ drill-down table flags as outliers.
 ### Main flow
 
 1. Admin opens `/admin/vendors` — vendors listed **soonest-expiring first**, each with a days-until-expiry chip (red expired, amber ≤30 days).
-2. **Onboard:** company details, contact email, account-holder name/title, access reason, contract start/end, and an **optional** contract document uploaded to Cloudinary `/contracts` for reference. The same form sets the login credentials: a login email (auto-suggested from the holder's name + the company's email domain, editable) and an admin-set password with a Generate button. Creates the `contractors` row plus a linked `contractor` login.
+2. **Onboard:** company name, contract start/end, account-holder name/title, access reason, and an **optional** contract document uploaded to Cloudinary `/contracts` for reference. The same form sets the login credentials: the holder's login email and an admin-set password with a Generate button. Creates the `contractors` row plus a linked `contractor` login. Two columns are filled server-side rather than asked for, so onboarding does not collect the same fact twice: `contact_email` defaults to the login email, and `brands_serviced` to the company name — for a lift vendor the name generally carries the make it services ("Otis Service SG", "KONE Maintenance"). Both remain correctable through `PATCH /api/admin/vendors/:id`, which matters for a vendor covering makes its name does not state.
 3. **Renew:** extends `contract_end` (the server rejects a date that does not extend the current contract), optionally replacing the stored contract document; reactivates the account if it was auto-suspended.
 4. **Suspend:** early termination — sets `users.status = 'suspended'` immediately.
-5. **Edit details:** contact email, brands serviced, account-holder name/title, access reason. Contract dates change only via Renew, and the login email is immutable — it is the account's identity.
+5. **Edit details:** account-holder name/title and access reason. Contract dates change only via Renew, and the login email is immutable — it is the account's identity. `contact_email` and `brands_serviced` are not surfaced here either (step 2); the endpoint still accepts both.
 5a. **Cost evidence:** each row links to `/admin/costs?contractorId=…` — the UC-011 dashboard filtered to that vendor, the evidence behind a renew-or-suspend decision.
 6. **History:** every action is readable per vendor from `vendor_history`.
 7. **Daily expiry job (Davian):** suspends vendors past `contract_end`, writes history, emits `vendor_expired` to `admin-room`.
@@ -430,7 +431,7 @@ Contract details are entered manually — **no document parsing** (deliberate sc
 **Actor:** System · **Workflow step:** 4 · **Owner:** Davian
 **Client requirement:** R6 — *"an auto-email to the lift company when defects are flagged"* (the first advantage on Daniel Koh's slide 3, and step 4 of the workflow).
 **Precondition:** A spot-check has been submitted with at least one defect and a contractor is resolvable.
-**Postcondition:** An email is delivered to `contractors.contact_email`, a `defect_email_log` row and an audit row exist, and `defect_email_sent_at` is set.
+**Postcondition:** An email is delivered to the vendor's account holder — `COALESCE(users.email, contractors.contact_email)`, so the company inbox is used only when no active login is linked — a `defect_email_log` row and an audit row exist, and `defect_email_sent_at` is set.
 
 ### Main flow
 

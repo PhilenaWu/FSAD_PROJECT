@@ -486,7 +486,14 @@ export default function AdminCostPage() {
               sub={
                 summary.variance_pct == null
                   ? 'no prior-period spend to compare'
-                  : `prior period: ${fmtMoney(summary.prior_actual)}`
+                  : summary.window_actual == null
+                    ? `prior period: ${fmtMoney(summary.prior_actual)}`
+                    // Name the window and show its total. This tile does NOT
+                    // describe the all-time figure in the first tile — with no
+                    // date filter it compares the trailing 90 days against the
+                    // 90 before that.
+                    : `${filters.from || filters.to ? 'selected range' : 'last 90 days'}: ` +
+                      `${fmtMoney(summary.window_actual)} · prior: ${fmtMoney(summary.prior_actual)}`
               }
               icon={ShowChartOutlinedIcon}
               iconColor="secondary"

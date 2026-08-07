@@ -23,3 +23,10 @@ export function approveResident(id) {
 export function rejectResident(id) {
   return api.post(`/api/users/pending-residents/${id}/reject`);
 }
+
+// The contacts for the caller's role — admins for a manager, managers for an
+// admin. Which role comes back is decided server-side from the verified token,
+// so there is nothing to pass in.
+export function listContacts() {
+  return api.get('/api/users/contacts');
+}

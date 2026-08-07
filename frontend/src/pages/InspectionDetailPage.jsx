@@ -609,7 +609,14 @@ export default function InspectionDetailPage() {
                     <MenuItem value="" disabled>Select contractor</MenuItem>
                     {contractors.map((c) => (
                       <MenuItem key={c.id} value={c.id}>
-                        {c.name}{c.brands_serviced ? ` (${c.brands_serviced})` : ''}
+                        {/* Vendors onboarded without an explicit brand get the
+                            company name as their brand, so only append it when
+                            it actually adds something — otherwise this reads
+                            "FPTD Services (FPTD Services)". */}
+                        {c.name}
+                        {c.brands_serviced && c.brands_serviced !== c.name
+                          ? ` (${c.brands_serviced})`
+                          : ''}
                       </MenuItem>
                     ))}
                   </TextField>

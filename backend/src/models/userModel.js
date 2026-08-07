@@ -68,6 +68,21 @@ async function findActiveInspectors() {
   return result.rows;
 }
 
+// Active holders of a role, for the role contacts pages and the sidebar help
+// card. Same minimal projection as findActiveInspectors plus the phone added in
+// migration 038 — a contacts list needs a way to reach the person and nothing
+// else. phone is nullable, so callers must tolerate null.
+async function findActiveContactsByRole(role) {
+  const result = await query(
+    `SELECT id, full_name, email, phone
+     FROM users
+     WHERE role = $1 AND status = 'active'
+     ORDER BY full_name`,
+    [role]
+  );
+  return result.rows;
+}
+
 // Set a user's account status ('active' | 'suspended' | 'pending' |
 // 'rejected') — UC-012 suspend/renew and resident approve/reject.
 // Returns the updated row, or undefined if the id does not exist.
@@ -111,6 +126,7 @@ module.exports = {
   findPendingResidents,
   findById,
   findActiveInspectors,
+  findActiveContactsByRole,
   setStatus,
   setContractorId,
   updateHolder,

@@ -54,4 +54,14 @@ router.get(
   userController.listInspectors
 );
 
+// GET /api/users/contacts — the help/contacts block for the caller's role: a
+// manager gets the admins, an admin gets the managers. Restricted to those two
+// roles, so no other role can read staff phone numbers.
+router.get(
+  '/contacts',
+  requireAuth,
+  requireRole('manager', 'admin'),
+  userController.listContacts
+);
+
 module.exports = router;

@@ -184,6 +184,31 @@ describe('POST /api/admin/vendors (onboard)', () => {
     });
   });
 
+  // createVendor's params are (name, brands_serviced, contact_email, user_id, …)
+  const insertParams = () =>
+    mockQuery.mock.calls.find(([sql]) => /INSERT INTO contractors/i.test(sql))[1];
+
+  // The onboarding form asks for neither field; both are server-filled.
+  test('201 with neither inbox nor brands — both default off the other fields', async () => {
+    const { contact_email: _e, brands_serviced: _b, ...minimal } = validOnboard;
+    const res = await postOnboard(minimal);
+
+    expect(res.status).toBe(201);
+    // brands_serviced ← company name (the capability hint on the assign dropdown).
+    expect(insertParams()[1]).toBe(validOnboard.name);
+    // contact_email is NOT NULL and is the fallback recipient for defect mail
+    // when the holder's login is suspended — it must never be written empty.
+    expect(insertParams()[2]).toBe(validOnboard.login_email);
+  });
+
+  test('201 with both supplied — the given values are kept, not overwritten', async () => {
+    const res = await postOnboard(validOnboard);
+
+    expect(res.status).toBe(201);
+    expect(insertParams()[1]).toBe('Otis');
+    expect(insertParams()[2]).toBe('service@otis.example.com');
+  });
+
   test('400 VALIDATION_ERROR when account-holder fields are missing', async () => {
     const { account_holder_name, job_title, access_reason, ...withoutHolder } = validOnboard;
     const res = await postOnboard(withoutHolder);

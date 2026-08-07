@@ -1,8 +1,10 @@
 // RESIDENT/INSPECTOR app chrome: picks the role-specific sidebar nav items
 // and account-menu subtitle, then hands off to the shared AppShell for the
 // actual sidebar/top-bar/Outlet rendering.
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import AppShell from './AppShell';
+import { listDirectory } from '../services/contactService';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
@@ -52,6 +54,27 @@ export default function ResidentLayout() {
   const navItems = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.resident;
   const roleLabel = ROLE_LABEL[role] ?? role;
 
+  // "Need help?" number for a resident is the managing office line, read from
+  // the contact directory (migration 039) rather than hardcoded — the literal
+  // that used to sit here was fabricated and matched nothing else in the app.
+  // Only residents show the card, so only residents fetch it.
+  const [helpPhone, setHelpPhone] = useState(undefined);
+
+  useEffect(() => {
+    if (role !== 'resident') return undefined;
+    let active = true;
+    listDirectory()
+      .then((res) => {
+        if (active) setHelpPhone(res.data.find((c) => c.is_help_line)?.phone);
+      })
+      .catch(() => {
+        // Leave it undefined — the sidebar shows the default support card.
+      });
+    return () => {
+      active = false;
+    };
+  }, [role]);
+
   // e.g. "Resident · Block 44A #12-05" — block/unit fill in once profile loads.
   const accountSubtitle =
     profile?.block_number || profile?.unit_number
@@ -65,9 +88,7 @@ export default function ResidentLayout() {
       // No profile page wired up for residents/inspectors yet — placeholder only.
       profileLinkEnabled={false}
       quickAccessItems={role === 'resident' ? RESIDENT_QUICK_ACCESS : undefined}
-      // Fabricated for the resident home redesign at the requester's explicit
-      // instruction — not a real managing-office number.
-      helpPhone={role === 'resident' ? '1800-123-4567' : undefined}
+      helpPhone={helpPhone}
       showLogoutInSidebar={role === 'resident'}
     />
   );
