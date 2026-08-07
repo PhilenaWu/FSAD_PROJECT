@@ -6,6 +6,12 @@
 'use strict';
 
 const { query } = require('../config/db');
+const { isRealDate, isSingleString } = require('../utils/validators');
+
+// Same error shape as the rest of the API ({ code, message }).
+function validationError(res, message) {
+  return res.status(400).json({ code: 'VALIDATION_ERROR', message });
+}
 
 // SLA target for resolution, in hours (HLD §6.3 sample response).
 const SLA_THRESHOLD_HRS = 72;
@@ -319,6 +325,54 @@ async function fetchPriorityQueue(filters) {
 }
 
 // ---------------------------------------------------------------------------
+// Request validation
+// ---------------------------------------------------------------------------
+
+// Every analytics endpoint takes the same optional filters and passes them
+// straight to buildFilters, which binds them as SQL parameters. Binding stops
+// injection, but it does not stop a cast error: Postgres coerces the bound
+// value to the column's type, so ?from=hello raises SQLSTATE 22007 and
+// ?to=2026-13-45 raises 22008. Both reached the client as a 500 carrying the
+// database's own message. Validating here turns them into a 400 that names the
+// offending parameter, and keeps the schema out of the response.
+//
+// Mounted once on the router rather than repeated in seven handlers.
+const FILTER_PARAMS = ['from', 'to', 'block', 'category', 'section', 'priority', 'status'];
+const TEXT_FILTER_MAX_LEN = 100;
+
+function validateFilters(req, res, next) {
+  for (const name of FILTER_PARAMS) {
+    if (!isSingleString(req.query[name])) {
+      return validationError(res, `${name} must be provided at most once.`);
+    }
+  }
+
+  for (const name of ['from', 'to']) {
+    const value = req.query[name];
+    if (value && !isRealDate(value)) {
+      return validationError(res, `${name} must be a real calendar date in YYYY-MM-DD format.`);
+    }
+  }
+
+  // Safe as a string compare: both are validated YYYY-MM-DD, which sorts
+  // lexicographically the same way it sorts chronologically.
+  const { from, to } = req.query;
+  if (from && to && from > to) {
+    return validationError(res, 'from must not be after to.');
+  }
+
+  // The text filters are compared against VARCHAR columns, so an over-long
+  // value cannot match anything — reject it rather than run the query.
+  for (const name of ['block', 'category', 'section', 'priority', 'status']) {
+    if (req.query[name] && req.query[name].length > TEXT_FILTER_MAX_LEN) {
+      return validationError(res, `${name} must be at most ${TEXT_FILTER_MAX_LEN} characters.`);
+    }
+  }
+
+  return next();
+}
+
+// ---------------------------------------------------------------------------
 // Route handlers (HLD §6.3 response shapes).
 // ---------------------------------------------------------------------------
 
@@ -387,6 +441,7 @@ async function getPriorityQueue(req, res, next) {
 
 module.exports = {
   SLA_THRESHOLD_HRS,
+  validateFilters,
   getFilterOptions,
   getSummary,
   getHeatmap,

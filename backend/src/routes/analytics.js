@@ -8,8 +8,11 @@ const analyticsController = require('../controllers/analyticsController');
 
 const router = express.Router();
 
-// Every analytics endpoint is manager-only.
-router.use(requireAuth, requireRole('manager'));
+// Every analytics endpoint is manager-only, and every one takes the same
+// optional filters — so both guards are mounted once here rather than repeated
+// on seven routes. validateFilters rejects a malformed date or a repeated
+// parameter with a 400 before any SQL runs.
+router.use(requireAuth, requireRole('manager'), analyticsController.validateFilters);
 
 router.get('/filter-options', analyticsController.getFilterOptions);
 router.get('/summary', analyticsController.getSummary);

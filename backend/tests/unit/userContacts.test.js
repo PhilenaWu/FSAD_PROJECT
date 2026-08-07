@@ -10,6 +10,7 @@ jest.mock('../../src/config/supabase', () => ({
         'manager-token': 'mgr-1',
         'admin-token': 'adm-1',
         'resident-token': 'res-1',
+        'inspector-token': 'ins-1',
       };
       if (ids[token]) {
         return { data: { claims: { sub: ids[token], email: `${ids[token]}@example.com` } }, error: null };
@@ -20,7 +21,12 @@ jest.mock('../../src/config/supabase', () => ({
 }));
 
 jest.mock('../../src/config/db', () => {
-  const ROLES = { 'mgr-1': 'manager', 'adm-1': 'admin', 'res-1': 'resident' };
+  const ROLES = {
+    'mgr-1': 'manager',
+    'adm-1': 'admin',
+    'res-1': 'resident',
+    'ins-1': 'inspector',
+  };
   const BY_ROLE = {
     admin: [
       { id: 'adm-1', full_name: 'Steven Tan', email: 'steven.tan.admin@emservices.sg', phone: '6500 0311' },
@@ -71,6 +77,15 @@ describe('GET /api/users/contacts', () => {
     expect(res.status).toBe(200);
     expect(res.body.map((c) => c.full_name)).toEqual(['Rachel Lim', 'Zoe Ng']);
     expect(res.body[1].phone).toBeNull();
+  });
+
+  test('an inspector gets the managers — the number their contacts page shows', async () => {
+    const res = await request(app)
+      .get('/api/users/contacts')
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toMatchObject({ full_name: 'Rachel Lim', phone: '6500 0321' });
   });
 
   test('a resident is refused — staff numbers are not readable by other roles', async () => {

@@ -1,10 +1,8 @@
 // RESIDENT/INSPECTOR app chrome: picks the role-specific sidebar nav items
 // and account-menu subtitle, then hands off to the shared AppShell for the
 // actual sidebar/top-bar/Outlet rendering.
-import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getRoleContacts } from '../lib/roleContacts';
-import { listDirectory } from '../services/contactService';
+import { useRoleContacts } from '../lib/useRoleContacts';
 import AppShell from './AppShell';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -59,36 +57,12 @@ export default function ResidentLayout() {
   const role = profile?.role ?? 'resident';
   const navItems = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.resident;
   const roleLabel = ROLE_LABEL[role] ?? role;
-  // Sidebar help card values — same source the contacts page reads.
-  const { helpPhone: fallbackPhone, helpCaption } = getRoleContacts(role);
-
-  // The resident help line is also a row in contact_directory (migration
-  // 039, flagged is_help_line), so the number can be corrected without a
-  // redeploy. roleContacts.js stays the caption and the fallback used while
-  // this loads or if the request fails — both say 6500 0300 today.
-  //
-  // Residents only, deliberately: is_help_line marks ONE global row (the
-  // managing office). An inspector's card is the estate manager instead, a
-  // different number the directory cannot express per role, so overriding
-  // for every role here would quietly undo that choice.
-  const [directoryPhone, setDirectoryPhone] = useState(undefined);
-
-  useEffect(() => {
-    if (role !== 'resident') return undefined;
-    let active = true;
-    listDirectory()
-      .then((res) => {
-        if (active) setDirectoryPhone(res.data.find((c) => c.is_help_line)?.phone);
-      })
-      .catch(() => {
-        // Keep the roleContacts value rather than blanking the card.
-      });
-    return () => {
-      active = false;
-    };
-  }, [role]);
-
-  const helpPhone = directoryPhone ?? fallbackPhone;
+  // Sidebar help card — same hook the contacts page reads, so the two never
+  // disagree. A resident's number is the directory row flagged is_help_line
+  // (the managing office); an inspector's is the estate manager's own, which
+  // is a different kind of number the directory cannot express per role. Both
+  // come from the database, so correcting one needs no redeploy.
+  const { helpPhone, helpCaption } = useRoleContacts();
 
   // e.g. "Resident · Block 44A #12-05" — block/unit fill in once profile loads.
   const accountSubtitle =

@@ -64,18 +64,20 @@ async function listInspectors(req, res, next) {
 }
 
 // Who each role is told to contact for help. A manager escalates to an admin;
-// an admin's counterpart is the managers running the estate day to day. Kept as
-// a map rather than a request parameter so a caller cannot enumerate arbitrary
-// roles — a resident must not be able to list every manager's phone number.
+// an admin's counterpart is the managers running the estate day to day; an
+// inspector on site reports to a manager too. Kept as a map rather than a
+// request parameter so a caller cannot enumerate arbitrary roles — a resident
+// must not be able to list every manager's phone number.
 const CONTACT_ROLE_FOR = {
   manager: 'admin',
   admin: 'manager',
+  inspector: 'manager',
 };
 
 // GET /api/users/contacts — the contacts the caller is meant to reach: the
 // admin numbers behind the manager's "Need help?" card, and the manager list on
-// the admin contacts page. Role-gated at the route; the role read here is the
-// verified one from requireAuth, never from the request.
+// the admin and inspector contacts pages. Role-gated at the route; the role read
+// here is the verified one from requireAuth, never from the request.
 async function listContacts(req, res, next) {
   try {
     const role = CONTACT_ROLE_FOR[req.user.role];
