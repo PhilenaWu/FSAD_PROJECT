@@ -11,7 +11,7 @@ const BLOCK_COORDS = {
   '44B': { lat: 1.3525, lng: 103.8203 },
   '44C': { lat: 1.3529, lng: 103.8208 },
   '45A': { lat: 1.3534, lng: 103.8194 },
-  '45B': { lat: 1.3538, lng: 103.8199 },
+  '45B': { lat: 1.3793, lng: 103.8499 },
 };
 
 // Closest block to a { lat, lng } fix. Plain squared-degree distance — over a
