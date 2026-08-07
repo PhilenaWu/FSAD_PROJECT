@@ -1,39 +1,22 @@
-// Sidebar "Emergency contacts" — static reference list. The managing office
-// number is the estate's actual contact; Police/Fire & Ambulance are
-// Singapore's national emergency numbers, included for genuine safety value
-// (not app-specific data, so nothing here is invented).
+// Sidebar "Emergency contacts" — a static reference list, different per role:
+// residents see the managing office plus the national emergency lines,
+// inspectors see the maintenance line and the estate manager. The values
+// themselves live in lib/roleContacts.js, which the sidebar help card reads
+// too, so a role's number never disagrees between the two.
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
-import ApartmentOutlinedIcon from '@mui/icons-material/ApartmentOutlined';
-import LocalPoliceOutlinedIcon from '@mui/icons-material/LocalPoliceOutlined';
-import LocalFireDepartmentOutlinedIcon from '@mui/icons-material/LocalFireDepartmentOutlined';
-
-const CONTACTS = [
-  {
-    label: 'Managing office',
-    description: 'Estate maintenance, lift faults, general enquiries',
-    number: '6500 0300',
-    icon: ApartmentOutlinedIcon,
-    color: 'primary',
-  },
-  {
-    label: 'Police',
-    description: 'National emergency line',
-    number: '999',
-    icon: LocalPoliceOutlinedIcon,
-    color: 'info',
-  },
-  {
-    label: 'Fire & Ambulance',
-    description: 'National emergency line',
-    number: '995',
-    icon: LocalFireDepartmentOutlinedIcon,
-    color: 'error',
-  },
-];
+import { useAuth } from '../context/AuthContext';
+import { getRoleContacts } from '../lib/roleContacts';
 
 export default function EmergencyContactsPage() {
+  const { profile } = useAuth();
+  const {
+    contactsTitle = 'Contacts',
+    contactsSubtitle,
+    contacts = [],
+  } = getRoleContacts(profile?.role);
+
   return (
     <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 720, mx: 'auto' }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
@@ -53,16 +36,26 @@ export default function EmergencyContactsPage() {
         </Box>
         <Box>
           <Typography variant="h5" fontWeight={700}>
-            Emergency contacts
+            {contactsTitle}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            For urgent estate issues or emergencies.
-          </Typography>
+          {contactsSubtitle && (
+            <Typography variant="body2" color="text.secondary">
+              {contactsSubtitle}
+            </Typography>
+          )}
         </Box>
       </Stack>
 
       <Stack spacing={2}>
-        {CONTACTS.map(({ label, description, number, icon: Icon, color }) => (
+        {/* A role nobody has added contacts for yet, rather than a blank page. */}
+        {contacts.length === 0 && (
+          <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              No contacts have been listed for your role yet.
+            </Typography>
+          </Paper>
+        )}
+        {contacts.map(({ label, description, number, icon: Icon, color }) => (
           <Paper
             key={label}
             variant="outlined"

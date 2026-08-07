@@ -2,6 +2,7 @@
 // and account-menu subtitle, then hands off to the shared AppShell for the
 // actual sidebar/top-bar/Outlet rendering.
 import { useAuth } from '../context/AuthContext';
+import { getRoleContacts } from '../lib/roleContacts';
 import AppShell from './AppShell';
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
@@ -31,13 +32,18 @@ const NAV_BY_ROLE = {
   ],
 };
 
-// Sidebar "Quick access" section — resident only (matches the resident home
-// redesign this was requested for; inspectors keep the plain nav).
-const RESIDENT_QUICK_ACCESS = [
-  { label: 'Emergency contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },
-  { label: 'FAQ', to: '/faq', icon: HelpOutlineOutlinedIcon },
-  { label: 'Feedback', to: '/feedback', icon: StarOutlinedIcon },
-];
+// Sidebar "Quick access" section. Residents get the full set; inspectors get
+// only the contacts page (FAQ and Feedback are resident-facing).
+const QUICK_ACCESS_BY_ROLE = {
+  resident: [
+    { label: 'Emergency contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },
+    { label: 'FAQ', to: '/faq', icon: HelpOutlineOutlinedIcon },
+    { label: 'Feedback', to: '/feedback', icon: StarOutlinedIcon },
+  ],
+  inspector: [
+    { label: 'Contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },
+  ],
+};
 
 const ROLE_LABEL = {
   resident: 'Resident',
@@ -51,6 +57,8 @@ export default function ResidentLayout() {
   const role = profile?.role ?? 'resident';
   const navItems = NAV_BY_ROLE[role] ?? NAV_BY_ROLE.resident;
   const roleLabel = ROLE_LABEL[role] ?? role;
+  // Sidebar help card values — same source the contacts page reads.
+  const { helpPhone, helpCaption } = getRoleContacts(role);
 
   // e.g. "Resident · Block 44A #12-05" — block/unit fill in once profile loads.
   const accountSubtitle =
@@ -64,10 +72,9 @@ export default function ResidentLayout() {
       accountSubtitle={accountSubtitle}
       // No profile page wired up for residents/inspectors yet — placeholder only.
       profileLinkEnabled={false}
-      quickAccessItems={role === 'resident' ? RESIDENT_QUICK_ACCESS : undefined}
-      // Fabricated for the resident home redesign at the requester's explicit
-      // instruction — not a real managing-office number.
-      helpPhone={role === 'resident' ? '1800-123-4567' : undefined}
+      quickAccessItems={QUICK_ACCESS_BY_ROLE[role]}
+      helpPhone={helpPhone}
+      helpCaption={helpCaption}
       showLogoutInSidebar={role === 'resident'}
     />
   );
