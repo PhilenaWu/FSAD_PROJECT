@@ -374,8 +374,10 @@ export default function ReportIssuePage() {
                 />
               </Stack>
 
-              {/* Optional GPS — supplements (never replaces) block/unit. */}
-              <LocationCapture value={gps} onChange={setGps} />
+              {/* Optional GPS — supplements (never replaces) block/unit. The
+                  selected block is passed in so the card can say so when the
+                  fix suggests a different one. */}
+              <LocationCapture value={gps} onChange={setGps} selectedBlock={block} />
 
               {/* Photo picker / dropzone */}
               <Box>

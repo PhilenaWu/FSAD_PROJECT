@@ -36,7 +36,9 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CloseIcon from '@mui/icons-material/Close';
 import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
+import DoneAllIcon from '@mui/icons-material/DoneAll';
 import ElevatorOutlinedIcon from '@mui/icons-material/ElevatorOutlined';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import EventOutlinedIcon from '@mui/icons-material/EventOutlined';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
@@ -191,6 +193,21 @@ export default function NewInspectionPage() {
       ...prev,
       [itemId]: { ...prev[itemId], ...patch, unconfirmed: false },
     }));
+  }
+
+  // Mark every checklist item at once, then correct the exceptions. Most
+  // spot-checks come back clean, and ticking 25 rows by hand to say so is the
+  // slow part of the form. Overwrites answers already given, and counts as the
+  // inspector reviewing each field — same as setAnswer, it clears the OCR
+  // "unconfirmed" mark, since they are signing for the result either way.
+  function markAllItems(result) {
+    setAnswers((prev) => {
+      const next = { ...prev };
+      for (const i of items) {
+        next[i.id] = { ...next[i.id], result, unconfirmed: false };
+      }
+      return next;
+    });
   }
 
   // Attach/replace a defect photo. Object URLs are created here and revoked on
@@ -631,8 +648,46 @@ export default function NewInspectionPage() {
                   }}
                 />
 
-                {/* Optional GPS — supplements (never replaces) the lift choice. */}
-                <LocationCapture value={gps} onChange={setGps} />
+                {/* Optional GPS — supplements (never replaces) the lift choice.
+                    The chosen lift's block is passed in so the card can say so
+                    when the fix suggests a different one. */}
+                <LocationCapture
+                  value={gps}
+                  onChange={setGps}
+                  selectedBlock={selectedLift?.block_number}
+                />
+
+                {/* Bulk answer, above the sections so it reads as applying to
+                    all of them rather than to whichever one is open. */}
+                {liftId && items.length > 0 && (
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1}
+                    alignItems={{ xs: 'stretch', sm: 'center' }}
+                  >
+                    <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
+                      Mark all {items.length} items, then change the exceptions:
+                    </Typography>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="success"
+                      startIcon={<DoneAllIcon fontSize="small" />}
+                      onClick={() => markAllItems('Pass')}
+                    >
+                      All pass
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="warning"
+                      startIcon={<ErrorOutlineIcon fontSize="small" />}
+                      onClick={() => markAllItems('Defect')}
+                    >
+                      All defect
+                    </Button>
+                  </Stack>
+                )}
 
                 {/* Checklist appears once a lift is chosen. */}
                 {liftId &&
@@ -699,10 +754,14 @@ export default function NewInspectionPage() {
                                     : undefined
                                 }
                               >
+                                {/* Row, at every width: on a phone the radios
+                                    used to drop under the item text, which put
+                                    one checklist row over two screens' worth of
+                                    scrolling. The text wraps instead. */}
                                 <Stack
-                                  direction={{ xs: 'column', sm: 'row' }}
+                                  direction="row"
                                   justifyContent="space-between"
-                                  alignItems={{ xs: 'flex-start', sm: 'center' }}
+                                  alignItems="center"
                                   spacing={1}
                                 >
                                   <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
@@ -730,6 +789,11 @@ export default function NewInspectionPage() {
                                     row
                                     value={a.result ?? ''}
                                     onChange={(e) => setAnswer(item.id, { result: e.target.value })}
+                                    sx={{
+                                      flexShrink: 0,
+                                      flexWrap: 'nowrap',
+                                      '& .MuiFormControlLabel-root': { mr: 1 },
+                                    }}
                                   >
                                     <FormControlLabel
                                       value="Pass"
