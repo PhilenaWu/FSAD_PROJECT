@@ -117,7 +117,7 @@ beforeEach(() => {
     if (/INSERT INTO contractors/i.test(sql)) {
       return {
         rows: [{
-          id: 'ctr-1',
+          id: '11111111-1111-4111-8111-111111111111',
           name: params[0],
           user_id: params[3],
           contract_start: params[4],
@@ -173,7 +173,7 @@ describe('POST /api/admin/vendors (onboard)', () => {
     const res = await postOnboard(validOnboard);
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
-      contractor_id: 'ctr-1',
+      contractor_id: '11111111-1111-4111-8111-111111111111',
       user_id: 'new-auth-1',
       status: 'active',
       contract_end: '2027-06-30',
@@ -263,30 +263,30 @@ describe('onboard rollback + audit trail', () => {
     await postOnboard(validOnboard);
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringMatching(/INSERT INTO vendor_history/i),
-      expect.arrayContaining(['ctr-1', 'adm-1', 'Onboarded'])
+      expect.arrayContaining(['11111111-1111-4111-8111-111111111111', 'adm-1', 'Onboarded'])
     );
   });
 });
 
 describe('PATCH /api/admin/vendors/:id (edit details)', () => {
   test('200 — updates contact/holder fields and records history', async () => {
-    state.vendorRow = { id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1' };
+    state.vendorRow = { id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' };
     const res = await request(app)
-      .patch('/api/admin/vendors/ctr-1')
+      .patch('/api/admin/vendors/11111111-1111-4111-8111-111111111111')
       .set('Authorization', 'Bearer admin-token')
       .send({ job_title: 'Senior Operations Lead', contact_email: 'ops@otiselevator.sg' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ contractor_id: 'ctr-1' });
+    expect(res.body).toEqual({ contractor_id: '11111111-1111-4111-8111-111111111111' });
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringMatching(/INSERT INTO vendor_history/i),
-      expect.arrayContaining(['ctr-1', 'adm-1', 'Details Updated'])
+      expect.arrayContaining(['11111111-1111-4111-8111-111111111111', 'adm-1', 'Details Updated'])
     );
   });
 
   test('400 when no fields are supplied', async () => {
-    state.vendorRow = { id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1' };
+    state.vendorRow = { id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' };
     const res = await request(app)
-      .patch('/api/admin/vendors/ctr-1')
+      .patch('/api/admin/vendors/11111111-1111-4111-8111-111111111111')
       .set('Authorization', 'Bearer admin-token')
       .send({});
     expect(res.status).toBe(400);
@@ -295,9 +295,9 @@ describe('PATCH /api/admin/vendors/:id (edit details)', () => {
 
 describe('GET /api/admin/vendors/:id/history', () => {
   test('200 — returns the audit trail with actor names', async () => {
-    state.vendorRow = { id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1' };
+    state.vendorRow = { id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' };
     const res = await request(app)
-      .get('/api/admin/vendors/ctr-1/history')
+      .get('/api/admin/vendors/11111111-1111-4111-8111-111111111111/history')
       .set('Authorization', 'Bearer admin-token');
     expect(res.status).toBe(200);
     expect(res.body.data[0]).toMatchObject({ action: 'Onboarded', actor_name: 'Admin One' });
@@ -308,27 +308,27 @@ describe('GET /api/admin/vendors/expiry-check (daily job)', () => {
   // VND-T04
   test('suspends vendors past contract_end and notifies admin room', async () => {
     state.expiredRows = [{
-      id: 'ctr-9', name: 'Expired Lifts Co.', contract_end: '2026-01-31', user_id: 'usr-9',
+      id: '99999999-9999-4999-8999-999999999999', name: 'Expired Lifts Co.', contract_end: '2026-01-31', user_id: 'aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa',
     }];
     const res = await request(app)
       .get('/api/admin/vendors/expiry-check')
       .set('Authorization', 'Bearer test-cron-secret');
     expect(res.status).toBe(200);
     expect(res.body.suspended).toBe(1);
-    expect(res.body.vendors[0].contractor_id).toBe('ctr-9');
+    expect(res.body.vendors[0].contractor_id).toBe('99999999-9999-4999-8999-999999999999');
     // users.status flipped to suspended
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringMatching(/UPDATE users SET status/i),
-      ['usr-9', 'suspended']
+      ['aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa', 'suspended']
     );
     expect(emitToRoom).toHaveBeenCalledWith(
-      'admin-room', 'vendor_expired', expect.objectContaining({ contractor_id: 'ctr-9' })
+      'admin-room', 'vendor_expired', expect.objectContaining({ contractor_id: '99999999-9999-4999-8999-999999999999' })
     );
   });
 
   test('admin can trigger the same check on demand via POST /run-expiry-check', async () => {
     state.expiredRows = [{
-      id: 'ctr-9', name: 'Expired Lifts Co.', contract_end: '2026-01-31', user_id: 'usr-9',
+      id: '99999999-9999-4999-8999-999999999999', name: 'Expired Lifts Co.', contract_end: '2026-01-31', user_id: 'aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa',
     }];
     const res = await request(app)
       .post('/api/admin/vendors/run-expiry-check')
@@ -372,16 +372,16 @@ describe('suspended vendor access (VND-T05)', () => {
 describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
   test('200 — suspended vendor reactivated with new contract_end', async () => {
     state.vendorRow = {
-      id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1',
+      id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
       contract_start: '2026-07-01', contract_end: '2026-07-16',
     };
     const res = await request(app)
-      .post('/api/admin/vendors/ctr-1/renew')
+      .post('/api/admin/vendors/11111111-1111-4111-8111-111111111111/renew')
       .set('Authorization', 'Bearer admin-token')
       .send({ contract_end: '2028-06-30' });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      contractor_id: 'ctr-1',
+      contractor_id: '11111111-1111-4111-8111-111111111111',
       status: 'active',
       contract_end: '2028-06-30',
     });
@@ -389,11 +389,11 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
 
   test('renew accepts an optional replacement contract document', async () => {
     state.vendorRow = {
-      id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1',
+      id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
       contract_start: '2026-07-01', contract_end: '2026-07-16',
     };
     const res = await request(app)
-      .post('/api/admin/vendors/ctr-1/renew')
+      .post('/api/admin/vendors/11111111-1111-4111-8111-111111111111/renew')
       .set('Authorization', 'Bearer admin-token')
       .field('contract_end', '2028-06-30')
       .attach('contract_doc', Buffer.from('%PDF-fake'), 'renewal.pdf');
@@ -403,7 +403,7 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
     // updateContract received the new Cloudinary URL (not null)
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringMatching(/UPDATE contractors/i),
-      ['ctr-1', '2028-06-30', 'https://res.cloudinary.com/test/contracts/doc.pdf']
+      ['11111111-1111-4111-8111-111111111111', '2028-06-30', 'https://res.cloudinary.com/test/contracts/doc.pdf']
     );
   });
 
@@ -420,12 +420,12 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
   // disabled the button, but the server accepted it.
   test('400 INVALID_CONTRACT_DATES — a date on or before the current contract_end is not a renewal', async () => {
     state.vendorRow = {
-      id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1',
+      id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
       contract_start: '2026-01-01', contract_end: '2027-01-01',
     };
     for (const contract_end of ['2026-06-01', '2027-01-01']) {
       const res = await request(app)
-        .post('/api/admin/vendors/ctr-1/renew')
+        .post('/api/admin/vendors/11111111-1111-4111-8111-111111111111/renew')
         .set('Authorization', 'Bearer admin-token')
         .send({ contract_end });
       expect(res.status).toBe(400);
@@ -436,11 +436,51 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
 
 describe('POST /api/admin/vendors/:id/suspend (early termination)', () => {
   test('200 — linked account suspended immediately', async () => {
-    state.vendorRow = { id: 'ctr-1', name: 'Otis Elevator Co.', user_id: 'usr-1' };
+    state.vendorRow = { id: '11111111-1111-4111-8111-111111111111', name: 'Otis Elevator Co.', user_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' };
     const res = await request(app)
-      .post('/api/admin/vendors/ctr-1/suspend')
+      .post('/api/admin/vendors/11111111-1111-4111-8111-111111111111/suspend')
       .set('Authorization', 'Bearer admin-token');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ contractor_id: 'ctr-1', status: 'suspended' });
+    expect(res.body).toEqual({ contractor_id: '11111111-1111-4111-8111-111111111111', status: 'suspended' });
+  });
+});
+
+// contractors.id is a UUID column, so Postgres coerces whatever is bound to it.
+// A path id like "not-a-uuid" therefore raised SQLSTATE 22P02 and surfaced as a
+// 500 quoting the database's own message — the wrong status, and more about the
+// schema than a caller should see. router.param now answers 404, the same as a
+// well-formed id naming no vendor: an id that cannot identify a row is a miss.
+describe('malformed :id is a miss, not a server error', () => {
+  const ROUTES = [
+    ['get', '/api/admin/vendors/not-a-uuid/history'],
+    ['post', '/api/admin/vendors/not-a-uuid/suspend'],
+    ['post', '/api/admin/vendors/not-a-uuid/renew'],
+    ['patch', '/api/admin/vendors/not-a-uuid'],
+  ];
+
+  test.each(ROUTES)('%s %s → 404, never 500', async (method, url) => {
+    const res = await request(app)[method](url).set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('no Postgres error code or message reaches the client', async () => {
+    const res = await request(app)
+      .get('/api/admin/vendors/not-a-uuid/history')
+      .set('Authorization', 'Bearer admin-token');
+
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(/22P02/);
+    expect(body).not.toMatch(/invalid input syntax/i);
+    expect(body).not.toMatch(/uuid/i);
+  });
+
+  test('a malformed id is not a way around the admin role gate', async () => {
+    const res = await request(app)
+      .get('/api/admin/vendors/not-a-uuid/history')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect([401, 403]).toContain(res.status);
   });
 });

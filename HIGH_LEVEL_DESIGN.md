@@ -49,7 +49,7 @@ Every sentence of the client brief mapped to a use case, an owner, and its curre
 | R15 | "Lesser travelling time · save time on paperwork · use less paper" | outcome | — | Emergent from R1–R10 |
 | R16 | "Proper record, audit" · "Download as file every year" | UC-009 | Davian | **Partial** — monthly PDF built; annual export is new |
 | R17 | "Statistic / report" | UC-005 / UC-011 | Hasini / Davian | **Built** — both dashboards read live endpoints (`/api/analytics/*`, `/api/admin/costs/*`) |
-| R18 | "Admin / user control · add new equipment and users with rights" | UC-012 | Davian (BE) / Hasini (FE) | **Built** |
+| R18 | "Admin / user control · add new equipment and users with rights" | UC-012 | Hasini | **Built** — vendor API, cron-guarded expiry job and daily workflow, `AdminVendorPage`, audit trail in `vendor_history`; covered by `tests/unit/vendors.test.js` |
 | R19 | "Mimic data and stress test are required" | UC-016 | All | **Partial** — seed migrations `018`–`024` exist; stress test is new |
 | R20 | Paper-preferring inspectors can photograph a completed form instead of tapping | UC-013 | Mahdiya | **New** — not requested by the client; a deliberate adoption aid (§14) |
 

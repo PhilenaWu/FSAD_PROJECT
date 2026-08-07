@@ -127,7 +127,8 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
 
 // Sidebar footer card. Two variants:
 // - `helpPhone` given: "Need urgent help?" + `helpCaption` naming who picks up
-//   + a real tel: link. Both values come from lib/roleContacts.js per role.
+//   + a real tel: link. Layouts get both from lib/useRoleContacts.js — the
+//   number from the database, the caption from lib/roleContacts.js.
 // - otherwise: "Contact support" — no support email/route exists anywhere in
 //   the app yet, so the button stays disabled rather than silently going
 //   nowhere on click (roles with no number configured yet).

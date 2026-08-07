@@ -1,21 +1,21 @@
-// Sidebar "Emergency contacts" — a static reference list, different per role:
+// Sidebar "Emergency contacts" — a reference list, different per role:
 // residents see the managing office plus the national emergency lines,
-// inspectors see the maintenance line and the estate manager. The values
-// themselves live in lib/roleContacts.js, which the sidebar help card reads
-// too, so a role's number never disagrees between the two.
-import { Box, Paper, Stack, Typography } from '@mui/material';
+// inspectors the estate line and the managers, admins the managers (item 28).
+// Every number comes from the database through useRoleContacts(), which the
+// sidebar help card reads too, so a role's number never disagrees between the
+// two. The wording around them lives in lib/roleContacts.js.
+import { Box, Paper, Skeleton, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
-import { useAuth } from '../context/AuthContext';
-import { getRoleContacts } from '../lib/roleContacts';
+import { useRoleContacts } from '../lib/useRoleContacts';
 
 export default function EmergencyContactsPage() {
-  const { profile } = useAuth();
   const {
     contactsTitle = 'Contacts',
     contactsSubtitle,
-    contacts = [],
-  } = getRoleContacts(profile?.role);
+    contacts,
+    loading,
+  } = useRoleContacts();
 
   return (
     <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 720, mx: 'auto' }}>
@@ -47,8 +47,15 @@ export default function EmergencyContactsPage() {
       </Stack>
 
       <Stack spacing={2}>
+        {/* Placeholder rows while the numbers load, so the page doesn't flash
+            "no contacts" before the first response lands. */}
+        {loading &&
+          [0, 1].map((i) => (
+            <Skeleton key={i} variant="rounded" height={93} sx={{ borderRadius: 2 }} />
+          ))}
+
         {/* A role nobody has added contacts for yet, rather than a blank page. */}
-        {contacts.length === 0 && (
+        {!loading && contacts.length === 0 && (
           <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
             <Typography variant="body2" color="text.secondary">
               No contacts have been listed for your role yet.

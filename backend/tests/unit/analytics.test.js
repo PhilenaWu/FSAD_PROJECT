@@ -1,4 +1,6 @@
-// Unit tests for analytics (UC-005) — ANA-T01/T02/T03 from the phase plan plus
+// Unit tests for analytics (UC-005) — ANA-T01…T03 and T06…T13 from the phase
+// plan (ANA-T04/T05 are the CSV export, covered in
+// frontend/src/pages/DashboardPage.test.jsx because the export is client-side) plus
 // role gating. Same approach as the users tests: the app runs in-process via
 // supertest with config/supabase and config/db mocked, so the real route →
 // middleware → controller chain runs with no network.
@@ -127,12 +129,12 @@ describe('GET /api/analytics/issues-by-block', () => {
     expect(res.body.data.every((r) => r.block === '44A')).toBe(true);
   });
 
-  test('401 without a token', async () => {
+  test('ANA-T06: 401 without a token', async () => {
     const res = await request(app).get('/api/analytics/issues-by-block');
     expect(res.status).toBe(401);
   });
 
-  test('403 for a non-manager role', async () => {
+  test('ANA-T06: 403 for a non-manager role', async () => {
     const res = await request(app)
       .get('/api/analytics/issues-by-block')
       .set('Authorization', 'Bearer resident-token');
@@ -143,7 +145,7 @@ describe('GET /api/analytics/issues-by-block', () => {
 });
 
 describe('GET /api/analytics/filter-options', () => {
-  test('200 with data-derived blocks, categories and paper-form sections', async () => {
+  test('ANA-T07: 200 with data-derived blocks, categories and paper-form sections', async () => {
     const res = await asManager(request(app).get('/api/analytics/filter-options'));
 
     expect(res.status).toBe(200);
@@ -154,7 +156,7 @@ describe('GET /api/analytics/filter-options', () => {
     });
   });
 
-  test('sections come from checklist_items, so the paper re-seed needs no code change', async () => {
+  test('ANA-T08: sections come from checklist_items, so the paper re-seed needs no code change', async () => {
     mockQuery.mockClear();
     await asManager(request(app).get('/api/analytics/filter-options'));
 
@@ -213,7 +215,7 @@ describe('GET /api/analytics/trends', () => {
 });
 
 describe('GET /api/analytics/contractor-scorecard', () => {
-  test('200 with per-contractor metrics including overdue and re-opens', async () => {
+  test('ANA-T09: 200 with per-contractor metrics including overdue and re-opens', async () => {
     const res = await asManager(request(app).get('/api/analytics/contractor-scorecard'));
 
     expect(res.status).toBe(200);
@@ -225,7 +227,7 @@ describe('GET /api/analytics/contractor-scorecard', () => {
     });
   });
 
-  test('averages reopen_count when the column exists', async () => {
+  test('ANA-T10: averages reopen_count when the column exists', async () => {
     mockQuery.mockClear();
     await asManager(request(app).get('/api/analytics/contractor-scorecard'));
 
@@ -238,7 +240,7 @@ describe('GET /api/analytics/contractor-scorecard', () => {
 // overdue. The overdue-chase job skips them; if these queries counted them the
 // dashboard would contradict the emails the contractor actually receives.
 describe('overdue counts respect the On Hold pause (G11)', () => {
-  test('KPI summary excludes On Hold and soft-deleted records', async () => {
+  test('ANA-T11: KPI summary excludes On Hold and soft-deleted records', async () => {
     mockQuery.mockClear();
     await asManager(request(app).get('/api/analytics/summary'));
 
@@ -248,7 +250,7 @@ describe('overdue counts respect the On Hold pause (G11)', () => {
     expect(overdue).toMatch(/is_deleted = FALSE/i);
   });
 
-  test('contractor scorecard excludes On Hold', async () => {
+  test('ANA-T12: contractor scorecard excludes On Hold', async () => {
     mockQuery.mockClear();
     await asManager(request(app).get('/api/analytics/contractor-scorecard'));
 
@@ -262,7 +264,7 @@ describe('overdue counts respect the On Hold pause (G11)', () => {
 // sharing block+category" — counting resolved history would rank a block that
 // used to have problems as urgently as one that has them now.
 describe('priority queue frequency term counts open records only', () => {
-  test('the LATERAL subquery filters out Resolved/Closed', async () => {
+  test('ANA-T13: the LATERAL subquery filters out Resolved/Closed', async () => {
     mockQuery.mockClear();
     await asManager(request(app).get('/api/analytics/priority-queue'));
 
@@ -351,5 +353,68 @@ describe('GET /api/analytics/priority-queue', () => {
     expect(queueCall[0]).toMatch(/i\.priority = \$/);
     expect(queueCall[0]).toMatch(/i\.status = \$/);
     expect(queueCall[1]).toEqual(expect.arrayContaining(['Critical', 'Open']));
+  });
+});
+
+// ANA-T14: filter validation. Every endpoint binds its filters as SQL
+// parameters, which stops injection but not a cast error — Postgres coerces the
+// bound value to the column type, so ?from=hello raised SQLSTATE 22007 and
+// ?to=2026-13-45 raised 22008. Both surfaced as a 500 quoting the database's
+// own message. They are 400s now, and no query runs at all.
+describe('ANA-T14: filter validation rejects bad input before any SQL runs', () => {
+  test.each([
+    ['from=hello', { from: 'hello' }],
+    ['to=2026-13-45 (out of range)', { to: '2026-13-45' }],
+    ['from=2026-02-30 (not a real date)', { from: '2026-02-30' }],
+  ])('400 VALIDATION_ERROR for ?%s', async (_label, params) => {
+    mockQuery.mockClear();
+    const res = await asManager(request(app).get('/api/analytics/trends').query(params));
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    // No cast error can leak if the analytics query never ran. requireRole's
+    // profile lookup does run first, so assert on the reporting query rather
+    // than on the mock being untouched.
+    const analyticsRan = mockQuery.mock.calls.some(([sql]) => /FROM inspections/i.test(sql));
+    expect(analyticsRan).toBe(false);
+  });
+
+  test('a repeated filter is rejected rather than silently half-applied', async () => {
+    const res = await asManager(
+      request(app).get('/api/analytics/issues-by-block?block=44A&block=44B')
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/at most once/i);
+  });
+
+  test('from after to is refused', async () => {
+    const res = await asManager(
+      request(app).get('/api/analytics/summary').query({ from: '2026-08-01', to: '2026-07-01' })
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/must not be after/i);
+  });
+
+  test('the guard is mounted on every analytics route, not just one', async () => {
+    const routes = [
+      'filter-options', 'summary', 'issues-by-block', 'trends',
+      'sla-compliance', 'contractor-scorecard', 'priority-queue',
+    ];
+    for (const route of routes) {
+      const res = await asManager(request(app).get(`/api/analytics/${route}?from=hello`));
+      expect([route, res.status]).toEqual([route, 400]);
+    }
+  });
+
+  test('valid dates still pass through and reach the query', async () => {
+    mockQuery.mockClear();
+    const res = await asManager(
+      request(app).get('/api/analytics/trends').query({ from: '2026-01-01', to: '2026-12-31' })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockQuery).toHaveBeenCalled();
   });
 });

@@ -215,6 +215,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | **ANA-T11** | **Summary overdue** | **Excludes `On Hold` (G11) and soft-deleted** |
 | **ANA-T12** | **Scorecard overdue** | **Excludes `On Hold` — matches the chase job** |
 | **ANA-T13** | **Priority-queue frequency** | **Counts open records only, not resolved history** |
+| **ANA-T14** | **Filter validation** | **`?from=hello`, `?to=2026-13-45`, `?from=2026-02-30`, a repeated `?block`, and `from` after `to` are each `400 VALIDATION_ERROR` before any SQL runs — binding stops injection but not a cast error, which surfaced as a `500` quoting Postgres. Asserted on all seven routes** |
 | SEC-T01 | `?section=` | Adds `EXISTS` over `checklist_results`, scoped to `Defect`, param bound |
 | SEC-T02 | No section | No `checklist_results` join emitted at all |
 | SEC-T03 | Section on scorecard | Correlates on `i.id`, not `inspections.id` (prefixed alias) |
@@ -232,7 +233,61 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | ADM-T01…05 | `/costs/jobs` | Contract keys per row, `YYYY-MM-DD` close date and numeric cost, `null` lift kept, closed + costed only newest first, LEFT joins, every filter bound as a parameter |
 | ADM-T06…09 | `/costs/filter-options` | Blocks, categories, contractors **with ids**; options come from costed rows only; binds no parameters; empty tables yield empty arrays |
 
-Run: `npx jest` (507) and `npx vitest run` (78 — 62 pure/service + 16 component).
+### 6.0b UC-012 coverage (Hasini) — all passing
+
+`backend/tests/unit/vendors.test.js` (30 tests). VND-T01 – T06 are labelled in
+the file; the remaining tests extend the same six areas.
+
+| ID | Test | Verifies |
+|---|---|---|
+| VND-T01 | Onboard, valid data | 201; `contractors` + `users` rows created, account `active`, `Onboarded` history written |
+| VND-T02 | `contract_end` ≤ `contract_start` | `400 INVALID_CONTRACT_DATES` — a zero-length contract counts |
+| VND-T03 | Login email already registered | `409 EMAIL_ALREADY_EXISTS`, **no rows created** |
+| VND-T04 | Daily expiry job | Suspends vendors past `contract_end`, writes history, emits `vendor_expired` to `admin-room` |
+| VND-T05 | Suspended vendor access | `403 ACCOUNT_SUSPENDED` on `/users/me` and on every role-gated route |
+| VND-T06 | Renew | 200, suspended account reactivated with the new `contract_end` |
+
+The other 24 tests in the file extend those six areas and are named rather than
+numbered: derived-column defaults (`contact_email` falls back to the login email,
+`brands_serviced` to the company name, and supplied values are never
+overwritten); onboard validation (missing account-holder fields named in the
+error, malformed login email); onboard rollback (a DB failure after `signUp`
+deletes the auth user, so no orphaned login survives); edit + audit trail
+(`PATCH` records history, `400` when no fields are supplied, history returns
+actor names); cron guard (on-demand run is admin-only, `401` on a wrong secret);
+renew guards (`404` unknown vendor, `400` when the date does not extend the
+contract, optional replacement document accepted); suspend; and the `403`
+role gate on every vendor route.
+
+**Malformed `:id` (6 tests).** `contractors.id` is a UUID column, so a path id
+like `not-a-uuid` made Postgres raise a cast error (SQLSTATE 22P02) that reached
+the caller as a `500` quoting the database's own message. All four `:id` routes
+now answer `404`, the same as a well-formed id naming no vendor. The tests assert
+the status on each route, that no Postgres code or message appears in the body,
+and that the guard sits *after* the role gate — so a malformed id is never a way
+around admin-only access. Fixture ids are real UUIDs for the same reason: `ctr-1`
+could not exist in the live schema.
+
+### 6.0c Role contacts coverage (Hasini) — all passing
+
+16 named tests across three files, covering the two sources every phone number
+now comes from:
+
+- `tests/unit/contactDirectory.test.js` (3) — `GET /api/contacts` returns the
+  directory in display order, exactly one row is flagged `is_help_line`, and an
+  unauthenticated call is refused `401`.
+- `tests/unit/userContacts.test.js` (5) — `GET /api/users/contacts` maps the
+  caller's verified role to its counterpart (manager → admins, admin and
+  inspector → managers), returns a staff row whose `phone` is null, and refuses
+  a resident `403` so staff numbers cannot be enumerated.
+- `frontend/src/pages/EmergencyContactsPage.test.jsx` (8) — each role's block
+  renders from the API, a resident never calls the staff endpoint at all, a
+  manager who has published no number is omitted rather than shown unreachable,
+  numbers are `tel:` links, an unconfigured role gets a message, and the admin
+  role has no contacts block at all (its sidebar card already dials the estate
+  manager, so a page repeating that one number would be redundant).
+
+Run: `npx jest` (652 — 650 passing, 2 todo) and `npx vitest run` (125).
 
 
 

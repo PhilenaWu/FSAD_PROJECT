@@ -1,119 +1,116 @@
-// Single source of truth for the per-role "who do I call?" values. Two places
-// read from here, so a role's number is written once and always agrees with
-// itself:
+// Per-role recipe for the "who do I call?" surfaces. Two places read from here:
 //   - the sidebar footer help card (AppShell's HelpCard)
 //   - the Emergency contacts page (/emergency-contacts)
 //
+// There are deliberately NO phone numbers in this file. Every number the app
+// shows comes from the database via useRoleContacts():
+//   - contact_directory (migration 039) — the managing office and the national
+//     emergency lines, which are organisations rather than user accounts.
+//   - users.phone (migration 038) — a member of staff's own number, served by
+//     GET /api/users/contacts, which maps the caller's role to its counterpart
+//     server-side so no role can enumerate numbers it has no business seeing.
+// What lives here is only what the database cannot express: which sources a
+// role draws on, and the wording/iconography around them.
+//
 // To add a role, fill in its block below — do not edit AppShell.jsx or
-// EmergencyContactsPage.jsx, they read whatever is here.
+// EmergencyContactsPage.jsx, they render whatever is here.
 //
 // Shape per role (every field optional):
-//   helpPhone         number in the sidebar card. Leave it out and the card
-//                     falls back to the disabled "Contact support" state.
+//   helpSource        where the sidebar card's number comes from:
+//                     'directory' (the row flagged is_help_line) or 'staff'
+//                     (the first counterpart who has published a number).
+//                     Omit and the card falls back to "Contact support".
 //   helpCaption       one line under "Need urgent help?" naming who picks up.
 //   contactsTitle     heading on /emergency-contacts.
 //   contactsSubtitle  line under that heading.
-//   contacts[]        the rows: { label, description, number, icon, color }.
-//                     `icon` is a MUI icon component, `color` a palette key
-//                     ('primary' | 'info' | 'error' | 'warning' | 'success').
+//   directoryCategories  which contact_directory categories the contacts page
+//                     lists ('estate' | 'emergency'). Omit for none.
+//   staffLabel        role name shown beside each staff contact's own name on
+//                     the contacts page (e.g. "Estate manager"). Omit to leave
+//                     staff off the page entirely — the sidebar card can still
+//                     use helpSource: 'staff'.
 import ApartmentOutlinedIcon from '@mui/icons-material/ApartmentOutlined';
 import LocalPoliceOutlinedIcon from '@mui/icons-material/LocalPoliceOutlined';
 import LocalFireDepartmentOutlinedIcon from '@mui/icons-material/LocalFireDepartmentOutlined';
-import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
 import SupervisorAccountOutlinedIcon from '@mui/icons-material/SupervisorAccountOutlined';
 
-// Every number the app shows lives here, so swapping one swaps it everywhere.
-// The managing office is deliberately one number across roles — residents and
-// inspectors calling "the office" reach the same desk.
-const MANAGING_OFFICE = '6500 0300';
-const ESTATE_MANAGER = '6500 0322';
-// Seeded on the admin profile row by migration 038 (Steven Tan).
-const ESTATE_ADMIN = '6500 0311';
+// contact_directory.icon_key -> how that row is drawn. The key is a stable
+// presentation token chosen by the migration, not a component name, so a row
+// added later with an unrecognised key still renders (generic phone icon)
+// rather than crashing the page.
+const DIRECTORY_ICONS = {
+  apartment: { icon: ApartmentOutlinedIcon, color: 'primary' },
+  police: { icon: LocalPoliceOutlinedIcon, color: 'info' },
+  fire: { icon: LocalFireDepartmentOutlinedIcon, color: 'error' },
+};
+
+const FALLBACK_ICON = { icon: LocalPhoneOutlinedIcon, color: 'primary' };
+
+/** Icon + palette colour for a directory row's icon_key. */
+export function directoryIcon(iconKey) {
+  return DIRECTORY_ICONS[iconKey] ?? FALLBACK_ICON;
+}
+
+/** Icon + palette colour for a staff contact (a person, not an organisation). */
+export const STAFF_ICON = { icon: SupervisorAccountOutlinedIcon, color: 'primary' };
 
 export const ROLE_CONTACTS = {
   // --- resident (item 2) ---
-  // Managing office is the estate's own line; Police and Fire & Ambulance are
-  // Singapore's national emergency numbers.
+  // The managing office is the estate's own line; Police and Fire & Ambulance
+  // are Singapore's national emergency numbers. No staff: a resident reaches
+  // the office, not an individual manager, and GET /api/users/contacts refuses
+  // the resident role for exactly that reason.
   resident: {
-    helpPhone: MANAGING_OFFICE,
+    helpSource: 'directory',
     helpCaption: 'Call your managing office',
     contactsTitle: 'Emergency contacts',
     contactsSubtitle: 'For urgent estate issues or emergencies.',
-    contacts: [
-      {
-        label: 'Managing office',
-        description: 'Estate maintenance, lift faults, general enquiries',
-        number: MANAGING_OFFICE,
-        icon: ApartmentOutlinedIcon,
-        color: 'primary',
-      },
-      {
-        label: 'Police',
-        description: 'National emergency line',
-        number: '999',
-        icon: LocalPoliceOutlinedIcon,
-        color: 'info',
-      },
-      {
-        label: 'Fire & Ambulance',
-        description: 'National emergency line',
-        number: '995',
-        icon: LocalFireDepartmentOutlinedIcon,
-        color: 'error',
-      },
-    ],
+    directoryCategories: ['estate', 'emergency'],
   },
 
   // --- inspector (item 22) ---
   // Not a per-contractor list: `contractors` holds several maintenance
   // companies assigned per lift brand (Otis/Schindler/KONE in the seed), so no
-  // one number is "the contractor". An inspector calls the maintenance line
-  // and the office dispatches whoever services that defect; the estate manager
-  // handles everything that is not a repair.
+  // one number is "the contractor". An inspector calls the estate line and the
+  // office dispatches whoever services that defect; the estate managers handle
+  // everything that is not a repair, and are who the sidebar card dials.
   inspector: {
-    helpPhone: ESTATE_MANAGER,
+    helpSource: 'staff',
     helpCaption: 'Call the estate manager',
     contactsTitle: 'Contacts',
     contactsSubtitle: 'Who to call while you are on site.',
-    contacts: [
-      {
-        label: 'Estate maintenance',
-        description: 'Dispatches all defect types — lift, structural, graffiti',
-        number: MANAGING_OFFICE,
-        icon: BuildOutlinedIcon,
-        color: 'warning',
-      },
-      {
-        label: 'Estate manager',
-        description: 'Scheduling, access, escalations',
-        number: ESTATE_MANAGER,
-        icon: SupervisorAccountOutlinedIcon,
-        color: 'primary',
-      },
-    ],
+    directoryCategories: ['estate'],
+    staffLabel: 'Estate manager',
   },
 
-  // --- manager (item 4: admin contact number) ---
-  // A manager escalates to the estate admin. The number below is only the
-  // fallback: ManagerLayout reads the live one from users.phone (migration 038)
-  // via GET /api/users/contacts, so it follows whoever holds the role rather
-  // than being pinned here. No contacts[] — item 28's separate admin contacts
-  // page was dropped in favour of this card.
+  // --- manager (item 4) ---
+  // A manager escalates to the estate admin, so the card dials an admin's own
+  // number. The page also carries the estate line, which a manager needs for
+  // the same dispatch reasons an inspector does.
   manager: {
-    helpPhone: ESTATE_ADMIN,
+    helpSource: 'staff',
     helpCaption: 'Call the estate admin',
+    contactsTitle: 'Contacts',
+    contactsSubtitle: 'Who to escalate to, and the estate line.',
+    directoryCategories: ['estate'],
+    staffLabel: 'Estate admin',
   },
 
-  // --- contractor (item 16: manager's number) ---
+  // --- contractor (item 16) ---
   // contractor: { ... },
 
-  // --- admin (items 27 + 28) ---
-  // Item 27 removed the admin card because it pointed at nobody. It is back
-  // with a real destination: the estate manager who runs the estate day to day.
-  // Fallback only — AdminLayout reads the live number from users.phone the same
-  // way ManagerLayout does.
+  // --- admin (item 27) ---
+  // Item 27 removed the admin card because it pointed at nobody; it is back
+  // with a real destination, the estate manager who runs the estate day to day,
+  // dialled from that manager's own profile row.
+  //
+  // Card only — no contactsTitle/staffLabel, so there is no contacts page for
+  // this role. An admin's one contact is already the number on the card, and a
+  // page repeating a single line would be redundant navigation. AdminLayout
+  // therefore offers no Quick access link either.
   admin: {
-    helpPhone: ESTATE_MANAGER,
+    helpSource: 'staff',
     helpCaption: 'Call the estate manager',
   },
 };
