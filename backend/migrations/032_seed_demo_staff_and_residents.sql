@@ -20,7 +20,11 @@
 -- profile inserts are ON CONFLICT DO NOTHING, so re-runs are safe — which
 -- matters because migrate.js replays every file on every run.
 --
--- Demo password for every login below: TempPass123!
+-- Each login has its own unique password (below), not a shared demo one.
+-- The password is re-synced on every run (not just at creation) — see the
+-- UPDATE auth.users step near the bottom of the loop — so editing a password
+-- here and re-running migrate.js actually changes it on an already-seeded
+-- database.
 DO $$
 DECLARE
   rec RECORD;
@@ -30,12 +34,12 @@ BEGIN
     SELECT * FROM (VALUES
       -- Staff addresses carry the role; residents keep personal-looking ones.
       ('rachel.lim.manager@emservices.sg', 'rachel.lim@emservices.sg',
-       'Rachel Lim',   'manager',  NULL,  NULL),
+       'Rachel Lim',   'manager',  NULL,  NULL,      'Beacon15!Sail'),
       ('tan.weiming@mail.sg', 'tan.weiming@mail.sg',
-       'Tan Wei Ming', 'resident', '44A', '12-05'),
+       'Tan Wei Ming', 'resident', '44A', '12-05',   'Cedar88#Pine'),
       ('nurul.huda@mail.sg', 'nurul.huda@mail.sg',
-       'Nurul Huda',   'resident', '44B', '07-112')
-    ) AS t(login, legacy_login, full_name, role, block_number, unit_number)
+       'Nurul Huda',   'resident', '44B', '07-112',  'Lotus52!Brook')
+    ) AS t(login, legacy_login, full_name, role, block_number, unit_number, password)
   LOOP
     -- Match either the current address or the one this file used to seed —
     -- see the note in 029: migrate.js replays every file, so the rename must
@@ -50,11 +54,18 @@ BEGIN
       VALUES
         ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),
          'authenticated', 'authenticated', rec.login,
-         crypt('TempPass123!', gen_salt('bf')),
+         crypt(rec.password, gen_salt('bf')),
          NOW(), '{"provider":"email","providers":["email"]}', '{}',
          NOW(), NOW(), '', '', '', '', '')
       RETURNING id INTO uid;
     END IF;
+
+    -- Keep the password in sync on every run, not just at creation — so
+    -- changing a password above and re-running migrate.js actually applies
+    -- it to an already-seeded account instead of silently no-op'ing.
+    UPDATE auth.users
+       SET encrypted_password = crypt(rec.password, gen_salt('bf')), updated_at = NOW()
+     WHERE id = uid;
 
     -- Identity row, checked independently of whether the auth user was just
     -- created. Supabase refuses email/password sign-in without it, and nesting

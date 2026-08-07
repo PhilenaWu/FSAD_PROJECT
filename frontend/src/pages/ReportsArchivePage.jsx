@@ -141,7 +141,7 @@ export default function ReportsArchivePage() {
       // plainly instead of showing a generic failure.
       const msg =
         err.response?.status === 404
-          ? 'Annual archive is not available yet — it ships with the reports backend.'
+          ? 'Annual archive is not available yet. Please check back later.'
           : err.response?.data?.message || 'Could not build the annual archive.';
       setToast({ msg, severity: err.response?.status === 404 ? 'info' : 'error' });
     } finally {

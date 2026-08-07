@@ -156,7 +156,7 @@ export default function NotificationsPage() {
       return 'Enter at least one block number.';
     }
     if (scopeType === 'contractor' && !contractorId.trim()) {
-      return "Enter the contractor's user id.";
+      return 'Select a contractor.';
     }
     return '';
   }

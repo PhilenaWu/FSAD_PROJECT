@@ -309,47 +309,49 @@ account also gets a `vendor_history` entry (`Contract Renewed`).
 - Migrations `019`–`022` add the contract fields, holder fields
   (`users.job_title`, `contractors.access_reason`), the `vendor_history`
   table, and idempotent demo data: six vendors with staggered contracts and
-  named account holders, all with working logins (password `TempPass123!`).
-  One vendor (Schindler Care / Ahmad Faizal) is pre-suspended with an expired
-  contract to demo the offboarding state.
-- Migration `029` seeds two EM Services inspector logins (same password,
-  `TempPass123!`): `inspector1@emservices.sg` (Wei Jie Tan) and
-  `inspector2@emservices.sg` (Nurul Aisyah). At least one **active** inspector
-  must exist or UC-004 close is blocked — the endorsing signature has to belong
-  to a user whose role is `inspector` (§11 G7), and the close panel populates
-  its picker from `GET /api/users/inspectors`. These accounts also file UC-001
-  spot-checks.
+  named account holders, each with its own working login (see the table
+  below — no shared password). One vendor (Schindler Care / Ahmad Faizal) is
+  pre-suspended with an expired contract to demo the offboarding state.
+- Migration `029` seeds two EM Services inspector logins (each its own
+  password): `weijie.tan.inspector@emservices.sg` (Wei Jie Tan) and
+  `nurul.aisyah.inspector@emservices.sg` (Nurul Aisyah). At least one **active**
+  inspector must exist or UC-004 close is blocked — the endorsing signature has
+  to belong to a user whose role is `inspector` (§11 G7), and the close panel
+  populates its picker from `GET /api/users/inspectors`. These accounts also
+  file UC-001 spot-checks.
 - Migration `030` attributes the 12 `Demo:` lift spot-checks from `018` to those
   inspectors (alternating), so the close panel pre-selects an endorser instead
   of asking for one on every demo record. Scoped to `Demo:%` rows with a NULL
   `inspector_id`, so real spot-checks are untouched.
-- Migration `032` adds presentation-ready manager and resident logins (same
-  password). **Additive only** — the pre-existing developer accounts are left
-  active and untouched, so teammates keep working; deleting them would be
+- Migration `032` adds presentation-ready manager and resident logins (each its
+  own password). **Additive only** — the pre-existing developer accounts are
+  left active and untouched, so teammates keep working; deleting them would be
   destructive anyway, since `inspections.resident_id` is `ON DELETE CASCADE`.
 
 ### Demo logins
 
-All seeded accounts use the password `TempPass123!`.
+Every seeded account has its own unique password — there's no shared demo
+password. Re-running `npm run migrate` re-applies these passwords even to
+already-seeded accounts, so changing one here and migrating takes effect.
 
 Staff addresses carry the role so the account is self-describing on screen;
 residents use personal-looking addresses, as they would in reality.
 
-| Role | Email | Name |
-|---|---|---|
-| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim |
-| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan |
-| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah |
-| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) |
-| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) |
-| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) |
-| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) |
+| Role | Email | Name | Password |
+|---|---|---|---|
+| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim | `Beacon15!Sail` |
+| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan | `Falcon77!Reed` |
+| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah | `Marble46#Dawn` |
+| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) | `Cedar88#Pine` |
+| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) | `Lotus52!Brook` |
+| Contractor | `marcus.tan@konemaint.com.sg` | Marcus Tan (KONE Maintenance) | `Harbor72!Vale` |
+| Contractor | `priya.nair@kone-sg.com` | Priya Nair (KONE Pte Ltd) | `Nimbus93#Kite` |
+| Contractor | `wei.jie.lim@otiselevator.sg` | Wei Jie Lim (Otis Elevator Co.) | `Cobalt58!Reef` |
+| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) | `Willow24#Fern` |
+| Contractor | `ahmad.faizal@schindlercare.sg` | Ahmad Faizal (Schindler Care, suspended) | `Ember61!Trail` |
+| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) | `Quartz39#Moss` |
 
 Admin is created manually — see `backend/SEED_ADMIN.md`.
-
-> Two vendor logins seeded by `022` (`marcus.tan@konemaint.com.sg`,
-> `priya.nair@kone-sg.com`) have no `auth.identities` row and **cannot sign in**;
-> use the two contractors listed above instead. Tracked against UC-012.
 - The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
   repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
   backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.

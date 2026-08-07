@@ -47,6 +47,10 @@ export default function LoginPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    if (!email.trim() || !password) {
+      setError('Please enter your email and password.');
+      return;
+    }
     setBusy(true);
     const { error: signInError } = await login(email, password);
     setBusy(false);
@@ -207,14 +211,6 @@ export default function LoginPage() {
                   Forgot password
                 </Link>
               </Stack>
-
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                align="center"
-              >
-                Residents and managers use the same login
-              </Typography>
             </Stack>
           </Box>
         </Paper>

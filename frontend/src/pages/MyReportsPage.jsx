@@ -492,9 +492,7 @@ export default function MyReportsPage() {
                               disabled={!r.satisfaction_rating}
                             />
                             <Typography variant="caption" color="text.secondary">
-                              {r.satisfaction_rating
-                                ? 'Your rating'
-                                : 'Rate the resolution (coming soon)'}
+                              {r.satisfaction_rating ? 'Your rating' : 'Not yet rated'}
                             </Typography>
                           </Stack>
                         )}
