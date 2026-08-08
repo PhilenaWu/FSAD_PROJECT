@@ -145,6 +145,21 @@ async function listMine(req, res, next) {
   }
 }
 
+// GET /api/notifications/sent — the manager's own history, newest first.
+// Optional `?limit=`. Previously a manager could see read receipts only for the
+// notification they had just sent, because the id was only ever held in page
+// state — navigating away lost every earlier send for good.
+async function listSent(req, res, next) {
+  try {
+    const parsed = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : 50;
+    const data = await notificationModel.findByManager(req.user.id, { limit });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/notifications/:id/receipts — manager reads live read/unread counts.
 async function getReceipts(req, res, next) {
   try {
@@ -176,4 +191,11 @@ async function markRead(req, res, next) {
   }
 }
 
-module.exports = { send, dispatchDueNotifications, getReceipts, markRead, listMine };
+module.exports = {
+  send,
+  dispatchDueNotifications,
+  getReceipts,
+  markRead,
+  listMine,
+  listSent,
+};

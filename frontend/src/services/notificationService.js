@@ -21,6 +21,13 @@ export function list({ unread_only = false, limit } = {}) {
   return api.get('/api/notifications', { params });
 }
 
+// Manager's own send history, newest first, with receipt counts already joined.
+export function listSent({ limit } = {}) {
+  const params = {};
+  if (limit) params.limit = limit;
+  return api.get('/api/notifications/sent', { params });
+}
+
 // Recipient marks a notification read.
 export function markRead(id) {
   return api.patch(`/api/notifications/${id}/read`);

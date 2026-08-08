@@ -50,59 +50,44 @@ function emitStatus(inspection) {
   }
 }
 
-// Who raised this record, and the room that reaches them. A resident complaint
-// is tracked by its author (UC-003); a lift spot-check by the inspector who
-// filed it. Returns null when neither is set (legacy/seed rows).
-function originatorOf(inspection) {
-  if (inspection.resident_id) {
-    return {
-      user_ids: [inspection.resident_id],
-      rooms: [`block-${inspection.location_block}`],
-      isResident: true,
-    };
-  }
+// The inspector who owns this record, and the room that reaches them. Returns
+// null for a record with no inspector (a resident complaint not yet triaged).
+//
+// Contractor-side transitions go to managers + the inspector only (D.15) — the
+// resident who filed the complaint is deliberately NOT notified from here.
+// Previously this branched on resident_id first and emitted to `block-{n}`,
+// which had two problems: that room holds *every* resident of the block, so a
+// socket notification about one household's defect was pushed to all of their
+// neighbours while only the originator got a durable row; and it meant a single
+// contractor submit fanned out to two overlapping audiences (D.12). Residents
+// still track their own reports on /my-reports, which reads live status.
+function inspectorOf(inspection) {
   if (inspection.inspector_id) {
-    return {
-      user_ids: [inspection.inspector_id],
-      rooms: ['inspector-team'],
-      isResident: false,
-    };
+    return { user_ids: [inspection.inspector_id], rooms: ['inspector-team'] };
   }
   return null;
 }
 
-// Durable notifications for a contractor-side transition. Separate from
+// Durable notification for a contractor-side transition. Separate from
 // emitStatus: that pushes a transient refresh to whoever has a page open, while
-// these persist to the bell so an offline manager or originator still learns of
-// it. Managers and the originator get their own wording — "Contractor
-// acknowledged Blk 44A" reads very differently from "Your report was
-// acknowledged". Never throws (notifyEvent swallows its own failures, G13).
-async function notifyTransition(inspection, { event_type, managerMessage, ownerMessage, urgency }) {
-  const link = `/inspections/${inspection.id}`;
+// this persists to the bell so an offline manager or inspector still learns of
+// it. Never throws (notifyEvent swallows its own failures, G13).
+//
+// One notification, one audience: managers + the record's inspector, resolved as
+// a single `users` scope. It used to be two notifyEvent calls with two different
+// wordings, which wrote two rows per transition — anyone who fell in both
+// audiences saw the same event twice in the bell (D.12). Staff open the same
+// record from the same link, so the second wording bought nothing.
+async function notifyTransition(inspection, { event_type, message, urgency }) {
+  const inspector = inspectorOf(inspection);
 
   await notificationService.notifyEvent({
     event_type,
-    scope: { type: 'managers' },
-    message: managerMessage,
+    scope: { type: 'managers_and_users', user_ids: inspector?.user_ids ?? [], rooms: inspector?.rooms ?? [] },
+    message,
     urgency,
-    link,
+    link: `/inspections/${inspection.id}`,
   });
-
-  const owner = originatorOf(inspection);
-  if (owner && ownerMessage) {
-    await notificationService.notifyEvent({
-      event_type,
-      scope: { type: 'users', user_ids: owner.user_ids, rooms: owner.rooms },
-      message: ownerMessage,
-      urgency,
-      // Residents track their own reports on /my-reports (UC-003); staff open
-      // the full record. Note /my-reports takes no :id — the page lists the
-      // caller's records and expands them in place — so linking to the bare
-      // route is deliberate. A /my-reports/{id} link falls through App.jsx's
-      // catch-all to /dashboard.
-      link: owner.isResident ? '/my-reports' : link,
-    });
-  }
 }
 
 // Human label for a record in a notification line.
@@ -145,8 +130,7 @@ async function acknowledge(req, res, next) {
     emitStatus(inspection);
     await notifyTransition(inspection, {
       event_type: 'acknowledged',
-      managerMessage: `${contractor.name} acknowledged ${recordLabel(inspection)}.`,
-      ownerMessage: `${contractor.name} has accepted the defect on ${recordLabel(inspection)}.`,
+      message: `${contractor.name} acknowledged ${recordLabel(inspection)}.`,
       urgency: 'Informational',
     });
     res.json({
@@ -230,12 +214,14 @@ async function rectify(req, res, next) {
     // stays socket-only — HLD §10 gives it no email, and a durable row per save
     // would bury the bell under progress noise.
     if (finalize) {
+      // Informational, not Warning (D.13): a contractor finishing on time is the
+      // happy path. Reserving Warning for things that actually need chasing is
+      // what stops the bell reading as though everything is a problem.
       await notifyTransition(inspection, {
         event_type: 'rectified',
-        managerMessage:
+        message:
           `${contractor.name} submitted work done on ${recordLabel(inspection)} — ready for joint endorsement.`,
-        ownerMessage: `Work is complete on ${recordLabel(inspection)} and awaiting sign-off.`,
-        urgency: 'Warning',
+        urgency: 'Informational',
       });
     }
     res.json({
@@ -278,11 +264,11 @@ async function hold(req, res, next) {
       });
     }
     emitStatus(inspection);
+    // Stays Warning — a hold blocks the work and someone has to unblock it.
     await notifyTransition(inspection, {
       event_type: 'on_hold',
-      managerMessage:
+      message:
         `${contractor.name} placed ${recordLabel(inspection)} on hold — ${inspection.hold_reason}`,
-      ownerMessage: `${recordLabel(inspection)} is on hold — ${inspection.hold_reason}`,
       urgency: 'Warning',
     });
     res.json({
@@ -325,9 +311,8 @@ async function resume(req, res, next) {
     emitStatus(inspection);
     await notifyTransition(inspection, {
       event_type: 'resumed',
-      managerMessage:
+      message:
         `${contractor.name} resumed work on ${recordLabel(inspection)} — deadline extended by the held period.`,
-      ownerMessage: `Work has resumed on ${recordLabel(inspection)}.`,
       urgency: 'Informational',
     });
     res.json({
