@@ -127,6 +127,8 @@ export default function NewInspectionPage() {
   const [ocrSummary, setOcrSummary] = useState(null); // { read, total, needInput }
   const [unreadableItemIds, setUnreadableItemIds] = useState(new Set()); // A2
   const [liftMismatchWarning, setLiftMismatchWarning] = useState(null); // A3
+  const [liftUnconfirmed, setLiftUnconfirmed] = useState(false); // auto-selected from form_lift_code
+  const [servicedAtUnconfirmed, setServicedAtUnconfirmed] = useState(false);
 
   // Load the lift picker + checklist template once on mount.
   useEffect(() => {
@@ -248,6 +250,8 @@ export default function NewInspectionPage() {
     setOcrSummary(null);
     setUnreadableItemIds(new Set());
     setLiftMismatchWarning(null);
+    setLiftUnconfirmed(false);
+    setServicedAtUnconfirmed(false);
     // ocrUnavailable is left as-is — it reflects real service state, not form state.
   }
 
@@ -271,7 +275,10 @@ export default function NewInspectionPage() {
       formData.append('form_photo', await compressImage(file, { maxBytes: 5 * 1024 * 1024 }));
       const { data } = await api.post('/api/inspections/ocr-prefill', formData);
 
-      if (data.serviced_at) setServicedAt(data.serviced_at);
+      if (data.serviced_at) {
+        setServicedAt(data.serviced_at);
+        setServicedAtUnconfirmed(true);
+      }
 
       const unreadableIds = new Set();
       setAnswers((prev) => {
@@ -298,13 +305,24 @@ export default function NewInspectionPage() {
         needInput: unreadableIds.size,
       });
 
-      // A3: warn on a header/lift mismatch without touching the selection.
-      if (selectedLift && data.form_lift_code) {
+      if (data.form_lift_code) {
         const code = data.form_lift_code.trim().toLowerCase();
-        const liftCode = selectedLift.lift_code.toLowerCase();
-        const block = selectedLift.block_number.toLowerCase();
-        const matches = code.includes(liftCode) || liftCode.includes(code) || code.includes(block);
-        if (!matches) {
+        const matchesLift = (l) => {
+          const liftCode = l.lift_code.toLowerCase();
+          const block = l.block_number.toLowerCase();
+          return code.includes(liftCode) || liftCode.includes(code) || code.includes(block);
+        };
+        if (!selectedLift) {
+          // No lift chosen yet — auto-select the best match and mark it
+          // unconfirmed, same treatment as an OCR-prefilled checklist item.
+          const matched = lifts.find(matchesLift);
+          if (matched) {
+            setLiftId(matched.id);
+            setLiftUnconfirmed(true);
+          }
+        } else if (!matchesLift(selectedLift)) {
+          // A3: a lift was already chosen and doesn't match — warn without
+          // touching the inspector's own selection.
           setLiftMismatchWarning(
             `The scanned form looks like it's for "${data.form_lift_code}", not the ` +
               `selected lift (${selectedLift.lift_code}). Your lift selection was kept — double-check before submitting.`
@@ -318,7 +336,13 @@ export default function NewInspectionPage() {
         setOcrUnavailable(true);
         setOcrError('OCR is temporarily unavailable — fill in the checklist manually.');
       } else if (code === 'OCR_UNREADABLE') {
-        setOcrError("Couldn't read that photo — try a clearer shot of the form.");
+        // Surface the backend's actual reason (e.g. "expected 25 items, got
+        // 23") instead of a generic message — it's real diagnostic detail,
+        // not an internal leak, and helps the inspector judge whether a
+        // reshoot will actually help.
+        setOcrError(
+          err.response?.data?.message ?? "Couldn't read that photo — try a clearer shot of the form."
+        );
       } else {
         setOcrError('Something went wrong scanning the form. Please try again.');
       }
@@ -349,6 +373,8 @@ export default function NewInspectionPage() {
       problem = `Choose a severity for every defect (${noSeverity.length} still unset).`;
     else if (noPhoto.length > 0)
       problem = `Attach a photo to each Major or Critical defect (${noPhoto.length} missing).`;
+    else if (hasUnconfirmedFields)
+      problem = 'Confirm the auto-filled fields from the scanned form before submitting.';
     else if (signaturePadRef.current?.isEmpty())
       problem = 'Sign the "Checked by" box before submitting.';
 
@@ -442,6 +468,25 @@ export default function NewInspectionPage() {
   // UI-level convenience guard — the backend enforces the inspector role anyway.
   if (profile && profile.role !== 'inspector') {
     return <Navigate to="/dashboard" replace />;
+  }
+
+  // Whether anything OCR auto-filled is still unreviewed. One shared gate
+  // covering the lift, servicing date, and every checklist item — the
+  // inspector confirms once, right before signing, rather than clearing a
+  // "Confirm" button on every field individually.
+  const hasUnconfirmedFields =
+    liftUnconfirmed || servicedAtUnconfirmed || items.some((i) => answers[i.id]?.unconfirmed === true);
+
+  function confirmAllScannedFields() {
+    setLiftUnconfirmed(false);
+    setServicedAtUnconfirmed(false);
+    setAnswers((prev) => {
+      const next = { ...prev };
+      for (const id of Object.keys(next)) {
+        if (next[id]?.unconfirmed) next[id] = { ...next[id], unconfirmed: false };
+      }
+      return next;
+    });
   }
 
   return (
@@ -541,7 +586,9 @@ export default function NewInspectionPage() {
                           {scanning ? 'Reading form…' : 'Scan a paper form'}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Use your camera to scan and auto-fill inspection details
+                          {scanning
+                            ? 'Reading a full form usually takes 10–20 seconds — hang tight.'
+                            : 'Use your camera to scan and auto-fill inspection details'}
                         </Typography>
                       </Box>
                       <ChevronRightIcon sx={{ color: 'primary.main', flexShrink: 0 }} />
@@ -571,82 +618,114 @@ export default function NewInspectionPage() {
                   </Alert>
                 )}
 
-                <TextField
-                  select
-                  label="Lift"
-                  value={liftId}
-                  onChange={(e) => setLiftId(e.target.value)}
-                  required
-                  fullWidth
-                  helperText="Defects are assigned to the lift's maintenance contractor"
-                  slotProps={{
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <ElevatorOutlinedIcon fontSize="small" color="action" />
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                >
-                  <MenuItem value="" disabled>
-                    Select lift
-                  </MenuItem>
-                  {lifts.map((l) => (
-                    <MenuItem key={l.id} value={l.id}>
-                      {`Block ${l.block_number} — ${l.lift_code} (${l.brand}${
-                        l.contractor_name ? `, ${l.contractor_name}` : ''
-                      })`}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                <Box sx={liftUnconfirmed ? { borderLeft: 3, borderColor: 'warning.main', pl: 1.5 } : undefined}>
+                  <Stack spacing={1.5}>
+                    {liftUnconfirmed && (
+                      <Chip
+                        label="Auto-filled from scanned form — please check"
+                        size="small"
+                        color="warning"
+                        variant="outlined"
+                        sx={{ alignSelf: 'flex-start' }}
+                      />
+                    )}
+                    <TextField
+                      select
+                      label="Lift"
+                      value={liftId}
+                      onChange={(e) => {
+                        setLiftId(e.target.value);
+                        setLiftUnconfirmed(false);
+                      }}
+                      required
+                      fullWidth
+                      helperText="Defects are assigned to the lift's maintenance contractor"
+                      slotProps={{
+                        input: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <ElevatorOutlinedIcon fontSize="small" color="action" />
+                            </InputAdornment>
+                          ),
+                        },
+                      }}
+                    >
+                      <MenuItem value="" disabled>
+                        Select lift
+                      </MenuItem>
+                      {lifts.map((l) => (
+                        <MenuItem key={l.id} value={l.id}>
+                          {`Block ${l.block_number} — ${l.lift_code} (${l.brand}${
+                            l.contractor_name ? `, ${l.contractor_name}` : ''
+                          })`}
+                        </MenuItem>
+                      ))}
+                    </TextField>
 
-                {/* Town Council and Address from the paper form header. These
-                    belong to the lift record, not the inspection, so they are
-                    auto-filled from the picker and shown read-only. */}
-                {selectedLift && (
-                  <Stack
-                    spacing={1}
-                    sx={{ px: 2, py: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}
-                  >
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Town Council
-                      </Typography>
-                      <Typography variant="body2">
-                        {selectedLift.town_council || '—'}
-                      </Typography>
-                    </Box>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Address
-                      </Typography>
-                      <Typography variant="body2">{selectedLift.address || '—'}</Typography>
-                    </Box>
+                    {/* Town Council and Address from the paper form header. These
+                        belong to the lift record, not the inspection, so they are
+                        auto-filled from the picker and shown read-only. */}
+                    {selectedLift && (
+                      <Stack
+                        spacing={1}
+                        sx={{ px: 2, py: 1.5, bgcolor: 'action.hover', borderRadius: 2 }}
+                      >
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Town Council
+                          </Typography>
+                          <Typography variant="body2">
+                            {selectedLift.town_council || '—'}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Address
+                          </Typography>
+                          <Typography variant="body2">{selectedLift.address || '—'}</Typography>
+                        </Box>
+                      </Stack>
+                    )}
                   </Stack>
-                )}
+                </Box>
 
                 {/* Servicing Date from the paper form header — the contractor
                     visit this spot-check audits, not today's check date. */}
-                <TextField
-                  type="date"
-                  label="Servicing date"
-                  value={servicedAt}
-                  onChange={(e) => setServicedAt(e.target.value)}
-                  required
-                  fullWidth
-                  helperText="Date the lift company serviced this lift"
-                  slotProps={{
-                    inputLabel: { shrink: true },
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <EventOutlinedIcon fontSize="small" color="action" />
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
-                />
+                <Box sx={servicedAtUnconfirmed ? { borderLeft: 3, borderColor: 'warning.main', pl: 1.5 } : undefined}>
+                  <Stack spacing={1.5}>
+                    {servicedAtUnconfirmed && (
+                      <Chip
+                        label="Auto-filled from scanned form — please check"
+                        size="small"
+                        color="warning"
+                        variant="outlined"
+                        sx={{ alignSelf: 'flex-start' }}
+                      />
+                    )}
+                    <TextField
+                      type="date"
+                      label="Servicing date"
+                      value={servicedAt}
+                      onChange={(e) => {
+                        setServicedAt(e.target.value);
+                        setServicedAtUnconfirmed(false);
+                      }}
+                      required
+                      fullWidth
+                      helperText="Date the lift company serviced this lift"
+                      slotProps={{
+                        inputLabel: { shrink: true },
+                        input: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <EventOutlinedIcon fontSize="small" color="action" />
+                            </InputAdornment>
+                          ),
+                        },
+                      }}
+                    />
+                  </Stack>
+                </Box>
 
                 {/* Optional GPS — supplements (never replaces) the lift choice.
                     The chosen lift's block is passed in so the card can say so
@@ -771,18 +850,6 @@ export default function NewInspectionPage() {
                                     )}
                                     {lowConfidence && (
                                       <Chip label="Please check" size="small" color="warning" variant="outlined" />
-                                    )}
-                                    {isUnconfirmed && (
-                                      <Tooltip title="Looks correct — confirm">
-                                        <IconButton
-                                          size="small"
-                                          color="warning"
-                                          aria-label="Confirm this field"
-                                          onClick={() => setAnswer(item.id, {})}
-                                        >
-                                          <CheckCircleOutlineIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
                                     )}
                                   </Stack>
                                   <RadioGroup
@@ -938,6 +1005,29 @@ export default function NewInspectionPage() {
                     </Accordion>
                     );
                   })}
+
+                {/* One shared confirmation for everything the scan auto-filled
+                    (lift, servicing date, checklist items), right before the
+                    inspector signs for it — instead of a "Confirm" button on
+                    every field individually. */}
+                {liftId && hasUnconfirmedFields && (
+                  <Alert
+                    severity="warning"
+                    action={
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="warning"
+                        startIcon={<CheckCircleOutlineIcon fontSize="small" />}
+                        onClick={confirmAllScannedFields}
+                      >
+                        Confirm
+                      </Button>
+                    }
+                  >
+                    Have you checked everything the scanned form auto-filled? Confirm before signing.
+                  </Alert>
+                )}
 
                 {/* G5 — the paper form's "Checked by / Signature" box. Shown
                     with the checklist, since it attests to those answers. */}

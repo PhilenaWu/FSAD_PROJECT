@@ -89,7 +89,15 @@ function initSocket(httpServer) {
     // status changes reach them directly (a resident's block room is too broad,
     // and an inspector has no status room at all).
     socket.on('join', async (room) => {
-      if (await canJoinRecordRoom(room, id)) socket.join(room);
+      // Socket.IO never awaits or catches an event handler's returned promise —
+      // canJoinRecordRoom's query failing here (a transient DB blip, not just a
+      // bad room name) would otherwise be an unhandled rejection that crashes
+      // the whole process for every connected user, not just this socket.
+      try {
+        if (await canJoinRecordRoom(room, id)) socket.join(room);
+      } catch (err) {
+        console.error('[socket] join room check failed:', err.message);
+      }
     });
 
     socket.on('leave', (room) => socket.leave(room));

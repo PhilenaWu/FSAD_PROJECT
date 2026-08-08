@@ -567,8 +567,13 @@ async function ocrPrefill(req, res, next) {
       });
     }
 
-    const activeItems = await checklistItemModel.findActive();
-    const image_url = await cloudinaryService.uploadImage(req.file.buffer, 'ocr-scans');
+    // Independent of each other — run together instead of back-to-back.
+    // The Cloudinary upload dominates this pair (network + encoding), so this
+    // saves roughly the DB query's own time off the total wait.
+    const [activeItems, image_url] = await Promise.all([
+      checklistItemModel.findActive(),
+      cloudinaryService.uploadImage(req.file.buffer, 'ocr-scans'),
+    ]);
 
     let draft;
     try {

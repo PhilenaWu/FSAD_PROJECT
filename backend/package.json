@@ -9,6 +9,7 @@
   "scripts": {
     "test": "jest",
     "start": "node server.js",
+    "predev": "node scripts/free-port.js 5000",
     "dev": "node --watch server.js",
     "migrate": "node scripts/migrate.js"
   },
