@@ -4,8 +4,8 @@
 //
 // Closed records are soft-deleted (is_deleted = TRUE) for the 5-year audit trail.
 // They stay readable here — the originator's history — so a resident can still
-// see how their report ended, and rate it if they never got the chance before it
-// was closed. The active list (GET /api/inspections/my) excludes them.
+// see how their report ended. The active list (GET /api/inspections/my)
+// excludes them.
 'use strict';
 
 const { query } = require('../config/db');
@@ -71,24 +71,6 @@ async function findOwnDetail(id, userId) {
   };
 }
 
-// Store a resident's satisfaction rating (UC-003 main flow 8-9). Scoped to the
-// owning resident; the controller has already validated the value and checked
-// both the status and that no rating exists yet. A rating is the resident's
-// opinion of the outcome, not a state transition, so it is still accepted on an
-// archived record — it changes no audited fact and no history row.
-async function submitRating(id, residentId, { rating, comment }) {
-  const result = await query(
-    `UPDATE inspections
-       SET satisfaction_rating = $3,
-           satisfaction_comment = $4,
-           updated_at = NOW()
-     WHERE id = $1 AND resident_id = $2
-     RETURNING *`,
-    [id, residentId, rating, comment]
-  );
-  return result.rows[0];
-}
-
 // Edit a resident's own complaint (UC-003 extension): title, description,
 // category, and location only — the photo stays as originally submitted (no
 // re-upload handling, no question of re-running CV detection on a changed
@@ -112,5 +94,5 @@ async function updateOwnReport(id, residentId, {
 }
 
 module.exports = {
-  findOwnArchived, findOwnDetail, findOwnRecord, submitRating, updateOwnReport,
+  findOwnArchived, findOwnDetail, findOwnRecord, updateOwnReport,
 };

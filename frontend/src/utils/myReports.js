@@ -3,21 +3,6 @@
 // closure does to the lists, when a rating may be offered — are unit-testable
 // without rendering anything.
 
-// A rating is offered once the work is done. 'Closed' is included because the
-// workflow runs Assigned → Acknowledged → Rectified → Closed and only reaches
-// 'Resolved' if a manager sets it by hand — gating on 'Resolved' alone would
-// mean most reports could never be rated. The server enforces the same list.
-export const RATABLE_STATUSES = ['Resolved', 'Closed'];
-
-export function isRatable(report) {
-  return RATABLE_STATUSES.includes(report.status);
-}
-
-// How many closed reports are still waiting for the originator's rating.
-export function countAwaitingRating(reports) {
-  return reports.filter((r) => isRatable(r) && !r.satisfaction_rating).length;
-}
-
 // Apply an incoming `status_update` to the live list.
 //
 // The event is broadcast to the block room as well as the record's own room, so
@@ -50,13 +35,6 @@ export function applyStatusUpdate(reports, payload) {
     ),
     outcome: 'updated',
   };
-}
-
-// Write a submitted rating onto whichever list holds the record.
-export function applyRating(reports, id, rating, comment) {
-  return reports.map((r) =>
-    r.id === id ? { ...r, satisfaction_rating: rating, satisfaction_comment: comment } : r
-  );
 }
 
 // A report can be edited for 30 minutes after it was filed — mirrors the

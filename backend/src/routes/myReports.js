@@ -1,6 +1,5 @@
 // UC-003 routes — the originator's own reports. The list itself lives on
-// GET /api/inspections/my; these are the detail view and the satisfaction
-// rating that sit behind it.
+// GET /api/inspections/my; this is the detail view behind it.
 'use strict';
 
 const express = require('express');
@@ -26,14 +25,6 @@ router.get(
   requireAuth,
   requireRole('resident', 'inspector'),
   myReportsController.getOwnDetail
-);
-
-// POST /api/my-reports/:id/rating — resident rates a resolved complaint.
-router.post(
-  '/:id/rating',
-  requireAuth,
-  requireRole('resident'),
-  myReportsController.submitRating
 );
 
 // PATCH /api/my-reports/:id — resident edits their own complaint within 30
