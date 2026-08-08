@@ -29,6 +29,7 @@ import {
   DialogTitle,
   Divider,
   FormControlLabel,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -76,6 +77,7 @@ export default function ContractorInboxPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  const [blockFilter, setBlockFilter] = useState('all'); // Z.14 — inbox block filter
 
   // Per-defect-item completion input:
   // { [checklist_result_id]: { remark, file, preview, done } }.
@@ -101,6 +103,34 @@ export default function ContractorInboxPage() {
     () => items.find((it) => it.id === selectedId) ?? null,
     [items, selectedId]
   );
+
+  // Block filter (Z.14). The options are whatever blocks are actually assigned
+  // right now rather than the estate's full block list — a contractor working
+  // one block should not scroll past twenty empty choices.
+  const blocks = useMemo(
+    () => [...new Set(items.map((it) => it.location_block).filter(Boolean))].sort(),
+    [items]
+  );
+  const visibleItems = useMemo(
+    () => (blockFilter === 'all'
+      ? items
+      : items.filter((it) => it.location_block === blockFilter)),
+    [items, blockFilter]
+  );
+
+  // A poll can clear the last defect in the filtered block; drop back to "All"
+  // rather than leave the select pointing at a block that no longer exists.
+  useEffect(() => {
+    if (blockFilter !== 'all' && !blocks.includes(blockFilter)) setBlockFilter('all');
+  }, [blocks, blockFilter]);
+
+  // Keep the work panel in step with the filter: a defect that the filter hides
+  // must not stay open on the right, so fall back to the first visible one.
+  useEffect(() => {
+    if (!visibleItems.some((it) => it.id === selectedId)) {
+      setSelectedId(visibleItems[0]?.id ?? null);
+    }
+  }, [visibleItems, selectedId]);
 
   // Latest completion mirrored to a ref so cleanup (defect switch / unmount) can
   // revoke the object URLs of attached-photo previews without re-subscribing.
@@ -390,7 +420,25 @@ export default function ContractorInboxPage() {
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems="flex-start">
             {/* Inbox list */}
             <Stack spacing={1.5} sx={{ width: { xs: '100%', md: 320 }, flexShrink: 0 }}>
-              {items.map((it) => {
+              {/* Block filter — only earns its space once work spans blocks. */}
+              {blocks.length > 1 && (
+                <TextField
+                  select
+                  size="small"
+                  label="Block"
+                  value={blockFilter}
+                  onChange={(e) => setBlockFilter(e.target.value)}
+                >
+                  <MenuItem value="all">All blocks ({items.length})</MenuItem>
+                  {blocks.map((b) => (
+                    <MenuItem key={b} value={b}>
+                      Block {b} ({items.filter((it) => it.location_block === b).length})
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
+
+              {visibleItems.map((it) => {
                 const active = it.id === selectedId;
                 const highlight = it.id === highlightId;
                 return (
