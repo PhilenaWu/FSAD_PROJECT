@@ -4,7 +4,7 @@
 // network or real deck generation happens.
 'use strict';
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       if (token === 'manager-token') {
@@ -23,7 +23,7 @@ const profiles = {
   'res-1': { role: 'resident', status: 'active' },
 };
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: jest.fn(async (sql, params = []) => {
@@ -39,17 +39,17 @@ jest.mock('../../src/config/db', () => ({
 }));
 
 // Deck build + upload mocked — controlled per test.
-jest.mock('../../src/services/pptxService', () => ({
+jest.mock('../../../backend/src/services/pptxService', () => ({
   buildDashboardDeck: jest.fn(async () => Buffer.from('fake-pptx')),
 }));
-jest.mock('../../src/services/cloudinaryService', () => ({
+jest.mock('../../../backend/src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(),
   uploadRaw: jest.fn(async () => 'https://res.cloudinary.com/demo/reports/dashboard-123.pptx'),
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
-const pptxService = require('../../src/services/pptxService');
+const app = require('../../../backend/src/app');
+const pptxService = require('../../../backend/src/services/pptxService');
 
 const validBody = { views: ['heatmap', 'sla_gauge'], filters: { block: '44A' } };
 

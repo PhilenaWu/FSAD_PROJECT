@@ -1,13 +1,13 @@
 // Unit tests for analytics (UC-005) — ANA-T01…T03 and T06…T13 from the phase
 // plan (ANA-T04/T05 are the CSV export, covered in
-// frontend/src/pages/DashboardPage.test.jsx because the export is client-side) plus
+// frontend/src/tests/Ginjala_Hasini/DashboardPage.test.jsx because the export is client-side) plus
 // role gating. Same approach as the users tests: the app runs in-process via
 // supertest with config/supabase and config/db mocked, so the real route →
 // middleware → controller chain runs with no network.
 'use strict';
 
 // --- Mock: Supabase auth. Token string maps to a set of claims. ---
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       if (token === 'manager-token') {
@@ -99,14 +99,14 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   return { rows: [] };
 });
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: (...args) => mockQuery(...args),
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
+const app = require('../../../backend/src/app');
 
 const asManager = (req) => req.set('Authorization', 'Bearer manager-token');
 

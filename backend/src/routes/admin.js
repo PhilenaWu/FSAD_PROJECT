@@ -36,10 +36,21 @@ router.get('/costs/filter-options', adminController.getCostFilterOptions);
 router.get('/costs/jobs', adminController.getCostJobs);
 
 // GET /api/admin/costs/breakdown → { byCategory, byBlock, byContractor }
+// AdminVendorPage's sibling, AdminCostPage, does NOT call this: it already
+// fetches /costs/jobs for the drill-down table, CSV, watchlist and forecast,
+// and groups those rows client-side rather than paying a second round-trip for
+// figures it holds. The route stays because the cost deck's server-side
+// renderer uses the same fetcher (exportController.generateAdminCostsPptx),
+// and because a client without the job rows needs it.
 router.get('/costs/breakdown', adminController.getCostBreakdown);
 
 // GET /api/admin/costs/trends?months=12 → { data: [{ month, actual, projected }] }
 // `months` applies only when no date range is given.
+// No caller today, for the same reason as /costs/breakdown — the page builds
+// its monthly line from the job rows (costService.buildTrend), which it also
+// needs for the projection and the backtest. Kept, with tests, as the
+// aggregate-only route: unlike buildTrend it carries the projected series and
+// fills gap months in SQL.
 router.get('/costs/trends', adminController.getCostTrends);
 
 module.exports = router;

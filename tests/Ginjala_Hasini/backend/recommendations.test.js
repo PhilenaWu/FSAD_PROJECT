@@ -4,7 +4,7 @@
 // the analytics tests.
 'use strict';
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       if (token === 'manager-token') {
@@ -35,7 +35,7 @@ const alerts = [
   },
 ];
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: jest.fn(async (sql, params = []) => {
@@ -53,7 +53,7 @@ jest.mock('../../src/config/db', () => ({
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
+const app = require('../../../backend/src/app');
 
 describe('GET /api/recommendations', () => {
   test('200 with active alerts by default for a manager', async () => {

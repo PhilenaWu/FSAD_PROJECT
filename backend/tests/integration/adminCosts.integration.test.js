@@ -404,7 +404,7 @@ describe('GET /api/admin/costs/breakdown', () => {
     expect(grouped).toHaveLength(3);
     expect(grouped.some((sql) => /GROUP BY category/i.test(sql))).toBe(true);
     expect(grouped.some((sql) => /GROUP BY block/i.test(sql))).toBe(true);
-    expect(grouped.some((sql) => /GROUP BY c\.name/i.test(sql))).toBe(true);
+    expect(grouped.some((sql) => /GROUP BY COALESCE\(c\.name/i.test(sql))).toBe(true);
   });
 
   test('category and block breakdowns union both cost sources', async () => {
@@ -874,6 +874,18 @@ describe('filters — combined', () => {
       expect(sql).toMatch(/location_block = \$4/);
       expect(params).toEqual(['2026-01-01', '44A', '2026-01-01', '44A']);
     });
+  });
+
+  // A job closed without an assignment (in-house fix) still spent money. An
+  // inner join dropped it, so the exported deck's contractor table came up
+  // short of total_actual and disagreed with the dashboard, which buckets those
+  // rows as "Unassigned" off /costs/jobs. Same join, same label, both sides.
+  test('byContractor keeps unassigned jobs, labelled as the jobs query labels them', async () => {
+    await admin('/api/admin/costs/breakdown');
+
+    const [sql] = contractorSql();
+    expect(sql).toMatch(/LEFT JOIN contractors c/i);
+    expect(sql).toMatch(/COALESCE\(c\.name, 'Unassigned'\)/i);
   });
 
   test('byContractor applies the filters with an i. prefix', async () => {

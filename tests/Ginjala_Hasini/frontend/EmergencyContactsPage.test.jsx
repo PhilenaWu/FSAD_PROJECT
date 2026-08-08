@@ -8,21 +8,21 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 
 const mockUseAuth = vi.fn();
-vi.mock('../context/AuthContext', () => ({
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
 const mockListDirectory = vi.fn();
-vi.mock('../services/contactService', () => ({
+vi.mock('../../../frontend/src/services/contactService', () => ({
   listDirectory: () => mockListDirectory(),
 }));
 
 const mockListContacts = vi.fn();
-vi.mock('../services/userService', () => ({
+vi.mock('../../../frontend/src/services/userService', () => ({
   listContacts: () => mockListContacts(),
 }));
 
-import EmergencyContactsPage from './EmergencyContactsPage';
+import EmergencyContactsPage from '../../../frontend/src/pages/EmergencyContactsPage';
 
 // Mirrors what migration 039 seeds into contact_directory.
 const DIRECTORY = [
@@ -112,13 +112,15 @@ describe('EmergencyContactsPage', () => {
     expect(screen.queryByText('Zoe Ng')).not.toBeInTheDocument();
   });
 
-  // The admin help card already dials the estate manager, so a page repeating
-  // that one number would be redundant — the role has no contacts block at all
-  // and AdminLayout offers no link to this page.
-  test('admin has no contacts page — the sidebar card is the whole feature', async () => {
+  // Item 28: an admin gets the same block an inspector does — the managers by
+  // name (GET /api/users/contacts maps admin -> managers) and the estate line,
+  // not the national emergency numbers.
+  test('admin sees the managers and the estate line', async () => {
     renderAs('admin');
-    expect(await screen.findByText(/No contacts have been listed/i)).toBeInTheDocument();
-    expect(screen.queryByText('Rachel Lim')).not.toBeInTheDocument();
+    expect(await screen.findByText('Rachel Lim')).toBeInTheDocument();
+    expect(screen.getByText('6500 0321')).toBeInTheDocument();
+    expect(screen.getByText('Managing office')).toBeInTheDocument();
+    expect(screen.queryByText('999')).not.toBeInTheDocument();
   });
 
   test('numbers are dialable tel: links', async () => {

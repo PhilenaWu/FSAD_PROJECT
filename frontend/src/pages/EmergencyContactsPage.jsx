@@ -1,6 +1,6 @@
 // Sidebar "Emergency contacts" — a reference list, different per role:
 // residents see the managing office plus the national emergency lines,
-// inspectors the estate line and the managers, admins the managers (item 28).
+// inspectors and admins the estate line and the managers (item 28).
 // Every number comes from the database through useRoleContacts(), which the
 // sidebar help card reads too, so a role's number never disagrees between the
 // two. The wording around them lives in lib/roleContacts.js.

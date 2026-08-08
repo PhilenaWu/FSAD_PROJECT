@@ -3,7 +3,7 @@
 // feedback and notifications tests.
 'use strict';
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       const ids = {
@@ -21,7 +21,7 @@ jest.mock('../../src/config/supabase', () => ({
   },
 }));
 
-jest.mock('../../src/config/db', () => {
+jest.mock('../../../backend/src/config/db', () => {
   const ROLES = {
     'mgr-1': 'manager',
     'adm-1': 'admin',
@@ -58,7 +58,7 @@ jest.mock('../../src/config/db', () => {
 });
 
 const request = require('supertest');
-const app = require('../../src/app');
+const app = require('../../../backend/src/app');
 
 describe('GET /api/users/contacts', () => {
   test('a manager gets the admins — the number behind their "Need help?" card', async () => {

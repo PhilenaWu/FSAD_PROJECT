@@ -108,18 +108,22 @@ export const ROLE_CONTACTS = {
     helpCaption: 'Call the estate manager',
   },
 
-  // --- admin (item 27) ---
+  // --- admin (items 27, 28) ---
   // Item 27 removed the admin card because it pointed at nobody; it is back
   // with a real destination, the estate manager who runs the estate day to day,
   // dialled from that manager's own profile row.
   //
-  // Card only — no contactsTitle/staffLabel, so there is no contacts page for
-  // this role. An admin's one contact is already the number on the card, and a
-  // page repeating a single line would be redundant navigation. AdminLayout
-  // therefore offers no Quick access link either.
+  // Item 28 gives the role a contacts page too. The card dials one manager (the
+  // first with a number); the page lists every manager by name plus the estate
+  // line, which is more than the card can hold. Same shape as the manager
+  // block, one rung down: GET /api/users/contacts maps admin -> managers.
   admin: {
     helpSource: 'staff',
     helpCaption: 'Call the estate manager',
+    contactsTitle: 'Contacts',
+    contactsSubtitle: 'The managers running the estate, and the estate line.',
+    directoryCategories: ['estate'],
+    staffLabel: 'Estate manager',
   },
 };
 

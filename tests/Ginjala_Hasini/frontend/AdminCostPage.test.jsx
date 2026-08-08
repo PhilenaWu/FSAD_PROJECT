@@ -11,22 +11,22 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 // --- Mocks ------------------------------------------------------------------
 
-vi.mock('../context/AuthContext', () => ({
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
   useAuth: () => ({ profile: { role: 'admin' } }),
 }));
-vi.mock('../context/SocketContext', () => ({
+vi.mock('../../../frontend/src/context/SocketContext', () => ({
   useSocket: () => ({ socket: null }),
 }));
 
 // Chart.js needs a real canvas; the charts are not what these tests are about.
-vi.mock('../components/cost/CategoryBarChart', () => ({
+vi.mock('../../../frontend/src/components/cost/CategoryBarChart', () => ({
   default: ({ data }) => <div data-testid="category-chart">{data.length} categories</div>,
 }));
-vi.mock('../components/cost/CostTrendChart', () => ({
+vi.mock('../../../frontend/src/components/cost/CostTrendChart', () => ({
   default: ({ data }) => <div data-testid="trend-chart">{data.length} months</div>,
 }));
 
-vi.mock('../services/costService', async (importOriginal) => {
+vi.mock('../../../frontend/src/services/costService', async (importOriginal) => {
   // buildInsights and the threshold are pure; only the network calls are faked.
   const actual = await importOriginal();
   return {
@@ -44,8 +44,8 @@ import {
   getCostSummary,
   getCostAnalytics,
   getLiftWatchlist,
-} from '../services/costService';
-import AdminCostPage from './AdminCostPage';
+} from '../../../frontend/src/services/costService';
+import AdminCostPage from '../../../frontend/src/pages/AdminCostPage';
 
 // --- Fixtures ---------------------------------------------------------------
 
@@ -375,9 +375,9 @@ describe('AdminCostPage', () => {
   });
 
   test('a non-admin is refused the page outright', async () => {
-    vi.doMock('../context/AuthContext', () => ({ useAuth: () => ({ profile: { role: 'manager' } }) }));
+    vi.doMock('../../../frontend/src/context/AuthContext', () => ({ useAuth: () => ({ profile: { role: 'manager' } }) }));
     vi.resetModules();
-    const { default: Page } = await import('./AdminCostPage');
+    const { default: Page } = await import('../../../frontend/src/pages/AdminCostPage');
 
     render(
       <MemoryRouter>
