@@ -15,6 +15,11 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   // True when /api/users/me actually failed (as opposed to not fetched yet).
   const [profileError, setProfileError] = useState(false);
+  // True when that failure was "no reply at all" rather than an HTTP status —
+  // in development that is almost always the API server not being started.
+  // Worth separating: the generic copy sends people to look at the account,
+  // which is the wrong place when the server is simply down.
+  const [profileUnreachable, setProfileUnreachable] = useState(false);
   // Distinguished from a generic failure: a suspended account authenticates
   // with Supabase fine but is refused by /api/users/me (403 ACCOUNT_SUSPENDED).
   // Without this the app fell through to resident chrome, so a suspended user
@@ -75,6 +80,7 @@ export function AuthProvider({ children }) {
     let active = true;
     setProfile(null);
     setProfileError(false);
+    setProfileUnreachable(false);
     setSuspended(false);
     setAccountBlocked(null);
 
@@ -98,6 +104,9 @@ export function AuthProvider({ children }) {
           }
           if (!active) return;
           setProfileError(true);
+          // No `response` means the request never got an answer — the server is
+          // down, the wrong port, or CORS refused it outright.
+          setProfileUnreachable(!err.response);
           const code = err.response?.data?.code;
           setSuspended(code === 'ACCOUNT_SUSPENDED');
           if (code === 'ACCOUNT_PENDING') setAccountBlocked('pending');
@@ -125,6 +134,9 @@ export function AuthProvider({ children }) {
     // have their own screens) from "we could not find out" — which must not be
     // guessed at, since guessing meant resident chrome for everyone.
     profileError,
+    // Narrows that further: the request got no reply at all, so the screen can
+    // point at the API server instead of the account.
+    profileUnreachable,
     reloadProfile: () => setReloadKey((k) => k + 1),
     suspended,
     accountBlocked,

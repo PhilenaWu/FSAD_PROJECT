@@ -109,7 +109,10 @@ describe('useRoleContacts — what each role is allowed to ask for', () => {
   });
 
   test('a role with no contacts block fires no requests at all', async () => {
-    const { result } = renderFor('contractor');
+    // Every real role has a block now — the contractor gained one in item 16 —
+    // so an unmapped value stands in for the empty-block path the hook still
+    // has to survive.
+    const { result } = renderFor('auditor');
 
     // Nothing to wait for: with no source needed, loading is false on first render.
     expect(result.current.loading).toBe(false);

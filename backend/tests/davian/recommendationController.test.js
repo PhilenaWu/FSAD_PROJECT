@@ -25,6 +25,13 @@ jest.mock('../../src/models/aiPredictionModel', () => ({
   list: mockList,
 }));
 
+// Socket.IO emit seam — acceptAlert notifies 'manager-room' when it opens the
+// follow-up inspection, and getIO() throws with no server running in tests.
+jest.mock('../../src/services/socketService', () => ({
+  emitToRoom: jest.fn(),
+  emitToRooms: jest.fn(),
+}));
+
 const controller = require('../../src/controllers/recommendationController');
 
 // --- helpers ------------------------------------------------------------
