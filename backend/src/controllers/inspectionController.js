@@ -815,7 +815,10 @@ async function updateInspection(req, res, next) {
           event_type: isReassignment ? 'defect_reassigned' : 'defect_assigned',
           scope: assignee.scope,
           message: `${recordLabel(inspection)} has been ${isReassignment ? 'reassigned' : 'assigned'} to you — due ${new Date(inspection.target_deadline).toLocaleDateString('en-SG')}.`,
-          urgency: 'Warning',
+          // Informational (D.13): being given work is the contractor's happy
+          // path, not an exception. It was Warning, so every routine assignment
+          // arrived looking like an escalation.
+          urgency: 'Informational',
           link: '/contractor-inbox',
         });
       }
@@ -839,7 +842,12 @@ async function updateInspection(req, res, next) {
           event_type: 'priority_changed',
           scope: assignee.scope,
           message: `${recordLabel(inspection)} is now ${inspection.priority} priority.`,
-          urgency: 'Warning',
+          // Urgency tracks the new priority rather than being Warning either way
+          // (D.13) — a drop to Low is not a warning. Same conditional shape as
+          // complaint_submitted above.
+          urgency: ['Critical', 'High'].includes(inspection.priority)
+            ? 'Warning'
+            : 'Informational',
           link: '/contractor-inbox',
         });
       }

@@ -74,8 +74,10 @@ async function notifyEvent({ event_type, scope, message, urgency = 'Informationa
 //                             priority_changed · rectification_rejected ·
 //                             closed (managers + admins + originator) ·
 //                             defect_email_failed
-//   contractorController.js   acknowledged · on_hold · rectified
-//                             (each to managers + the originator)
+//   contractorController.js   acknowledged · on_hold · rectified · resumed
+//                             (each ONE notification to managers + the record's
+//                             inspector, via the managers_and_users scope — see
+//                             D.12/D.15 below)
 //   myReportsController.js    rating_submitted
 //   cvController.js           cv_detection
 //   vendorController.js       vendor_onboarded · vendor_renewed ·
@@ -89,6 +91,12 @@ async function notifyEvent({ event_type, scope, message, urgency = 'Informationa
 //     email, and a durable row per save would bury the bell.
 //   • Manager-initiated CV actions (createTicketFromDetection, dismiss) —
 //     telling someone about their own click is noise.
+//   • The resident who filed a complaint, on a contractor-side transition
+//     (D.15). Those go to managers + the inspector only. The old resident branch
+//     addressed `block-{n}`, a room holding every resident of the block, so a
+//     socket notification about one household's defect reached all of their
+//     neighbours while only the originator got a durable row. Residents still
+//     see live status on /my-reports.
 //
 // Still open, and owned elsewhere:
 //   • D.5 (Philena) — the status_update emits for assign (~:487) and reject

@@ -18,6 +18,11 @@ router.post('/', requireAuth, requireRole('manager'), notificationController.sen
 // readability.
 router.get('/', requireAuth, notificationController.listMine);
 
+// GET /api/notifications/sent — the manager's own send history (UC-008).
+// Declared before /:id/receipts so the literal path is never shadowed if that
+// route is ever widened to a single segment.
+router.get('/sent', requireAuth, requireRole('manager'), notificationController.listSent);
+
 // GET /api/notifications/:id/receipts — manager polls read/unread counts.
 router.get(
   '/:id/receipts',
