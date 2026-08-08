@@ -1,6 +1,6 @@
 # Ginjala Hasini — unit tests
 
-**335 tests across 25 files. All passing.**
+**391 tests across 32 files. All passing.**
 
 [TEST_CASES.md](TEST_CASES.md) lists every one of them by name, generated from
 the runners' own JSON output rather than typed by hand.
@@ -12,8 +12,8 @@ that reason alone; both are unit tests of my own code.
 
 | | Folder | Files | Tests |
 |---|---|---|---|
-| Backend (jest) | [`backend/tests/hasini/`](../../../backend/tests/hasini/) | 7 | 117 |
-| Frontend (vitest) | [`frontend/tests/hasini/`](.) (this folder) | 18 | 218 |
+| Backend (jest) | [`backend/tests/hasini/`](../../../backend/tests/hasini/) | 9 | 124 |
+| Frontend (vitest) | [`frontend/tests/hasini/`](.) (this folder) | 23 | 267 |
 
 ## Running them
 
@@ -45,8 +45,10 @@ pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 | `export.test.js` | 4 | `POST /api/export/pptx` — validation, role gating, the Cloudinary upload seam |
 | `vendors.test.js` | 30 | UC-012 lifecycle — onboard, renew, suspend, edit, history, expiry check, malformed-id handling (VND-T01–T06) |
 | `contactDirectory.test.js` | 3 | `GET /api/contacts` — display order, exactly one `is_help_line` row, `401` when unauthenticated |
-| `userContacts.test.js` | 5 | `GET /api/users/contacts` — role→counterpart mapping from the verified token, null phone, `403` for a resident |
+| `userContacts.test.js` | 6 | `GET /api/users/contacts` — role→counterpart mapping from the verified token, null phone, `403` for a resident |
 | `recommendations.test.js` | 4 | UC-005 dashboard read of active AI alerts |
+| `auth.test.js` | 5 | `requireRole` — suspended vs wrong-role vs missing profile, each with its own code, and `401` with no caller |
+| `auth.integration.test.js` | 1 | Placeholder (`todo`) for the end-to-end token check; needs a live Supabase project |
 
 ## Frontend — `frontend/tests/hasini/`
 
@@ -67,6 +69,11 @@ pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 | `CostTrendChart.test.jsx` | 13 | UC-011 projection — the dashed curve anchored on the last actual, the uncertainty band, band edges hidden from legend and tooltip |
 | `CategoryBarChart.test.jsx` | 8 | UC-011 bars — series order, click-to-filter, money formatting |
 | `SlaGauge.test.jsx` | 7 | UC-005 gauge — the two segments closing the ring, centre label, what-if delta |
+| `PriorityQueue.test.jsx` | 12 | UC-005 queue — that the server's ranking is rendered rather than re-sorted, `/inspections` links, one-decimal scores, the priority heat ramp |
+| `ContractorScorecard.test.jsx` | 11 | UC-005 scorecard — em dashes for every nullable column, zero as a real figure, the overdue drill-through and its URL encoding |
+| `AIAlertCard.test.jsx` | 14 | UC-005 risk alert — velocity and cost chips, the optional cost, Accept/Dismiss reporting the right id, `busy` locking both |
+| `CostPanel.test.jsx` | 10 | UC-011 panel wrapper — title/subtitle/action slots, the `div` title that lets a Chip sit in it, the caption height that keeps panels aligned |
+| `ErrorBoundary.test.jsx` | 2 | The fallback shown when a panel throws, instead of a blank dashboard |
 | `trendBuckets.test.js` | 9 | Trend axis bucketing — stays linear in time at every range |
 | `EmergencyContactsPage.test.jsx` | 8 | The contacts page per role, every number from the API |
 | `csvDownload.test.js` | 6 | CSV export — escaping, null cells, the UTF-8 BOM, empty result set |
@@ -77,5 +84,7 @@ These cover my tracks: UC-005 analytics + PptxGenJS export + Data Playground,
 the UC-011 cost dashboard, the UC-012 vendor UI, and role contacts. Ownership
 per `PROJECT_IMPLEMENTATION_PHASES.md` §5.4.
 
-Integration tests are not here — they exercise several members' code through
-one HTTP path, so they stay in `backend/tests/integration/`.
+The old shared `backend/tests/unit/` and `backend/tests/integration/` folders no
+longer exist — every test now sits in its author's own folder, split out by git
+blame. The few that exercise several members' code through one HTTP path are
+filed under whoever owns the route being called.

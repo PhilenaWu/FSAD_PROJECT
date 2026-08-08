@@ -97,6 +97,13 @@ jest.mock('../../src/config/db', () => ({
   query: mockQuery,
 }));
 
+// --- Mock: Socket.IO emit seam (no server in tests). acceptAlert emits
+// status_update to 'manager-room' after creating the follow-up inspection.
+jest.mock('../../src/services/socketService', () => ({
+  emitToRoom: jest.fn(),
+  emitToRooms: jest.fn(),
+}));
+
 const request = require('supertest');
 const app = require('../../src/app');
 
