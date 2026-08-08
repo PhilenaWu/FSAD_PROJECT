@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router';
 import {
   Badge,
   Box,
+  Button,
   Chip,
   Divider,
   IconButton,
@@ -20,10 +21,49 @@ import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNone
 import { useSocket } from '../../context/SocketContext';
 import { list, markRead } from '../../services/notificationService';
 
-const URGENCY_COLOR = {
-  Informational: 'default',
-  Warning: 'warning',
-  Critical: 'error',
+// Chip background per lifecycle event. Every routine event was
+// `Informational`, so the whole bell was a column of identical grey chips and
+// the label was the only thing separating "Closed" from "Overdue". Colour now
+// groups events by what kind of thing they are:
+//   blue    — something is now yours to do
+//   green   — work moved forward or finished cleanly
+//   teal    — neutral status change, nothing owed
+//   orange  — stalled or sent back, needs a look
+//   red     — failed, overdue, or a vendor is not usable
+//   magenta — produced by AI/automation rather than a person
+//
+// Values are `sx` background tokens, not Chip `color` names, because the whole
+// chip is filled (see the Chip below). The theme's `secondary` purple was the
+// obvious pick for the automation group but sat too close to `primary` blue to
+// tell apart at chip size, so automation gets an explicit magenta instead —
+// the one colour here with no palette entry to point at.
+const AUTOMATION = '#DB2777';
+const EVENT_COLOR = {
+  acknowledged: 'info.main',
+  rectified: 'success.main',
+  review_requested: 'primary.main',
+  on_hold: 'warning.main',
+  resumed: 'info.main',
+  defects_flagged: 'warning.main',
+  spot_check_passed: 'success.main',
+  complaint_submitted: 'primary.main',
+  defect_assigned: 'primary.main',
+  defect_reassigned: 'primary.main',
+  defect_unassigned: 'info.main',
+  priority_changed: 'info.main',
+  rectification_rejected: 'warning.main',
+  closed: 'success.main',
+  overdue_chase: 'error.main',
+  defect_email_failed: 'error.main',
+  cv_detection: AUTOMATION,
+  ai_alerts_generated: AUTOMATION,
+  rating_submitted: 'success.main',
+  report_ready: AUTOMATION,
+  vendor_onboarded: 'success.main',
+  vendor_renewed: 'success.main',
+  vendor_suspended: 'error.main',
+  vendor_expired: 'error.main',
+  vendor_expiring_soon: 'warning.main',
 };
 
 // What each lifecycle event is called in the bell (D.13). The chip used to print
@@ -67,6 +107,17 @@ const EVENT_LABEL = {
 function labelFor(n) {
   if (n.event_type) return EVENT_LABEL[n.event_type] ?? 'Update';
   return n.urgency === 'Informational' ? 'Announcement' : n.urgency;
+}
+
+// Urgency still wins: an escalated event must not be hidden behind its calm
+// event colour. Below that, the event type picks the colour. A manager
+// broadcast has no event type and stays grey — it is a human talking, not a
+// system state, and greying it keeps that distinction readable.
+function colorFor(n) {
+  if (n.urgency === 'Critical') return 'error.main';
+  if (n.urgency === 'Warning') return 'warning.main';
+  if (!n.event_type) return 'grey.600';
+  return EVENT_COLOR[n.event_type] ?? 'grey.600';
 }
 
 export default function NotificationBell() {
@@ -120,6 +171,19 @@ export default function NotificationBell() {
     }
   }
 
+  // Clear the whole backlog. There is no bulk endpoint, so this fans out one
+  // PATCH per unread row — fine at inbox size, and it keeps the change to the
+  // frontend. Same optimistic flip as above: the list clears immediately.
+  async function handleMarkAllRead() {
+    const unread = items.filter((i) => !i.read);
+    setItems((prev) => prev.map((i) => ({ ...i, read: true })));
+    try {
+      await Promise.all(unread.map((i) => markRead(i.id)));
+    } catch {
+      // no-op — a failed row stays unread server-side and comes back on reload
+    }
+  }
+
   // Clicking a row marks it read and, for a lifecycle event, opens the record it
   // refers to. Broadcasts have no link and stay put.
   function handleClick(n) {
@@ -150,10 +214,18 @@ export default function NotificationBell() {
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         slotProps={{ paper: { sx: { width: 320, maxHeight: 400 } } }}
       >
-        <Box sx={{ px: 2, py: 1 }}>
-          <Typography variant="subtitle1" fontWeight={700}>
+        {/* Clearing a backlog used to mean opening every row one at a time —
+            each click navigated away, so it was the slowest possible way to
+            do it. */}
+        <Box sx={{ px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ flexGrow: 1 }}>
             Notifications
           </Typography>
+          {unreadCount > 0 && (
+            <Button size="small" onClick={handleMarkAllRead}>
+              Mark all read
+            </Button>
+          )}
         </Box>
         <Divider />
 
@@ -169,8 +241,15 @@ export default function NotificationBell() {
               <ListItem
                 key={`${n.id}-${idx}`}
                 alignItems="flex-start"
+                // Unread was a ~4% grey tint and nothing else — invisible
+                // unless a read row happened to sit next to it, and now
+                // outcompeted by the filled chips. A left accent bar in the
+                // row's own colour reads at a glance without adding another
+                // colour to the row.
                 sx={{
                   bgcolor: n.read ? 'transparent' : 'action.hover',
+                  borderLeft: 3,
+                  borderColor: n.read ? 'transparent' : colorFor(n),
                   cursor: !n.read || n.link ? 'pointer' : 'default',
                 }}
                 onClick={() => handleClick(n)}
@@ -178,11 +257,15 @@ export default function NotificationBell() {
                 <ListItemText
                   primary={
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {/* Solid fill on every chip: the outline version put the
+                          colour on the text, which was too thin to read as a
+                          group at this size. Colour is set through `sx` rather
+                          than the `color` prop so the automation magenta —
+                          which has no palette entry — works the same way. */}
                       <Chip
                         size="small"
                         label={labelFor(n)}
-                        color={URGENCY_COLOR[n.urgency] ?? 'default'}
-                        variant={n.urgency === 'Informational' ? 'outlined' : 'filled'}
+                        sx={{ bgcolor: colorFor(n), color: 'common.white' }}
                       />
                       {n.link ? (
                         <Typography variant="caption" color="primary">
@@ -194,6 +277,21 @@ export default function NotificationBell() {
                             Tap to mark read
                           </Typography>
                         )
+                      )}
+                      {/* Unread dot, right-aligned. The accent bar says the
+                          same thing, but the bar is easy to miss on the row
+                          you are actually looking at. */}
+                      {!n.read && (
+                        <Box
+                          sx={{
+                            ml: 'auto',
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            bgcolor: 'primary.main',
+                            flexShrink: 0,
+                          }}
+                        />
                       )}
                     </Box>
                   }
