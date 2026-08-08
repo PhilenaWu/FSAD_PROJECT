@@ -177,6 +177,9 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | M.6 | Never infer severity or photos | `inspectionController.js` | Explicitly excluded from the prompt and the response mapping |
 | M.7 | Graceful degradation (A4) | `NewInspectionPage.jsx` | OpenAI down → button disabled with a tooltip; UC-001 unaffected |
 | M.8 | Tests | `tests/unit/ocrPrefill.test.js` | Mocked OpenAI: happy path maps 25 items; partial read populates `unreadable_items`; endpoint writes no rows; unreadable → 422 |
+| M.9 | Edit a resident's own report within 30 minutes (UC-003 extension) | `myReportModel.js`, `myReportsController.js`, `routes/myReports.js`, `MyReportsPage.jsx`, `ReportCard.jsx` | `PATCH /api/my-reports/:id`; time-only gate (`EDIT_WINDOW_MS = 30 min`), title/description/category/block/unit only — photo excluded by design |
+| M.10 | OCR item-count reliability | `openaiService.js` | `item_number` per entry recovers a wrong count (usually one item split in two) without discarding the scan; failed retries now name what went wrong; `MAX_ATTEMPTS` 2 → 3 |
+| M.11 | Individual test folder | `tests/mahdiya/` | `reportEdit.test.js` (M.9), `ocrReliability.test.js` (M.10) — per-student folder convention, additive to the shared `tests/unit`/`tests/integration` suite |
 
 ---
 

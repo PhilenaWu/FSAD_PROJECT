@@ -653,8 +653,6 @@ Score = `(ai_priority_score × 0.5) + (recency × 0.3) + (frequency × 0.2)`, wh
 
 ---
 
----
-
 ### 6.2a My Reports (UC-003 — the originator's own view)
 
 > Mounted at `/api/my-reports`, separate from the manager-facing `/api/inspections`
@@ -683,6 +681,35 @@ Full detail for one of the caller's own records, live or closed: the row plus
 **Error 404:**
 ```json
 { "code": "NOT_FOUND", "message": "Report not found." }
+```
+
+---
+
+#### PATCH /api/my-reports/:id
+**Auth:** `resident`  
+Edit a resident's own complaint — `title`, `description`, `category`,
+`location_block`, `location_unit` — within 30 minutes of filing it
+(`EDIT_WINDOW_MS`, matched client-side by `utils/myReports.isEditable`). The
+photo is not editable here: no re-upload handling, and changing it would
+raise the question of whether to re-run CV detection. Time-only gate — not
+also on status, so it still succeeds even if a manager has already started
+triaging within the window. Scoped to `resident_id` specifically (an
+inspector's own spot-check has a structurally different shape and isn't
+editable through this route).
+
+**Request:**
+```json
+{ "title": "...", "description": "...", "category": "Electrical", "location_block": "44B", "location_unit": "08-01" }
+```
+**Response 200:** the updated inspection row.
+
+**Error 409 — window expired:**
+```json
+{ "code": "EDIT_WINDOW_EXPIRED", "message": "Reports can only be edited within 30 minutes of submission." }
+```
+**Error 400 — validation:**
+```json
+{ "code": "VALIDATION_ERROR", "message": "title, description, location_block and category are required." }
 ```
 
 ---

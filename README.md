@@ -115,6 +115,56 @@ npm run dev
 
 ---
 
+## Deployment
+
+**Public URL:** _Not yet deployed._ This section documents the steps to
+deploy — update the URL above once live.
+
+The architecture is backend on **Render**, frontend on **Vercel**, database
+on **Supabase** (already hosted — no separate deploy step). Deploy the
+backend first so the frontend has a real `VITE_API_URL` to point at.
+
+### 1. Backend → Render
+
+1. New **Web Service** on [render.com](https://render.com), connect this
+   repo, root directory `backend/`.
+2. Build command `npm install`, start command `npm start`.
+3. Add every variable from `backend/.env.example` in the Render dashboard's
+   Environment tab (Supabase, Cloudinary, Roboflow, OpenAI, SMTP, plus
+   `CRON_SECRET` and `FRONTEND_URL` — the last one gets filled in after step
+   2 below, once the Vercel URL exists).
+4. Deploy, then run migrations once against the live database:
+   `npm run migrate` (either via Render's shell, or locally with
+   `DATABASE_URL` pointed at the Supabase connection string).
+5. Confirm `GET https://<render-service>.onrender.com/health` returns 200.
+
+### 2. Frontend → Vercel
+
+1. New project on [vercel.com](https://vercel.com), connect this repo, root
+   directory `frontend/`.
+2. Framework preset: Vite. Build command `npm run build`, output dir `dist`.
+3. Add `VITE_API_URL` = the Render URL from step 1, plus
+   `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` from
+   `frontend/.env.example`.
+4. Deploy, then go back to the Render dashboard and set `FRONTEND_URL` to
+   the resulting Vercel URL (needed for CORS and the Socket.IO origin
+   check) and redeploy the backend.
+
+### 3. Scheduled jobs (optional, only needed for UC-006/UC-009/UC-012)
+
+`.github/workflows/` cron jobs (nightly AI recommendations, weekly report,
+vendor contract-expiry check) need repo secrets `RENDER_BACKEND_URL` and
+`CRON_SECRET` (must match the backend's `CRON_SECRET` env var) set under
+**Settings → Secrets and variables → Actions**.
+
+### 4. Uptime (optional)
+
+Render free-tier services sleep after inactivity. A ping every 5 minutes
+(e.g. [UptimeRobot](https://uptimerobot.com) against `/health`) keeps it
+warm for a demo.
+
+---
+
 ## Project structure (high level)
 
 ```

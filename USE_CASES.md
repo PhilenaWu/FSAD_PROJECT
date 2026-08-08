@@ -107,7 +107,17 @@ Manager opens `/inspections`, a queue sorted by severity and `ai_priority_score`
 
 **Actor:** Resident · **Owner:** Zoe
 
-`SocketContext` joins `block-{n}` on login and `insp-{id}` when a detail view opens. `status_update` events refresh the status and audit log without a reload. A dropped connection shows "Live updates paused — reconnecting…" and retries every 5 s. On `Resolved`, a 1–5 star rating is offered once (`409 ALREADY_RATED` on a repeat).
+`SocketContext` joins `block-{n}` on login and `insp-{id}` when a detail view opens. `status_update` events refresh the status and audit log without a reload. A dropped connection shows "Live updates paused — reconnecting…" and retries every 5 s.
+
+### Extension work — edit a report within 30 minutes (Mahdiya)
+
+A resident's live report card now offers **View details** and, within 30
+minutes of filing (`PATCH /api/my-reports/:id`), an **Edit report** button
+covering title/description/category/block/unit (not the photo — no
+re-upload handling, and changing it would raise the question of re-running
+CV detection). The gate is time-only, not also on status, so an edit still
+goes through even if a manager has already started triaging within the
+window. Past 30 minutes: `409 EDIT_WINDOW_EXPIRED`.
 
 ---
 
@@ -396,7 +406,7 @@ Contract details are entered manually — **no document parsing** (deliberate sc
 
 1. On `/inspections/new` the inspector taps **Scan a paper form**.
 2. Photographs or uploads the completed form; the image is compressed and posted to `POST /api/inspections/ocr-prefill`.
-3. The server sends it to OpenAI `gpt-4o-mini` with vision, using a structured prompt that names all 25 items in order and demands strict JSON: per item a `result` (`Pass` | `Defect` | `unreadable`), a `remark`, and a `field_confidence`.
+3. The server sends it to OpenAI `gpt-4o-mini` with vision, using a structured prompt that names all 25 items in order and demands strict JSON: per item an `item_number`, a `result` (`Pass` | `Defect` | `unreadable`), a `remark`, and a `field_confidence`.
 4. The response maps onto the live checklist by section and `display_order`.
 5. The form is prefilled. **Every prefilled field is visually marked as unconfirmed** (amber left border), fields below 0.80 confidence are marked "please check", and unreadable items are left blank with a badge.
 6. A banner states: *"Draft from a scanned form — check every answer. You are signing for this."*
@@ -408,6 +418,18 @@ Contract details are entered manually — **no document parsing** (deliberate sc
 - **A2 — Partial read.** Readable items prefill; unreadable ones stay blank and are counted in the banner ("18 of 25 read — 7 need your input").
 - **A3 — Header mismatch.** If the OCR block/lift does not match the selected lift, the system warns and keeps the inspector's selection.
 - **A4 — OpenAI unavailable or over quota.** The scan button is disabled with a tooltip; UC-001 is entirely unaffected.
+
+### Reliability (extension work — Mahdiya)
+
+A dense 25-item form occasionally comes back with the wrong item count even
+at temperature 0 — usually one item wrongly split into two entries. Each
+returned entry now carries an `item_number` naming which numbered item it
+answers, so a wrong count can often be reconciled to the right 25 answers
+on the spot instead of discarding the whole scan; it only falls through to
+a retry when a genuine gap can't be safely guessed at. Up to 3 attempts are
+made total, and every retry after the first tells the model what specifically
+went wrong last time (bad JSON, wrong count) rather than repeating the exact
+same prompt, which tended to reproduce the same mistake.
 
 ### Guard rails
 
