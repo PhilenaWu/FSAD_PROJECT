@@ -70,14 +70,14 @@ function quickActions(pendingCount) {
       color: 'info',
     },
     {
-      label: 'Completed work',
+      label: 'Needs your review',
       // Real count carried over from the pre-redesign page (GET
-      // /api/inspections?status=Rectified) — work rectified by a contractor
-      // and awaiting the inspector's joint endorsement.
+      // /api/inspections?status=Rectified) — work a contractor has submitted,
+      // waiting on the inspector's check before a manager can close it.
       caption:
         pendingCount === null
-          ? 'Review work completed and ready for your check'
-          : `${pendingCount} inspection${pendingCount === 1 ? '' : 's'} ready for your check`,
+          ? 'Check work a contractor has submitted'
+          : `${pendingCount} job${pendingCount === 1 ? '' : 's'} waiting for your check`,
       to: '/inspections',
       icon: FactCheckOutlinedIcon,
       color: 'success',
