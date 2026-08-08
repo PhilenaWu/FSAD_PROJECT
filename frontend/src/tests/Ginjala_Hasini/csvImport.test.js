@@ -6,7 +6,7 @@ import {
   mergeHeatmap,
   mergeTrends,
   mergeSla,
-} from './csvImport';
+} from '../../utils/csvImport';
 
 const VALID_CSV = `block,category,date,resolution_time_hours
 44A,Lift,2026-07-01,50

@@ -272,16 +272,22 @@ async function fetchBreakdownBy(dimension, alias, filters = {}) {
 
 // [{ name, total, count }] — spend per contractor, costliest first. Actual only:
 // ai_predictions carries no contractor, so there is no projected figure to give.
+//
+// LEFT JOIN, not JOIN: a record closed without an assignment (an in-house fix)
+// still spent money, and an inner join dropped it — so the exported deck's
+// contractor table came up short of total_actual and disagreed with the
+// dashboard, which shows those rows as "Unassigned" (see fetchCostJobs, which
+// applies the same COALESCE). Both must label the bucket identically.
 async function fetchCostByContractor(filters = {}) {
   const bag = paramBag();
   const { rows } = await query(
-    `SELECT c.name          AS name,
-            SUM(i.actual_cost)::float AS total,
-            COUNT(*)::int   AS count
+    `SELECT COALESCE(c.name, 'Unassigned') AS name,
+            SUM(i.actual_cost)::float      AS total,
+            COUNT(*)::int                  AS count
        FROM inspections i
-       JOIN contractors c ON c.id = i.contractor_id
+       LEFT JOIN contractors c ON c.id = i.contractor_id
       WHERE ${inspectionWhere(filters, bag, 'i.')}
-      GROUP BY c.name
+      GROUP BY COALESCE(c.name, 'Unassigned')
       ORDER BY SUM(i.actual_cost) DESC`,
     bag.values
   );

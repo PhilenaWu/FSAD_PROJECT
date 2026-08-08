@@ -148,7 +148,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 | H.1 | Overdue + re-open columns on the scorecard | `ContractorScorecard.jsx`, `analyticsController.js` | **Done.** Overdue was already live. `avg_reopens` added — `hasReopenCount()` probes `information_schema` once and emits `NULL::float` until migration `026` exists, so the query is valid before and after it and begins averaging by itself |
 | H.2 | Section filter in analytics | `DashboardPage.jsx`, `analyticsController.js` | **Done.** `?section` adds an `EXISTS` over `checklist_results → checklist_items` scoped to `result = 'Defect'`. Correlates on `i.id` for prefixed callers, `inspections.id` otherwise. The dropdown hides itself when no sections are seeded |
 | H.3 | Annual export entry point | `ReportsArchivePage.jsx`, `reportService.js` | **Done.** Year picker derived from the listed reports (no extra endpoint), download button → `GET /api/reports/annual`. 404 surfaces as "not available yet"; the page never generates or emails anything |
-| H.4 | Tests | `tests/unit/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 507 backend, 78 frontend |
+| H.4 | Tests | `tests/Ginjala_Hasini/analytics.test.js` | **Done.** 6 new tests: section EXISTS shape + bound param, absent when unfiltered, alias correlation on the scorecard, sections sourced from `checklist_items`, `avg_reopens` returned, `AVG(i.reopen_count)` emitted. Full suite green — 507 backend, 78 frontend |
 
 > **UC-011 is closed.** Davian's `5.19a`/`5.19b` landed `adminController.js` and
 > `routes/admin.js`; `costService.js` now calls `/api/admin/costs/*` through
@@ -235,7 +235,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 
 ### 6.0b UC-012 coverage (Hasini) — all passing
 
-`backend/tests/unit/vendors.test.js` (30 tests). VND-T01 – T06 are labelled in
+`backend/tests/Ginjala_Hasini/vendors.test.js` (30 tests). VND-T01 – T06 are labelled in
 the file; the remaining tests extend the same six areas.
 
 | ID | Test | Verifies |
@@ -270,24 +270,40 @@ could not exist in the live schema.
 
 ### 6.0c Role contacts coverage (Hasini) — all passing
 
-16 named tests across three files, covering the two sources every phone number
+36 named tests across six files, covering the two sources every phone number
 now comes from:
 
-- `tests/unit/contactDirectory.test.js` (3) — `GET /api/contacts` returns the
+- `tests/Ginjala_Hasini/contactDirectory.test.js` (3) — `GET /api/contacts` returns the
   directory in display order, exactly one row is flagged `is_help_line`, and an
   unauthenticated call is refused `401`.
-- `tests/unit/userContacts.test.js` (5) — `GET /api/users/contacts` maps the
+- `tests/Ginjala_Hasini/userContacts.test.js` (5) — `GET /api/users/contacts` maps the
   caller's verified role to its counterpart (manager → admins, admin and
   inspector → managers), returns a staff row whose `phone` is null, and refuses
   a resident `403` so staff numbers cannot be enumerated.
-- `frontend/src/pages/EmergencyContactsPage.test.jsx` (8) — each role's block
+- `frontend/src/tests/Ginjala_Hasini/EmergencyContactsPage.test.jsx` (8) — each role's block
   renders from the API, a resident never calls the staff endpoint at all, a
   manager who has published no number is omitted rather than shown unreachable,
-  numbers are `tel:` links, an unconfigured role gets a message, and the admin
-  role has no contacts block at all (its sidebar card already dials the estate
-  manager, so a page repeating that one number would be redundant).
+  numbers are `tel:` links, an unconfigured role gets a message, and an admin
+  sees the managers by name plus the estate line (item 28 — the block used to
+  be card-only, so the page rendered its empty state for the role while
+  `GET /api/users/contacts` already served admins).
+- `frontend/src/tests/Ginjala_Hasini/roleContacts.test.js` (9) — the per-role
+  recipe on its own: each role's sources and wording, the admin block complete
+  after item 28, an unknown role resolving to `{}` rather than `undefined`, an
+  unrecognised `icon_key` falling back to a generic phone icon, and a guard
+  that only the three roles the staff endpoint admits ask for staff rows.
+- `frontend/src/tests/Ginjala_Hasini/useRoleContacts.test.js` (8) — the half the
+  contacts page never reads: `helpPhone`, the single number on every sidebar
+  help card. The directory row flagged `is_help_line` wins over whichever came
+  first; a staff card skips a colleague whose `phone` is null; a resident never
+  reaches the staff endpoint; a failed fetch leaves the card on its fallback
+  rather than throwing.
+- `frontend/src/tests/Ginjala_Hasini/contactService.test.js` (3) — the two data
+  layer calls the mocks above stand in for: the directory path, and that the
+  staff list sends no role, since the server derives the counterpart from the
+  verified token.
 
-Run: `npx jest` (652 — 650 passing, 2 todo) and `npx vitest run` (125).
+Run: `npx jest` (656 — 654 passing, 2 todo) and `npx vitest run` (231).
 
 
 

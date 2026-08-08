@@ -238,8 +238,9 @@ if `Demo:` records exist). Contractors come from `016_seed_reference_data.sql`.
 
 ### Tests
 
-- Backend: `npx jest tests/unit/analytics.test.js tests/unit/export.test.js tests/unit/recommendations.test.js`
-- Frontend: `npm test` in `frontend/` (vitest — CSV import/merge logic)
+- Backend: `npx jest tests/Ginjala_Hasini/analytics.test.js tests/Ginjala_Hasini/export.test.js tests/Ginjala_Hasini/recommendations.test.js`
+- Frontend: `npx vitest run src/tests/Ginjala_Hasini` in `frontend/` (dashboard
+  panels, cost analytics, CSV import/export, contacts)
 
 ### Demo script (~3 min)
 
@@ -374,7 +375,7 @@ Admin logins are seeded by migration `037` — see `backend/SEED_ADMIN.md`.
 
 ### Tests
 
-- Backend: `npx jest tests/unit/vendors.test.js` (onboarding validation +
+- Backend: `npx jest tests/Ginjala_Hasini/vendors.test.js` (onboarding validation +
   rollback, role gating, expiry job, suspended-login 403, renew/suspend,
   edit + history)
 

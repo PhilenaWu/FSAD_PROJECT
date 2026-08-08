@@ -472,9 +472,17 @@ export async function getLiftWatchlist(filters = {}) {
 }
 
 // POST /api/export/admin-costs-pptx → { pptx_url }
-// The deck is rendered server-side from the same fetchers the dashboard reads,
-// so it cannot drift from what is on screen. Admin-only, and the filters are
-// sent in the API's own parameter names.
+// Admin-only; the filters are sent in the API's own parameter names.
+//
+// The deck's totals are re-queried server-side under the same filters, but not
+// by the same code path: the summary tile shares fetchCostSummary with this
+// page, while the deck's breakdowns come from SQL aggregates
+// (fetchCostBreakdown) where the page groups the job rows itself, below. The
+// two agree because both queries define "a costed row" through the backend's
+// single inspectionWhere clause — so a filter added to one reaches the other.
+// A grouping rule changed on only one side would still drift; keep the buckets
+// here and in fetchCostByContractor/fetchBreakdownBy in step (both label an
+// unassigned job "Unassigned").
 export async function exportCostPptx(filters = {}) {
   const res = await api.post('/api/export/admin-costs-pptx', { filters: toParams(filters) });
   return res.data;

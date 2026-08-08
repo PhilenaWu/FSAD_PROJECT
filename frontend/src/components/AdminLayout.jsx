@@ -6,6 +6,7 @@ import { useRoleContacts } from '../lib/useRoleContacts';
 import PaymentsOutlinedIcon from '@mui/icons-material/PaymentsOutlined';
 import HandshakeOutlinedIcon from '@mui/icons-material/HandshakeOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
 
 const NAV_ITEMS = [
   { label: 'Cost Analytics', to: '/admin/costs', icon: PaymentsOutlinedIcon },
@@ -13,10 +14,11 @@ const NAV_ITEMS = [
   { label: 'Reports', to: '/reports', icon: DescriptionOutlinedIcon },
 ];
 
-// No Quick access "Contacts" entry, deliberately. An admin has exactly one
-// contact — the estate manager — and the help card at the foot of this sidebar
-// already shows that number. A whole page to repeat a single line would be
-// redundant navigation.
+// Item 28: the contacts page the help card's number comes from — the card
+// dials one manager, the page lists them all plus the estate line.
+const QUICK_ACCESS_ITEMS = [
+  { label: 'Contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },
+];
 
 export default function AdminLayout() {
   // "Need urgent help?" number for an admin is the estate manager's — the
@@ -32,6 +34,7 @@ export default function AdminLayout() {
       navItems={NAV_ITEMS}
       accountSubtitle="Administrator"
       profileLinkEnabled
+      quickAccessItems={QUICK_ACCESS_ITEMS}
       helpPhone={helpPhone}
       helpCaption={helpCaption}
     />

@@ -7,19 +7,19 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-vi.mock('../context/AuthContext', () => ({
+vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ profile: { role: 'manager' } }),
 }));
-vi.mock('../context/SocketContext', () => ({
+vi.mock('../../context/SocketContext', () => ({
   useSocket: () => ({ socket: null }),
 }));
 
 // Chart.js needs a real canvas; the charts are not what these tests are about.
-vi.mock('../components/analytics/HeatmapChart', () => ({ default: () => <div data-testid="heatmap" /> }));
-vi.mock('../components/analytics/TrendLineChart', () => ({ default: () => <div data-testid="trend" /> }));
-vi.mock('../components/analytics/SlaGauge', () => ({ default: () => <div data-testid="sla" /> }));
+vi.mock('../../components/analytics/HeatmapChart', () => ({ default: () => <div data-testid="heatmap" /> }));
+vi.mock('../../components/analytics/TrendLineChart', () => ({ default: () => <div data-testid="trend" /> }));
+vi.mock('../../components/analytics/SlaGauge', () => ({ default: () => <div data-testid="sla" /> }));
 
-vi.mock('../services/analyticsService', async (importOriginal) => ({
+vi.mock('../../services/analyticsService', async (importOriginal) => ({
   ...(await importOriginal()),
   getFilterOptions: vi.fn(),
   getSummary: vi.fn(),
@@ -44,8 +44,8 @@ import {
   getContractorScorecard,
   getPriorityQueue,
   getRecommendations,
-} from '../services/analyticsService';
-import DashboardPage from './DashboardPage';
+} from '../../services/analyticsService';
+import DashboardPage from '../../pages/DashboardPage';
 
 const alert = (n) => ({
   id: `alert-${n}`,

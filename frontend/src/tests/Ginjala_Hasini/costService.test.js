@@ -20,13 +20,13 @@ import {
   getLiftWatchlist,
   getCostFilterOptions,
   LIFT_REPLACEMENT_REVIEW_COST,
-} from './costService';
-import api from './api';
+} from '../../services/costService';
+import api from '../../services/api';
 
 // The data layer is mocked at the axios instance, so these tests assert the
 // wiring — which endpoint is called, with which parameters, and that the
 // server's field names reach the page's field names.
-vi.mock('./api', () => ({ default: { get: vi.fn() } }));
+vi.mock('../../services/api', () => ({ default: { get: vi.fn() } }));
 
 const JOBS = [
   { id: 1, closed_at: '2026-03-10', block: '44A', category: 'Doors',      lift: 'L1', contractor: 'Otis',      actual_cost: 100 },
