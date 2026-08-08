@@ -66,7 +66,7 @@ Recorded for traceability. **Do not re-open — these features are done.**
 
 | Phase | Weeks | Delivered |
 |---|---|---|
-| **1 — Foundation** (Philena) | 1–2 | Supabase Auth (client-side; no custom auth endpoints, no JWT/bcrypt), `users` profile + `requireRole` over five roles, migrations `001`–`016`, `pg` Pool, helmet/CORS/rate-limit/error-handler, `/health`, Vite+React+MUI shell, Vercel + Render deploy, UptimeRobot |
+| **1 — Foundation** (Philena) | 1–2 | Supabase Auth (client-side; no custom auth endpoints, no JWT/bcrypt), `users` profile + `requireRole` over five roles, migrations `001`–`016`, `pg` Pool, helmet/CORS/rate-limit/error-handler, `/health`, Vite+React+MUI shell, Vercel + Render deploy (live at https://fsad-project-pied.vercel.app), UptimeRobot |
 | **2 — Core** (Philena · Zoe · Mahdiya) | 3–4 | UC-001 spot-check form with GPS (`017`) + ≤100 KB compression + per-item severity; UC-001b text/voice complaints with OpenAI categorisation; UC-002 triage/assign with the 14-day default (`025`); UC-004 close with dual e-signature in a transaction; UC-003 SocketContext with reconnection + rating; **UC-010 contractor portal** (acknowledge, per-item completion photos, hold, e-sign, partial saves); UC-007 Roboflow pipeline with retry queue and bounding-box overlay |
 | **3 — Intelligence** (Hasini · Davian) | 5 | UC-005 analytics (7 endpoints, heatmap/trend/SLA/scorecard/priority queue, filters, drill-down, CSV), PptxGenJS export, Data Playground CSV what-if; UC-006 velocity + cost predictor + `ai_jobs` queue + accept/dismiss; UC-009 pdfkit monthly report + Nodemailer + archive; UC-011 cost dashboard; UC-012 vendor lifecycle (`019`–`022`, `vendor_history`) |
 | **4 — Polish** (All) | 6 | UC-008 notifications + 60 s in-process dispatcher + read receipts; toasts, empty states, spinners; mobile pass; 15 unit + 6 integration test files; seed data `018`, `023`, `024` |
@@ -370,7 +370,7 @@ Existing Phase 1–4 suites (auth, inspections, contractor, analytics, recommend
 - [ ] All §6 tests pass alongside the existing suites
 - [ ] Every page is usable at 375 px
 
-**All-phase gate:** merged to `main` via PR with one peer review · no secrets committed · `.env.example` updated (`TOWN_COUNCIL_NAME`, `APP_PUBLIC_URL`, `MAIL_FROM`) · README updated · deployed build reflects the phase · demonstrated to one other member.
+**All-phase gate:** merged to `main` via PR with one peer review · no secrets committed · `.env.example` updated in whichever package the phase added a variable to · README updated · deployed build reflects the phase · demonstrated to one other member.
 
 ---
 

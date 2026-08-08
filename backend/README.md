@@ -52,7 +52,7 @@ npm run dev             # node --watch server.js
 | `npm run dev` | Local development (`node --watch server.js`) |
 | `npm start` | Production (`node server.js`) |
 | `npm run migrate` | Apply every `migrations/*.sql` in filename order |
-| `npm test` | Jest — `tests/unit` and `tests/integration` |
+| `npm test` | Jest — every file under `tests/` (`unit`, `integration`, and the per-student folders) |
 
 ### Environment variables
 
@@ -125,6 +125,7 @@ Responses are JSON. The per-endpoint reference lives in
 | `/api/admin/vendors` | `vendors.js` | UC-012 vendor lifecycle (admin) |
 | `/api/reports` | `reports.js` | PDF generation + listing |
 | `/api/admin` | `admin.js` | UC-011 cost analytics (admin) |
+| `/api/contacts` | `contacts.js` | Estate + emergency contact directory |
 | `/health` | `app.js` | Liveness check (UptimeRobot) |
 
 `/api/admin/vendors` is mounted **before** `/api/admin` so the more specific
@@ -156,10 +157,15 @@ every file in filename order, each in its own transaction, and replays them all 
 every run (there is no applied-migrations ledger), so **every migration must be
 idempotent**.
 
-17 tables: `users`, `contractors`, `lifts`, `inspections`, `inspection_history`,
+18 tables: `users`, `contractors`, `lifts`, `inspections`, `inspection_history`,
 `checklist_items`, `checklist_results`, `signatures`, `cv_detections`,
 `ai_predictions`, `ai_jobs`, `notifications`, `notification_recipients`,
-`reports`, `retry_queue`, `vendor_history`, `defect_email_log`.
+`reports`, `retry_queue`, `vendor_history`, `defect_email_log`,
+`contact_directory`.
+
+(`feedback` was created by `036` and dropped again by `044` when the feedback
+form was removed; `036` stays because `040` reads the table while deciding
+whether a vendor login is safe to delete.)
 
 `inspections` is the core table; a `source_type` discriminator
 (`resident_complaint` | `lift_inspection`) separates resident-filed defects from

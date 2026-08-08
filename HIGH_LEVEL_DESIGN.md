@@ -862,26 +862,37 @@ The guard rails below are the "loopholes covered" list. Each is enforced server-
 
 ## 13. Environment Variables
 
+`backend/.env.example` and `frontend/.env.example` are the authoritative lists;
+this table maps them to what consumes them. `src/config/env.js` fails fast on
+boot and names any missing **required** variable. Each **optional** one gates a
+single feature — leave it unset and that feature degrades on its own without
+taking the server down.
+
 ### Render (backend)
 
-| Variable | Used by |
-|---|---|
-| `DATABASE_URL` | `config/db.js` |
-| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWKS_URL` | `config/supabase.js`, `middleware/auth.js` |
-| `FRONTEND_URL` | CORS + Socket.IO |
-| `NODE_ENV` | Express |
-| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | `cloudinaryService.js` |
-| `OPENAI_API_KEY` | `openaiService.js` (categorisation, alerts, summaries, **UC-013 vision**) |
-| `ROBOFLOW_API_KEY` | `roboflowService.js` |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | `emailService.js` (**UC-014** + UC-009) |
-| `MAIL_FROM` | Sender identity on defect alerts |
-| `CRON_SECRET` | `cronGuard.js` |
-| **`TOWN_COUNCIL_NAME`** | Default for the form header (§7.1) — **new** |
-| **`APP_PUBLIC_URL`** | Deep links inside defect-alert emails — **new** |
+| Variable | Required | Used by |
+|---|---|---|
+| `DATABASE_URL` | **yes** | `config/db.js` — Supabase pooler, port 6543, `sslmode=require` |
+| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | **yes** | `config/supabase.js`, `middleware/auth.js` (`auth.getClaims`) |
+| `FRONTEND_URL` | **yes** | CORS + the Socket.IO origin check; also builds the links in outgoing email |
+| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | **yes** | `cloudinaryService.js` |
+| `PORT`, `NODE_ENV` | no | Express — default `5000` / `development` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | no | `emailService.js` (**UC-014** + UC-009). `SMTP_USER` is the sender identity |
+| `DEFECT_ALERT_RECIPIENTS` | no | Extra addresses CC'd on every defect-assignment alert |
+| `OPENAI_API_KEY` | no | `openaiService.js` (categorisation, alerts, summaries, **UC-013 vision**) |
+| `ROBOFLOW_API_KEY`, `ROBOFLOW_WORKFLOW_URL` | no | `roboflowService.js` |
+| `CRON_SECRET` | no | `cronGuard.js` — unset means the scheduled jobs cannot be triggered |
+
+> The Supabase **publishable** key (`sb_publishable_…`) is what both the server
+> and the browser use. The secret key (`sb_secret_…`) is not used anywhere in
+> this project and must not be added to it.
 
 ### Vercel (frontend)
 
-`VITE_API_URL` · `VITE_SUPABASE_URL` · `VITE_SUPABASE_ANON_KEY`
+`VITE_API_URL` · `VITE_SUPABASE_URL` · `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+Only `VITE_*` keys reach the browser, and they are baked into the public build —
+so none of them may be a secret.
 
 ### GitHub Actions secrets
 

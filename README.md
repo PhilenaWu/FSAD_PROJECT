@@ -2,6 +2,16 @@
 
 A full-stack web application that lets estate residents report defects and lets estate managers triage, assign, and resolve them — backed by real-time notifications, computer-vision defect detection, AI categorisation and risk analysis, and automated weekly PDF reporting.
 
+> ### ▶ Live demo: **https://fsad-project-pied.vercel.app**
+>
+> Sign in with any account from **[Demo accounts](#demo-accounts)** below — one
+> per role, no setup required. The backend is on Render's free tier, so the
+> **first request after an idle period takes 30–60 seconds** to wake the
+> service; the login page may hang on that first attempt. Give it a minute and
+> retry before assuming anything is broken.
+>
+> Running it yourself instead? See **[Running locally](#running-locally)**.
+
 ---
 
 ## What it does
@@ -90,78 +100,240 @@ This project is split into **two repositories** — different runtimes, deploy t
 
 ---
 
-## Getting started
+## Running locally
 
-You'll need accounts/keys for Supabase, Cloudinary, Roboflow, OpenAI, and an SMTP provider before running locally.
+`backend/` and `frontend/` are **two separate npm packages**. Each has its own
+`package.json`, its own `node_modules`, and its own `.env` — install and run
+them separately.
 
-### 1. Backend
+### 1. Prerequisites
+
+- **Node.js 20 or newer** (no `engines` field pins this; 20+ is what the project
+  is built and tested against) and npm.
+- A **Supabase** project — provides both the PostgreSQL database and Auth.
+- A **Cloudinary** account — photo and PDF storage.
+- Optional, each gating one feature: SMTP credentials (email), an OpenAI key
+  (AI categorisation and risk alerts), a Roboflow key (CV detection). Leave any
+  of them unset and that feature degrades on its own; the server still boots.
+
+### 2. Install
+
+```bash
+cd backend  && npm install
+cd ../frontend && npm install
+```
+
+### 3. Environment variables
+
+Copy the example file in **each** package and fill it in. Both `.env` files are
+gitignored; the `.env.example` files document every variable and are the source
+of truth — nothing below repeats a real value.
+
+```bash
+cd backend  && cp .env.example .env
+cd ../frontend && cp .env.example .env
+```
+
+**`backend/.env`** — the server refuses to boot if any *required* one is missing
+(`src/config/env.js` fails fast and names them):
+
+| Group | Variables | Required? |
+|---|---|---|
+| Server | `PORT` (default 5000), `NODE_ENV` | optional |
+| CORS + email links | `FRONTEND_URL` | **required** |
+| Database | `DATABASE_URL` — Supabase pooler string, port 6543, `sslmode=require` | **required** |
+| Supabase Auth | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | **required** |
+| Cloudinary | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | **required** |
+| Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `DEFECT_ALERT_RECIPIENTS` | optional |
+| Scheduled jobs | `CRON_SECRET` | optional |
+| AI | `OPENAI_API_KEY` | optional |
+| Computer vision | `ROBOFLOW_API_KEY`, `ROBOFLOW_WORKFLOW_URL` | optional |
+
+> Use the Supabase **publishable** key (`sb_publishable_…`). The secret key
+> (`sb_secret_…`) is not used anywhere in this project and must not be added.
+
+**`frontend/.env`** — only `VITE_*` keys reach the browser, so none of them may
+be a secret:
+
+| Variable | Value |
+|---|---|
+| `VITE_API_URL` | `http://localhost:5000` locally; the Render URL in production |
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key |
+
+### 4. Database setup
+
+Create the Supabase project, put its connection string in `DATABASE_URL`, then:
 
 ```bash
 cd backend
-npm install
-cp .env.example .env        # fill in your values
-npm run migrate             # applies every migrations/*.sql in order
-npm run dev
+npm run migrate
 ```
 
-### 2. Frontend
+`scripts/migrate.js` applies **all 49 `.sql` files in `backend/migrations/`** in
+filename order, each in its own transaction, aborting the run on the first
+failure. There is no applied-migrations ledger — **every run replays every
+file**, so each migration is written to be idempotent. That is what lets this
+one command build the entire schema *and* its seed data from an empty database,
+and lets you re-run it safely afterwards to pick up new migrations.
+
+The seed migrations create the demo estate: lifts and contractors, the 25-item
+spot-check checklist, sample inspections, and every login in
+[Demo accounts](#demo-accounts) — Supabase auth rows included, so there is
+nothing to create by hand.
+
+> **Known gotcha — the database port is blocked on some networks.** Supabase's
+> pooler uses port 6543, which many school and corporate networks drop. The
+> symptom is the backend hanging on start with no `listening` line and no error.
+> If that happens, run off a phone hotspot.
+
+### 5. Run
+
+Start the backend **first** — the frontend calls it on load.
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env        # set VITE_API_URL to your backend URL
-npm run dev
+cd backend  && npm run dev     # http://localhost:5000
+cd frontend && npm run dev     # http://localhost:5173
 ```
+
+Open **http://localhost:5173** and sign in with any account below. Check the
+backend is alive at **http://localhost:5000/health**.
+
+`npm run dev` in `backend/` runs `node --watch server.js`; a `predev` step frees
+port 5000 first, so a stale process from a previous run won't block startup. For
+a production-style run use `npm start`.
+
+---
+
+## Running the tests
+
+Two runners, because the two packages have incompatible test environments —
+`jest` in Node for the API, `vitest` in jsdom for the React app. Neither can
+execute the other's files. No credentials, database or network access are
+needed: every external seam (the `pg` pool, Supabase, Cloudinary, Nodemailer,
+the sockets) is mocked.
+
+```bash
+cd backend  && npm test        # jest
+cd frontend && npm test        # vitest run
+```
+
+| Suite | Expected | Command |
+|---|---|---|
+| Backend | **687 passing**, 1 todo, 2 failing — 690 total across 31 suites | `cd backend && npm test` |
+| Frontend | **308 passing**, 3 failing — 311 total across 29 files | `cd frontend && npm test` |
+
+**The 5 failing tests are known and pre-existing**, all in shared team code, and
+none of them block the app:
+
+| Test | File | Cause |
+|---|---|---|
+| `acceptAlert › sets status Accepted and opens an AI-Generated inspection` | `backend/tests/unit/recommendations.test.js` | UC-006 alert-acceptance change |
+| `POST /api/recommendations/:id/accept › 200 for a manager…` | `backend/tests/integration/recommendations.integration.test.js` | same change |
+| `a role nobody has filled in yet resolves to an empty block, not undefined` | `frontend/tests/hasini/roleContacts.test.js` | a `contractor` contacts block was added after the test was written |
+| `only the roles the staff endpoint admits ask for staff rows` | `frontend/tests/hasini/roleContacts.test.js` | same |
+| `a role with no contacts block fires no requests at all` | `frontend/tests/hasini/useRoleContacts.test.js` | same |
+
+Per-student test folders (`tests/<name>/`) each carry their own `README.md` and
+`TEST_CASES.md` listing every case by name, generated from the runners' JSON
+output. To run one person's tests only:
+
+```bash
+cd backend  && npx jest tests/philena
+cd frontend && npx vitest run tests/philena
+```
+
+---
+
+## Demo accounts
+
+Seeded by migrations `022`, `029`, `032` and `037` — they exist as soon as
+`npm run migrate` has run, on both a local database and the live one. These are
+demo fixtures with per-account passwords; no real person's credentials are in
+this repo.
+
+| Role | Email | Password | Notes |
+|---|---|---|---|
+| Admin | `steven.tan.admin@emservices.sg` | `ChocoPizza_54` | Lands on `/admin/costs` |
+| Manager | `rachel.lim.manager@emservices.sg` | `Beacon15!Sail` | Rachel Lim — triage, assignment, closing |
+| Inspector | `weijie.tan.inspector@emservices.sg` | `Falcon77!Reed` | Wei Jie Tan |
+| Inspector | `nurul.aisyah.inspector@emservices.sg` | `Marble46#Dawn` | Nurul Aisyah |
+| Resident | `tan.weiming@mail.sg` | `Cedar88#Pine` | Tan Wei Ming — Blk 44A #12-05 |
+| Resident | `nurul.huda@mail.sg` | `Lotus52!Brook` | Nurul Huda — Blk 44B #07-112 |
+| Contractor | `sarah.chen@otisservice.sg` | `Willow24#Fern` | Sarah Chen — Otis Service SG |
+| Contractor | `grace.ho@schindlerlifts.sg` | `Quartz39#Moss` | Grace Ho — Schindler Lifts SG |
+| Contractor | `wei.jie.lim@otiselevator.sg` | `Cobalt58!Reef` | Wei Jie Lim — Otis Elevator Co. |
+| Contractor | `priya.nair@kone-sg.com` | `Nimbus93#Kite` | Priya Nair — KONE Pte Ltd |
+| Contractor | `marcus.tan@konemaint.com.sg` | `Harbor72!Vale` | Marcus Tan — KONE Maintenance |
+| Contractor | `ahmad.faizal@schindlercare.sg` | `Ember61!Trail` | **Suspended on purpose** — signing in shows the UC-012 "access revoked" screen instead of the portal. Use it to check the suspension guard |
+
+**Ahmad Faizal is the only suspended account.** Every other login above reaches
+its own workspace. If a second one ever refuses to sign in, it was suspended by
+hand through the admin vendor screen rather than by the seed — reactivate it
+there. Note that `npm run migrate` re-asserts Ahmad's suspension on every run
+(migration `043`), so reactivating *him* does not stick; that is deliberate, as
+he is the fixture the UC-012 lockout is demonstrated with.
+
+A second admin (`sophia_collins@admin.com`) is documented in
+[backend/SEED_ADMIN.md](./backend/SEED_ADMIN.md).
+
+To try the roles against each other: file a report as a resident, triage and
+assign it as the manager, complete it as the assigned contractor, review it as
+an inspector, then close it as the manager.
 
 ---
 
 ## Deployment
 
-**Public URL:** _Not yet deployed._ This section documents the steps to
-deploy — update the URL above once live.
+**Live frontend:** https://fsad-project-pied.vercel.app
 
-The architecture is backend on **Render**, frontend on **Vercel**, database
-on **Supabase** (already hosted — no separate deploy step). Deploy the
-backend first so the frontend has a real `VITE_API_URL` to point at.
+Frontend on **Vercel**, backend on **Render**, database and auth on **Supabase**,
+file storage on **Cloudinary**. Supabase and Cloudinary are already hosted — no
+deploy step of their own. Deploy the backend first so the frontend has a real
+`VITE_API_URL` to point at.
 
 ### 1. Backend → Render
 
-1. New **Web Service** on [render.com](https://render.com), connect this
-   repo, root directory `backend/`.
-2. Build command `npm install`, start command `npm start`.
-3. Add every variable from `backend/.env.example` in the Render dashboard's
-   Environment tab (Supabase, Cloudinary, Roboflow, OpenAI, SMTP, plus
-   `CRON_SECRET` and `FRONTEND_URL` — the last one gets filled in after step
-   2 below, once the Vercel URL exists).
-4. Deploy, then run migrations once against the live database:
-   `npm run migrate` (either via Render's shell, or locally with
-   `DATABASE_URL` pointed at the Supabase connection string).
-5. Confirm `GET https://<render-service>.onrender.com/health` returns 200.
+1. New **Web Service** on [render.com](https://render.com), connect this repo,
+   **root directory `backend`**.
+2. **Build command** `npm install` · **start command** `npm start`.
+3. Add every variable from `backend/.env.example` under Environment. Set
+   `FRONTEND_URL` to the Vercel URL — it is what CORS **and the Socket.IO origin
+   check** allow, so live updates fail silently if it is wrong or missing. (On a
+   first deploy, fill it in after step 2 below and redeploy.)
+4. Run the migrations once against the live database: `npm run migrate`, either
+   from Render's shell or locally with `DATABASE_URL` pointed at Supabase.
+5. Confirm `GET https://<service>.onrender.com/health` returns 200.
+
+> **Free-tier cold start:** Render sleeps the service after ~15 minutes idle, and
+> the next request takes 30–60 seconds to wake it. Before a demo, open `/health`
+> once to warm it, or keep it awake with an UptimeRobot ping (below).
 
 ### 2. Frontend → Vercel
 
-1. New project on [vercel.com](https://vercel.com), connect this repo, root
-   directory `frontend/`.
-2. Framework preset: Vite. Build command `npm run build`, output dir `dist`.
-3. Add `VITE_API_URL` = the Render URL from step 1, plus
-   `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` from
-   `frontend/.env.example`.
-4. Deploy, then go back to the Render dashboard and set `FRONTEND_URL` to
-   the resulting Vercel URL (needed for CORS and the Socket.IO origin
-   check) and redeploy the backend.
+1. New project on [vercel.com](https://vercel.com), connect this repo,
+   **root directory `frontend`**.
+2. Framework preset **Vite** · **build command** `npm run build` · **output
+   directory** `dist`.
+3. Add the three browser variables: `VITE_API_URL` (the Render URL from step 1),
+   `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`.
+4. `frontend/vercel.json` rewrites every path to `/index.html`. That file is what
+   makes client-side routing work — without it, refreshing on a deep link such as
+   `/inspections/:id` returns a Vercel 404 instead of the app.
+5. Deploy, then set `FRONTEND_URL` on Render to the resulting Vercel URL and
+   redeploy the backend.
 
-### 3. Scheduled jobs (optional, only needed for UC-006/UC-009/UC-012)
+### 3. Scheduled jobs (optional, only for UC-006/UC-009/UC-012)
 
 `.github/workflows/` cron jobs (nightly AI recommendations, weekly report,
 vendor contract-expiry check) need repo secrets `RENDER_BACKEND_URL` and
-`CRON_SECRET` (must match the backend's `CRON_SECRET` env var) set under
-**Settings → Secrets and variables → Actions**.
+`CRON_SECRET` (matching the backend's `CRON_SECRET`) under **Settings → Secrets
+and variables → Actions**.
 
 ### 4. Uptime (optional)
 
-Render free-tier services sleep after inactivity. A ping every 5 minutes
-(e.g. [UptimeRobot](https://uptimerobot.com) against `/health`) keeps it
-warm for a demo.
+A ping every 5 minutes (e.g. [UptimeRobot](https://uptimerobot.com) against
+`/health`) keeps the free-tier backend warm.
 
 ---
 
@@ -375,12 +547,13 @@ account also gets a `vendor_history` entry (`Contract Renewed`).
 - Migrations `019`–`022` add the contract fields, holder fields
   (`users.job_title`, `contractors.access_reason`), the `vendor_history`
   table, and idempotent demo data: six vendors with staggered contracts and
-  named account holders, all with working logins (password `TempPass123!`).
+  named account holders, all with working logins (each with its own password —
+  see [Demo accounts](#demo-accounts)).
   One vendor (Schindler Care / Ahmad Faizal) is pre-suspended with an expired
   contract to demo the offboarding state.
-- Migration `029` seeds two EM Services inspector logins (same password,
-  `TempPass123!`): `inspector1@emservices.sg` (Wei Jie Tan) and
-  `inspector2@emservices.sg` (Nurul Aisyah). At least one **active** inspector
+- Migration `029` seeds two EM Services inspector logins:
+  `weijie.tan.inspector@emservices.sg` (Wei Jie Tan) and
+  `nurul.aisyah.inspector@emservices.sg` (Nurul Aisyah). At least one **active** inspector
   must exist or UC-004 close is blocked — the endorsing signature has to belong
   to a user whose role is `inspector` (§11 G7), and the close panel populates
   its picker from `GET /api/users/inspectors`. These accounts also file UC-001
@@ -399,26 +572,15 @@ account also gets a `vendor_history` entry (`Contract Renewed`).
 
 ### Demo logins
 
-All seeded accounts use the password `TempPass123!`.
+Every seeded login, with its own password, is in
+**[Demo accounts](#demo-accounts)** near the top of this README — one table, so
+the two cannot drift apart. Staff addresses carry the role so the account is
+self-describing on screen; residents use personal-looking addresses, as they
+would in reality.
 
-Staff addresses carry the role so the account is self-describing on screen;
-residents use personal-looking addresses, as they would in reality.
-
-| Role | Email | Name |
-|---|---|---|
-| Manager | `rachel.lim.manager@emservices.sg` | Rachel Lim |
-| Inspector | `weijie.tan.inspector@emservices.sg` | Wei Jie Tan |
-| Inspector | `nurul.aisyah.inspector@emservices.sg` | Nurul Aisyah |
-| Resident | `tan.weiming@mail.sg` | Tan Wei Ming (Blk 44A #12-05) |
-| Resident | `nurul.huda@mail.sg` | Nurul Huda (Blk 44B #07-112) |
-| Contractor | `sarah.chen@otisservice.sg` | Sarah Chen (Otis Service SG) |
-| Contractor | `grace.ho@schindlerlifts.sg` | Grace Ho (Schindler Lifts SG) |
-
-Admin logins are seeded by migration `037` — see `backend/SEED_ADMIN.md`.
-
-> Two vendor logins seeded by `022` (`marcus.tan@konemaint.com.sg`,
-> `priya.nair@kone-sg.com`) have no `auth.identities` row and **cannot sign in**;
-> use the two contractors listed above instead. Tracked against UC-012.
+For this use case specifically: `ahmad.faizal@schindlercare.sg` is seeded
+**suspended** and is the account to sign in as when demonstrating the UC-012
+lockout.
 - The scheduled job is `.github/workflows/contract-expiry-check.yml` — set
   repo secrets `RENDER_BACKEND_URL` and `CRON_SECRET` (must match the
   backend's `CRON_SECRET` env var). `workflow_dispatch` allows manual runs.

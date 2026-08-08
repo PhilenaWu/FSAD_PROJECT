@@ -42,7 +42,7 @@
 ### Main flow
 
 1. Inspector opens `/inspections/new` on a phone.
-2. Selects the lift from `GET /api/lifts`. The system fills **Lift Company** (from `lifts.brand → contractors.name`), **Block/Lift**, **Address**, and **Town Council** (from `TOWN_COUNCIL_NAME`).
+2. Selects the lift from `GET /api/lifts`. The system fills **Lift Company** (from `lifts.brand → contractors.name`), **Block/Lift**, **Address**, and **Town Council** (from `lifts.town_council`, migration `028`).
 3. Inspector taps **Use my location** — `LocationCapture` writes `gps_lat/lng/accuracy/captured_at`. *(Explicit tap only — never automatic.)*
 4. Inspector enters the **Servicing Date** (the contractor's scheduled servicing date, form note 1).
 5. The system loads the 25-item template from `GET /api/checklist-items`, rendered as three collapsible sections — **A — Motor Room** (9), **B — Lift Car** (8), **C — Hoistway & Lift Pit** (8) — with a per-section progress counter.
@@ -458,7 +458,7 @@ same prompt, which tended to reproduce the same mistake.
    - Subject: `[Spot-Check Defect] Blk {block} Lift {lift_code} — {n} defect(s), due {deadline}`
    - Body: town council, block/lift, address, servicing date, date of spot-checking, inspector name, and a **table of defects** (section, item number, item text, severity, remark);
    - the 2-week rectification note quoted from the paper form;
-   - a deep link to `{APP_PUBLIC_URL}/contractor-inbox` to acknowledge **on the platform**;
+   - a deep link to `{FRONTEND_URL}/contractor-inbox` to acknowledge **on the platform**;
    - photos referenced as Cloudinary links, never as attachments (the client's storage/loading concern).
 4. On success: write `defect_email_log` (`status = 'sent'`), set `defect_email_sent_at`, append audit `Defect Alert Sent`.
 5. Emit `defect_assigned` to `contractor-{user_id}` and `manager-room`.
