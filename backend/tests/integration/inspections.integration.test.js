@@ -166,7 +166,7 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       gps_captured_at: gps_captured_at ?? null,
       // Branch A ('Pending Assignment') or Branch B ('Open', then auto-closed).
       status,
-      category: 'Uncategorised',
+      category: 'Miscellaneous',
       priority: 'Medium',
       is_deleted: false,
       source_flag: 'Inspector',
@@ -535,13 +535,14 @@ beforeEach(() => {
 });
 
 // Seed one resident complaint through the real create path; returns its id.
-async function seedComplaint(title = 'Corridor light out') {
+async function seedComplaint(title = 'Corridor light out', category = 'Electrical') {
   const res = await request(app)
     .post('/api/inspections')
     .set('Authorization', 'Bearer resident-token')
     .field('title', title)
     .field('description', 'Details here')
-    .field('location_block', '44A');
+    .field('location_block', '44A')
+    .field('category', category);
   return res.body.id;
 }
 
@@ -580,13 +581,44 @@ describe('POST /api/inspections', () => {
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
-  test('201 creates the complaint, categorises it, and stores the photo', async () => {
+  // The resident categorises their own report (migration 042), so a submission
+  // without one is incomplete rather than something to guess at.
+  test('400 when category is missing', async () => {
+    const res = await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Cracked step')
+      .field('description', 'Chipped concrete')
+      .field('location_block', 'A');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(res.body.message).toMatch(/category/);
+  });
+
+  test('400 when category is not one the schema allows', async () => {
+    const res = await request(app)
+      .post('/api/inspections')
+      .set('Authorization', 'Bearer resident-token')
+      .field('title', 'Cracked step')
+      .field('description', 'Chipped concrete')
+      .field('location_block', 'A')
+      // Retired by migration 042 — kept as a test to catch a client still
+      // sending the old vocabulary, which the CHECK would reject as a 500.
+      .field('category', 'Uncategorised');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('201 creates the complaint with the resident\'s category and stores the photo', async () => {
     const res = await request(app)
       .post('/api/inspections')
       .set('Authorization', 'Bearer resident-token')
       .field('title', 'Water leak in stairwell')
       .field('description', 'Dripping from ceiling')
       .field('location_block', 'B')
+      .field('category', 'Plumbing')
       .field('gps_lat', '1.3521')
       .field('gps_lng', '103.8198')
       .field('gps_accuracy_m', '12')
@@ -599,7 +631,9 @@ describe('POST /api/inspections', () => {
     expect(res.body.gps_lat).toBe('1.3521');
     expect(res.body.gps_accuracy_m).toBe('12');
     expect(res.body.location_block).toBe('B');
-    expect(res.body.category).toBe('Uncategorised');
+    // The resident's pick is stored as-is — the AI stub's own category is
+    // discarded, and only its priority score survives.
+    expect(res.body.category).toBe('Plumbing');
     expect(res.body.ai_priority_score).toBe(50);
     expect(res.body.status).toBe('Open');
     expect(res.body.photo_url).toBeTruthy();
@@ -615,7 +649,8 @@ describe('POST /api/inspections', () => {
         .set('Authorization', 'Bearer resident-token')
         .field('title', 'Broken lift on level 3')
         .field('description', 'Lift is stuck')
-        .field('location_block', 'C');
+        .field('location_block', 'C')
+        .field('category', 'Lift');
 
     const first = await submit();
     expect(first.status).toBe(201);
@@ -1100,7 +1135,8 @@ describe('GET /api/inspections/my', () => {
       .set('Authorization', 'Bearer resident-token')
       .field('title', 'Cracked tile at void deck')
       .field('description', 'Sharp edge exposed')
-      .field('location_block', 'A');
+      .field('location_block', 'A')
+      .field('category', 'Structural');
 
     const res = await request(app)
       .get('/api/inspections/my')
@@ -1150,7 +1186,8 @@ describe('GET /api/inspections/status-board', () => {
       .field('title', 'Void deck light flickering')
       .field('description', 'Near block letterboxes')
       .field('location_block', '44A')
-      .field('location_unit', '12-05');
+      .field('location_unit', '12-05')
+      .field('category', 'Electrical');
     await request(app)
       .post('/api/inspections/lift')
       .set('Authorization', 'Bearer inspector-token')
@@ -1407,6 +1444,31 @@ describe('PATCH /api/inspections/:id', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
+
+  // Triage is where a category the resident got wrong gets corrected.
+  test('200 a manager can recategorise a resident\'s report', async () => {
+    const id = await seedComplaint('Mislabelled report', 'Landscaping');
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Plumbing', note: 'Burst pipe, not a grounds issue.' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.category).toBe('Plumbing');
+  });
+
+  test('400 for an invalid category value', async () => {
+    const id = await seedComplaint();
+
+    const res = await request(app)
+      .patch(`/api/inspections/${id}`)
+      .set('Authorization', 'Bearer manager-token')
+      .send({ category: 'Other' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
 });
 
 describe('GET /api/inspections (manager queue)', () => {
@@ -1417,7 +1479,8 @@ describe('GET /api/inspections (manager queue)', () => {
       .set('Authorization', 'Bearer resident-token')
       .field('title', 'Broken bench')
       .field('description', 'Slats missing')
-      .field('location_block', '45B')).body.id;
+      .field('location_block', '45B')
+      .field('category', 'Landscaping')).body.id;
 
     const all = await request(app)
       .get('/api/inspections')
@@ -1986,7 +2049,7 @@ describe('POST /api/inspections/:id/close', () => {
   });
 
   test('queues an ai_jobs row on the 3rd close of a block+category in 30 days', async () => {
-    // Three complaints in the same block+category (default 'Uncategorised').
+    // Three complaints in the same block+category (seedComplaint's default).
     const ids = [];
     for (let i = 0; i < 3; i += 1) {
       // eslint-disable-next-line no-await-in-loop
@@ -1997,7 +2060,7 @@ describe('POST /api/inspections/:id/close', () => {
 
     // Only the 3rd close crosses the threshold → exactly one queued job.
     expect(store.ai_jobs).toHaveLength(1);
-    expect(store.ai_jobs[0]).toMatchObject({ location_block: '44A', category: 'Uncategorised' });
+    expect(store.ai_jobs[0]).toMatchObject({ location_block: '44A', category: 'Electrical' });
   });
 });
 

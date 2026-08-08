@@ -111,7 +111,7 @@ function resetStore() {
       title: 'Spot-check 44A-L1',
       location_block: '44A',
       status: 'Assigned',
-      category: 'Uncategorised',
+      category: 'Miscellaneous',
       satisfaction_rating: null,
       is_deleted: false,
       created_at: '2026-07-12T09:15:00Z',

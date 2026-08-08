@@ -23,14 +23,16 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { isValidEmail, isValidPassword } from '../utils/validation';
 
-// Where each role lands after login. Contractor/admin workspaces aren't built
-// yet — those routes render a "not ready yet" placeholder rather than erroring.
+// Where each role lands after login: its home page, or — for the roles that
+// have none — the first entry in its own sidebar nav, so signing in leaves you
+// where the nav says you start. Residents used to land on /report, which
+// dropped them into a form rather than the home page they do have.
 const ROLE_HOME = {
-  resident: '/report',
-  inspector: '/dashboard',
-  manager: '/dashboard',
-  contractor: '/contractor-inbox',
-  admin: '/admin/costs',
+  resident: '/dashboard',       // RoleHome → HomePage
+  inspector: '/dashboard',      // RoleHome → InspectorHomePage
+  manager: '/dashboard',        // RoleHome → DashboardPage
+  contractor: '/contractor-inbox', // no home page; ContractorLayout's first nav item
+  admin: '/admin/costs',        // no home page; AdminLayout's first nav item
 };
 
 export default function LoginPage() {

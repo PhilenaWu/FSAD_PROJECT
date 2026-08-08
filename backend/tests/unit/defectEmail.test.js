@@ -16,7 +16,7 @@ const { sendDefectAlert } = require('../../src/services/emailService');
 
 const RECORD = {
   title: 'Lift inspection — 44A-L1',
-  category: 'Uncategorised',
+  category: 'Miscellaneous',
   priority: 'Medium',
   location_block: '44A',
   location_unit: null,

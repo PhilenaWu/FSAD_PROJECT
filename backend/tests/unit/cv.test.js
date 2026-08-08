@@ -271,10 +271,11 @@ describe('cvController.detect', () => {
     expect(inspectionParams).toContain('cv_auto_detected');
     expect(inspectionParams).toContain('cv-1'); // cv_detection_id links back to the detection
     expect(inspectionParams).toContain('44A');
-    // Regression: category must default to 'Uncategorised', not null/undefined
+    // Regression: category must default to the catch-all, not null/undefined
     // — inspections.category is NOT NULL with no way for the DB's own DEFAULT
-    // to kick in once a column is explicitly listed in the INSERT.
-    expect(inspectionParams).toContain('Uncategorised');
+    // to kick in once a column is explicitly listed in the INSERT. An
+    // auto-detected ticket has nobody to choose a category, so it lands here.
+    expect(inspectionParams).toContain('Miscellaneous');
     // Regression: a standalone ticket's priority/score must derive from the
     // detection confidence (80% → score 80 → 'Critical'), not fall back to
     // inspectionModel.create()'s hardcoded 'Medium'/null — a confident

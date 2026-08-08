@@ -1,6 +1,6 @@
 // UC-001 "Report an issue" page. Residents file a complaint (optional photo,
 // optional voice dictation into Description) via POST /api/inspections.
-// Category/priority are set by the backend AI.
+// The resident picks the category; priority is still set by the backend AI.
 import { useEffect, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
@@ -26,10 +26,12 @@ import CloseIcon from '@mui/icons-material/Close';
 import MicIcon from '@mui/icons-material/Mic';
 import SendOutlinedIcon from '@mui/icons-material/SendOutlined';
 import StopIcon from '@mui/icons-material/Stop';
+import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
 import LocationCapture from '../components/LocationCapture';
 import api from '../services/api';
 import { compressImage } from '../utils/imageCompress';
 import { BLOCKS } from '../utils/blocks';
+import { CATEGORIES } from '../utils/inspectionOptions';
 import {
   VOICE_LANGUAGES,
   isSpeechSupported,
@@ -64,6 +66,7 @@ export default function ReportIssuePage() {
   const [description, setDescription] = useState('');
   const [block, setBlock] = useState('');
   const [unit, setUnit] = useState('');
+  const [category, setCategory] = useState('');
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [gps, setGps] = useState(null); // optional; never replaces block/unit
@@ -127,6 +130,7 @@ export default function ReportIssuePage() {
     setDescription('');
     setBlock('');
     setUnit('');
+    setCategory('');
     setFile(null);
     setGps(null);
   }
@@ -151,8 +155,11 @@ export default function ReportIssuePage() {
     setFeedback(null);
 
     // Light client guard mirroring the backend's required fields.
-    if (!title.trim() || !block) {
-      setFeedback({ severity: 'error', message: 'Title and block are required.' });
+    if (!title.trim() || !block || !category) {
+      setFeedback({
+        severity: 'error',
+        message: 'Title, block and category are required.',
+      });
       return;
     }
 
@@ -160,6 +167,7 @@ export default function ReportIssuePage() {
     formData.append('title', title);
     formData.append('description', description);
     formData.append('location_block', block);
+    formData.append('category', category);
     if (unit.trim()) formData.append('location_unit', unit);
     // Compress just before upload (preview still shows the original).
     if (file) formData.append('photo', await compressImage(file));
@@ -176,7 +184,7 @@ export default function ReportIssuePage() {
       await api.post('/api/inspections', formData);
       setFeedback({
         severity: 'success',
-        message: 'Report submitted — category and priority will be set automatically.',
+        message: 'Report submitted — a manager will review it and set its priority.',
       });
       resetForm();
     } catch (err) {
@@ -373,6 +381,38 @@ export default function ReportIssuePage() {
                   }}
                 />
               </Stack>
+
+              {/* The resident categorises their own report. This used to be
+                  guessed server-side and filed everything as 'Uncategorised';
+                  the person looking at the defect knows better. A manager can
+                  still correct it during triage. */}
+              <TextField
+                select
+                label="Category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                required
+                fullWidth
+                helperText="Pick Miscellaneous if you're not sure — a manager will check it"
+                slotProps={{
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <CategoryOutlinedIcon fontSize="small" color="action" />
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+              >
+                <MenuItem value="" disabled>
+                  Select category
+                </MenuItem>
+                {CATEGORIES.map((c) => (
+                  <MenuItem key={c} value={c}>
+                    {c}
+                  </MenuItem>
+                ))}
+              </TextField>
 
               {/* Optional GPS — supplements (never replaces) block/unit. The
                   selected block is passed in so the card can say so when the
