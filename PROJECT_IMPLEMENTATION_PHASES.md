@@ -160,8 +160,9 @@ Recorded for traceability. **Do not re-open — these features are done.**
 > area reads a hardcoded dataset any more.
 >
 > Migration `034_seed_lift_cost_history.sql` supplies the cost history the
-> panels need — 199 closed lift rectifications over the trailing 13 months,
-> dated relative to `CURRENT_DATE`. This is a slice of the UC-016 mimic-data
+> panels need — 214 closed lift rectifications over the trailing 13 complete
+> months, re-dated relative to `CURRENT_DATE` on every migrate run so the
+> window ends on the month that just closed. This is a slice of the UC-016 mimic-data
 > brief (task 6.2) scoped to UC-011; the wider spot-check volume seed is still
 > Davian's.
 

@@ -5,15 +5,23 @@
 -- admin cost dashboard truthful but half-empty — the repair-vs-replace
 -- watchlist had no lift-linked spend to rank, and the spend trend had too few
 -- complete months for the forecast or its backtest to run. This seeds
--- 199 closed lift rectifications ($244,680) across the
+-- 214 closed lift rectifications ($261,940) across the
 -- trailing 13 months so those panels have real rows to work from.
 --
 -- Shape of the data (deliberate, not incidental):
---   * Dates are relative to CURRENT_DATE, so the 12 complete months plus the
---     partial current month stay correct whenever this is applied.
+--   * months_ago counts back from the LAST COMPLETE month, re-derived from
+--     CURRENT_DATE on every migrate run (see the ON CONFLICT clause), so the
+--     trend always ends on the month that just closed. Dating it from the
+--     current month instead would either put "closed" jobs in the future or
+--     cram a whole month's spend into however many days have elapsed; ending
+--     on the last complete month avoids both, at the cost of the current
+--     month being empty until it rolls over.
 --   * Monthly totals drift gently upward with mild noise — a real trend for
 --     the damped-trend forecast to damp, smooth enough for the walk-forward
---     backtest to report a credible error rather than noise.
+--     backtest to report a credible error rather than noise. Every month
+--     carries 14–19 jobs across all eight lifts: a month left far lighter
+--     than its neighbours is not "noise" to the forecast, it is a cliff, and
+--     one such month is enough to dominate the whole backtest average.
 --   * Per-lift lifetime spend is spread so 44A-L1 sits past the
 --     repair-vs-replace review threshold, 44B-L1 approaches it, and the rest
 --     sit comfortably below.
@@ -24,7 +32,9 @@
 --
 -- Lift, block and contractor are resolved by joining `lifts` on lift_code
 -- rather than hardcoding ids, so the seed matches whatever estate is loaded.
--- Idempotent: fixed primary keys plus ON CONFLICT DO NOTHING, safe to re-run.
+-- Idempotent: fixed primary keys, and ON CONFLICT re-writes the timestamps so
+-- re-running rebases the window onto today rather than skipping the rows. The
+-- costs, categories and lifts are never rewritten — only the dates move.
 INSERT INTO inspections (
   id, source_type, inspector_id, lift_id, title, description, location_block,
   status, category, priority, contractor_id, serviced_at, target_deadline,
@@ -238,6 +248,27 @@ FROM (VALUES
     ('d0000000-0000-4000-8000-000000000178', '45B-L1', 2, 26, 2, 'Lift', 'High', 1850.00, 'Governor rope tension out of specification — 45B-L1', 'Adjustment completed; lift returned to normal service the same day.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
     ('d0000000-0000-4000-8000-000000000179', '44A-L1', 1, 18, 11, 'Cabin', 'Medium', 1115.00, 'Cabin handrail fixing loose — 44A-L1', 'Work completed and signed off at joint endorsement.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
     ('d0000000-0000-4000-8000-000000000180', '44B-L1', 1, 21, 1, 'Doors', 'Critical', 3125.00, 'Landing door binding on the guide shoe — 44B-L1', 'Fault cleared and monitored for 24 hours before closing.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    -- months_ago = 1 originally held only the two rows above ($4,240 against
+    -- $17k–23k in every other month), which read to the forecast as a genuine
+    -- collapse and back: the walk-forward backtest scored +390% on that month
+    -- and -53% on the recovery, dragging its published average error to 49.5%
+    -- when the other ten months averaged 6%. These fill the month out to the
+    -- same 8-lift, 14–19 job shape as its neighbours ($21,500 in total).
+    ('d0000000-0000-4000-8000-000000000200', '44A-L1', 1, 1, 2, 'Lift', 'High', 1490.00, 'Governor rope tension out of specification — 44A-L1', 'Rectified on site and re-tested in the presence of the inspector.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000201', '44A-L1', 1, 3, 2, 'Doors', 'Medium', 1085.00, 'Door sensor failed to reopen on obstruction — 44A-L1', 'Parts replaced and function verified over three full travel cycles.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000202', '44A-L1', 1, 5, 3, 'Electrical', 'Medium', 795.00, 'Control panel indicator lamps intermittent — 44A-L1', 'Adjustment completed; lift returned to normal service the same day.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000203', '44B-L1', 1, 6, 2, 'Lift', 'High', 1440.00, 'Traction sheave groove wear beyond tolerance — 44B-L1', 'Work completed and signed off at joint endorsement.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000204', '44B-L1', 1, 8, 5, 'Safety', 'Medium', 1215.00, 'Overspeed governor overdue for calibration — 44B-L1', 'Fault cleared and monitored for 24 hours before closing.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000205', '88B-L1', 1, 9, 3, 'Doors', 'Medium', 1140.00, 'Landing door binding on the guide shoe — 88B-L1', 'Rectified on site and re-tested in the presence of the inspector.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000206', '88B-L1', 1, 11, 2, 'Lift', 'High', 1555.00, 'Levelling out by more than 10 mm at main landing — 88B-L1', 'Parts replaced and function verified over three full travel cycles.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000207', '88B-L1', 1, 12, 7, 'Cabin', 'Low', 465.00, 'Floor indicator segment out — 88B-L1', 'Adjustment completed; lift returned to normal service the same day.', 1, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000208', '45A-L1', 1, 14, 2, 'Structural', 'Medium', 1205.00, 'Water seepage staining the shaft wall — 45A-L1', 'Work completed and signed off at joint endorsement.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000209', '45A-L1', 1, 15, 3, 'Doors', 'Medium', 1060.00, 'Door operator belt worn and slipping — 45A-L1', 'Fault cleared and monitored for 24 hours before closing.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000210', '44A-L2', 1, 17, 2, 'Safety', 'Medium', 1290.00, 'Pit stop switch not latching — 44A-L2', 'Rectified on site and re-tested in the presence of the inspector.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000211', '44A-L2', 1, 19, 9, 'Electrical', 'Low', 650.00, 'Cabin lighting circuit tripping under load — 44A-L2', 'Parts replaced and function verified over three full travel cycles.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000212', '90C-L1', 1, 22, 3, 'Doors', 'Medium', 1275.00, 'Door sensor failed to reopen on obstruction — 90C-L1', 'Adjustment completed; lift returned to normal service the same day.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
+    ('d0000000-0000-4000-8000-000000000213', '44C-L1', 1, 24, 6, 'Structural', 'Medium', 1140.00, 'Machine room floor fixing plate corroded — 44C-L1', 'Work completed and signed off at joint endorsement.', 0, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
+    ('d0000000-0000-4000-8000-000000000214', '45B-L1', 1, 25, 2, 'Lift', 'High', 1455.00, 'Governor rope tension out of specification — 45B-L1', 'Fault cleared and monitored for 24 hours before closing.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
     ('d0000000-0000-4000-8000-000000000181', '44A-L1', 0, 6, 9, 'Electrical', 'High', 2325.00, 'Main control panel rewire after insulation failure — 44A-L1', 'Rectified on site and re-tested in the presence of the inspector.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
     ('d0000000-0000-4000-8000-000000000182', '44A-L1', 0, 3, 1, 'Safety', 'Medium', 1175.00, 'Emergency intercom unreachable from the cabin — 44A-L1', 'Parts replaced and function verified over three full travel cycles.', 1, '5112732b-8d94-4e4e-838f-b7e7f8a54a21'),
     ('d0000000-0000-4000-8000-000000000183', '44A-L1', 0, 17, 8, 'Doors', 'Medium', 1025.00, 'Landing door binding on the guide shoe — 44A-L1', 'Adjustment completed; lift returned to normal service the same day.', 0, '2a14e72b-fab8-415d-9233-cf3e5a3f5ea3'),
@@ -264,10 +295,30 @@ CROSS JOIN LATERAL (
   SELECT x.ts AS closed_ts,
          x.ts - make_interval(days => v.open_days) AS raised_ts
     FROM (
+      -- +1 so months_ago = 0 is the month that just closed, not the one in
+      -- progress: day_offset runs to 26, which in the current month would date
+      -- a closed job weeks into the future.
       SELECT date_trunc('month', CURRENT_DATE)
-             - make_interval(months => v.months_ago)
+             - make_interval(months => v.months_ago + 1)
              + make_interval(days => v.day_offset)
              + INTERVAL '11 hours' AS ts
     ) x
 ) t
-ON CONFLICT (id) DO NOTHING;
+-- Re-date on conflict rather than skipping. These timestamps are derived from
+-- CURRENT_DATE, so DO NOTHING froze them at whatever day the database was
+-- first seeded: the window then sat still while the dashboard's now-relative
+-- figures (the trailing-90-day movement tile, the 6-month watchlist rate, the
+-- forecast's "current month" cutoff) walked away from it, and two databases
+-- seeded a week apart never agreed. Rebasing here makes `npm run migrate` the
+-- one thing that moves the window, and moves it the same way everywhere.
+-- Only the dates are rewritten — cost, category, lift and remarks are the
+-- fixed content of the seed and are left alone.
+ON CONFLICT (id) DO UPDATE SET
+  serviced_at           = EXCLUDED.serviced_at,
+  target_deadline       = EXCLUDED.target_deadline,
+  acknowledged_at       = EXCLUDED.acknowledged_at,
+  rectified_at          = EXCLUDED.rectified_at,
+  resolution_time_hours = EXCLUDED.resolution_time_hours,
+  created_at            = EXCLUDED.created_at,
+  updated_at            = EXCLUDED.updated_at,
+  closed_at             = EXCLUDED.closed_at;

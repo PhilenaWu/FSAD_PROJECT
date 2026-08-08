@@ -330,11 +330,15 @@ is served for API completeness but has no frontend consumer. The `liftId` filter
 is likewise API-level only — per-lift analysis in the UI is the watchlist's job.
 No mock data source remains in the page.
 
-**Cost history.** Migration `034_seed_lift_cost_history.sql` seeds 199 closed
-lift rectifications across the trailing 13 months, dated relative to
-`CURRENT_DATE`, so every panel has real rows: 12 complete months for the
+**Cost history.** Migration `034_seed_lift_cost_history.sql` seeds 214 closed
+lift rectifications across the trailing 13 complete months, re-dated relative to
+`CURRENT_DATE` on every migrate run so the window always ends on the month that
+just closed, so every panel has real rows: 13 complete months for the
 forecast and its walk-forward backtest, lift-linked spend for the
 repair-vs-replace watchlist, and a prior window for the spend-movement tile.
+Every month carries 14–19 jobs across all eight lifts — a month left far lighter
+than its neighbours reads to the forecast as a cliff, and one such month is
+enough to dominate the backtest average.
 Monthly totals drift gently upward, per-lift lifetime spend is spread across the
 review threshold, roughly two thirds close inside the 72-hour SLA so the UC-005
 dashboard is not distorted, and a few jobs are major overhauls that the
