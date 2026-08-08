@@ -20,7 +20,6 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
 import { isValidEmail, isValidPassword } from '../utils/validation';
 
 // Where each role lands after login: its home page, or — for the roles that
@@ -36,7 +35,7 @@ const ROLE_HOME = {
 };
 
 export default function LoginPage() {
-  const { user, profile, profileLoading, loading, login, logout } = useAuth();
+  const { user, profile, profileLoading, loading, login } = useAuth();
 
   // Pre-fill the email from a previous "Remember me" (email only, never password).
   const savedEmail = localStorage.getItem('rememberedEmail') ?? '';
@@ -53,16 +52,6 @@ export default function LoginPage() {
   const emailValid = isValidEmail(email);
   const passwordValid = isValidPassword(password);
 
-  // Post-login refusals keyed by the backend's error code. A pending account
-  // authenticates with Supabase perfectly well — the gate is our profile
-  // status, so it has to be checked here and the session dropped.
-  const BLOCKED_MESSAGES = {
-    ACCOUNT_SUSPENDED: 'This account is suspended. Contact the administrator.',
-    ACCOUNT_PENDING: 'Your account is awaiting manager approval.',
-    ACCOUNT_REJECTED:
-      'Your registration request was not approved. Contact the managing office.',
-  };
-
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
@@ -78,20 +67,15 @@ export default function LoginPage() {
       setError(signInError.message);
       return;
     }
-    // UC-012 suspended vendors, and residents still awaiting (or refused)
-    // manager approval: all authenticate at Supabase but are refused the
-    // profile by the backend — sign out and explain which it was.
-    try {
-      await api.get('/api/users/me');
-    } catch (meErr) {
-      const blocked = BLOCKED_MESSAGES[meErr.response?.data?.code];
-      if (blocked) {
-        await logout();
-        setError(blocked);
-        return;
-      }
-      // Other profile errors: let the normal post-login flow handle them.
-    }
+    // Refused accounts — a suspended vendor, or a resident still awaiting (or
+    // refused) approval — are NOT handled here. They authenticate at Supabase
+    // fine and are turned away by ProtectedRoute, which explains why and offers
+    // the way back. This page used to check the profile itself and sign them
+    // out on the spot, which raced the same check in AuthContext: the redirect
+    // below fired first, the refusal screen painted, then the sign-out landed
+    // and bounced them back to this form. The screen was visible for a few
+    // milliseconds. One owner for the decision, no race.
+
     // Remember (or forget) the email for next time — email only.
     if (rememberMe) {
       localStorage.setItem('rememberedEmail', email);
