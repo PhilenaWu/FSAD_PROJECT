@@ -226,8 +226,8 @@ async function acceptAlert(req, res, next) {
       [title, description, prediction.location_block, prediction.category]
     );
 
-    // Notify managers to refresh the priority queue with the new inspection
-    socketService.emitToRoom('manager-room', 'priority_queue_update', {
+    // Notify managers to refresh the priority queue and dashboard with the new inspection
+    socketService.emitToRoom('manager-room', 'status_update', {
       action: 'inspection_created',
       inspection_id: rows[0].id,
       title,
