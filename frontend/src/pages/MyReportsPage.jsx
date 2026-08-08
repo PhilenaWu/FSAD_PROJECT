@@ -1,8 +1,7 @@
 // UC-003 "My reports" — the originator's status tracker. Lists the signed-in
 // resident's or inspector's live records from GET /api/inspections/my, their
 // closed ones from GET /api/my-reports/history, expands either for the full
-// detail and audit history, keeps both live over Socket.IO (the insp-{id} room),
-// and takes a satisfaction rating on the outcome.
+// detail and audit history, and keeps both live over Socket.IO (the insp-{id} room).
 // REST listing (task 3.11); Socket.IO wiring lives in SocketContext/SocketService.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
@@ -39,14 +38,9 @@ import { useSocket } from '../context/SocketContext';
 import { STATUS_DISPLAY, statusGroup } from '../utils/statusDisplay';
 import {
   applyEdit,
-  applyRating,
   applyStatusUpdate,
-  countAwaitingRating,
   isEditable,
-  isRatable,
 } from '../utils/myReports';
-
-const EMPTY_DRAFT = { value: null, comment: '' };
 
 // Search matches the title or the record id (a resident pasting part of a
 // link/id still finds it); status filter is an exact match, 'all' = no filter.
@@ -73,8 +67,6 @@ export default function MyReportsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
 
-  const [drafts, setDrafts] = useState({});
-  const [ratingBusyId, setRatingBusyId] = useState(null);
   const [toast, setToast] = useState(null);
 
   // Editing (within 30 minutes of filing — utils/myReports.isEditable).
@@ -214,34 +206,6 @@ export default function MyReportsPage() {
     [leaveRoom]
   );
 
-  async function submitRating(id) {
-    const draft = drafts[id];
-    if (!draft?.value) return;
-    setRatingBusyId(id);
-    // The record may sit in either list, so patch both.
-    const store = (rating, comment) => {
-      setReports((prev) => applyRating(prev, id, rating, comment));
-      setHistory((prev) => applyRating(prev, id, rating, comment));
-    };
-    try {
-      const res = await api.post(`/api/my-reports/${id}/rating`, {
-        rating: draft.value,
-        comment: draft.comment || null,
-      });
-      store(res.data.satisfaction_rating, res.data.satisfaction_comment);
-      setToast({ severity: 'success', text: 'Thank you for your feedback.' });
-    } catch (err) {
-      if (err.response?.status === 409) {
-        // Already rated elsewhere — show it as submitted rather than an error.
-        store(draft.value, draft.comment || null);
-      } else {
-        setToast({ severity: 'error', text: 'Your rating could not be saved — please try again.' });
-      }
-    } finally {
-      setRatingBusyId(null);
-    }
-  }
-
   // Start editing a report — seeds the draft from the summary row plus the
   // already-loaded detail (the Edit button only renders once detail has
   // loaded, so detail.description is available here).
@@ -293,17 +257,12 @@ export default function MyReportsPage() {
   // Shared props for a card in either list.
   const cardProps = (r) => ({
     report: r,
-    ratable: isRatable(r),
     expanded: expandedId === r.id,
     detail,
     detailLoading,
     detailError,
-    draft: drafts[r.id] ?? EMPTY_DRAFT,
-    ratingBusy: ratingBusyId === r.id,
     onToggle: () => toggleDetail(r.id),
     onRetryDetail: () => loadDetail(r.id),
-    onDraftChange: (draft) => setDrafts((prev) => ({ ...prev, [r.id]: draft })),
-    onSubmitRating: () => submitRating(r.id),
     // Resident-only, and only within 30 minutes of filing (matches the
     // server's EDIT_WINDOW_MS in myReportsController.js).
     editable: !isInspector && isEditable(r),
@@ -323,8 +282,6 @@ export default function MyReportsPage() {
     onEditSave: () => saveEdit(r.id),
     onEditCancel: () => cancelEdit(r.id),
   });
-
-  const unratedCount = countAwaitingRating(history);
 
   // KPI counts — computed from what's already fetched, no new endpoint.
   const counts = useMemo(() => {
@@ -508,7 +465,6 @@ export default function MyReportsPage() {
           >
             {historyOpen ? 'Hide' : 'Show'} past reports ({filteredHistory.length}
             {isFiltering ? ` of ${history.length}` : ''})
-            {unratedCount > 0 ? ` · ${unratedCount} awaiting your rating` : ''}
           </Button>
           <Collapse in={historyOpen} unmountOnExit>
             <Stack spacing={2} id="past-reports" sx={{ mt: 1 }}>

@@ -1,7 +1,7 @@
-// One report on the UC-003 "My reports" page — the summary line, the rating
-// control once the work is done, and the expandable detail (checklist + audit
-// timeline). Used for both live reports and closed ones in the history section;
-// the parent owns all state and passes it down.
+// One report on the UC-003 "My reports" page — the summary line and the
+// expandable detail (checklist + audit timeline). Used for both live reports
+// and closed ones in the history section; the parent owns all state and
+// passes it down.
 import {
   Alert,
   Box,
@@ -12,7 +12,6 @@ import {
   Divider,
   MenuItem,
   Paper,
-  Rating,
   Stack,
   TextField,
   Typography,
@@ -34,17 +33,12 @@ function formatDate(iso) {
 
 export default function ReportCard({
   report,
-  ratable,
   expanded,
   detail,
   detailLoading,
   detailError,
-  draft,
-  ratingBusy,
   onToggle,
   onRetryDetail,
-  onDraftChange,
-  onSubmitRating,
   // Editable for 30 minutes after filing (myReportsController's
   // EDIT_WINDOW_MS) — computed by the parent via utils/myReports.isEditable.
   editable,
@@ -83,49 +77,6 @@ export default function ReportCard({
             {report.location_unit ? ` #${report.location_unit}` : ''} ·{' '}
             {formatDate(report.created_at)}
           </Typography>
-
-          {report.satisfaction_rating ? (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-              <Rating size="small" value={report.satisfaction_rating} readOnly />
-              <Typography variant="caption" color="text.secondary">
-                Rating submitted — thank you.
-              </Typography>
-            </Stack>
-          ) : (
-            ratable && (
-              <Stack spacing={1} sx={{ mt: 1.5 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Rating
-                    size="small"
-                    value={draft.value}
-                    onChange={(_, value) => onDraftChange({ ...draft, value })}
-                  />
-                  <Typography variant="caption" color="text.secondary">
-                    How was the resolution?
-                  </Typography>
-                </Stack>
-                {draft.value ? (
-                  <Stack direction="row" spacing={1} alignItems="flex-start">
-                    <TextField
-                      size="small"
-                      fullWidth
-                      placeholder="Add a comment (optional)"
-                      value={draft.comment}
-                      onChange={(e) => onDraftChange({ ...draft, comment: e.target.value })}
-                    />
-                    <Button
-                      variant="contained"
-                      size="small"
-                      disabled={ratingBusy}
-                      onClick={onSubmitRating}
-                    >
-                      Submit
-                    </Button>
-                  </Stack>
-                ) : null}
-              </Stack>
-            )
-          )}
 
           <Button
             size="small"

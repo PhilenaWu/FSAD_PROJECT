@@ -337,7 +337,7 @@ target_deadline  DEFAULT (NOW() + INTERVAL '14 days')   -- migration 025
 acknowledged_at · rectified_at · hold_reason
 gps_lat · gps_lng · gps_accuracy_m · gps_captured_at    -- migration 017
 is_deleted · closing_remark · resolution_time_hours · actual_cost
-satisfaction_rating · satisfaction_comment · source_flag · cv_detection_id
+source_flag · cv_detection_id
 closed_at · created_at · updated_at
 
 -- checklist_items      section · item_text · display_order · active
@@ -683,36 +683,6 @@ Full detail for one of the caller's own records, live or closed: the row plus
 **Error 404:**
 ```json
 { "code": "NOT_FOUND", "message": "Report not found." }
-```
-
----
-
-#### POST /api/my-reports/:id/rating
-**Auth:** `resident`  
-Submits a satisfaction rating on a finished complaint (UC-003).
-
-Ratable statuses are **`Resolved` and `Closed`**. `Closed` is included
-deliberately: the workflow runs Assigned → Acknowledged → Rectified → Closed and
-only reaches `Resolved` if a manager sets it by hand, so gating on `Resolved`
-alone would mean most reports could never be rated at all. A rating is the
-resident's opinion of the outcome, not a state transition — it writes no
-`inspection_history` row, so the append-only audit trail is unaffected.
-
-**Request:**
-```json
-{ "rating": 4, "comment": "Fixed quickly, thank you!" }
-```
-**Response 200:**
-```json
-{ "id": "INC-7f3a...", "satisfaction_rating": 4, "satisfaction_comment": "Fixed quickly, thank you!" }
-```
-**Error 409 — already rated:**
-```json
-{ "code": "ALREADY_RATED", "message": "You have already submitted a rating for this record." }
-```
-**Error 409 — work not finished:**
-```json
-{ "code": "INVALID_STATE", "message": "This report can be rated once the work is done." }
 ```
 
 ---

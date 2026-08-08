@@ -296,7 +296,7 @@ async function extractSpotCheckForm(imageUrl, itemTexts) {
     `  "serviced_at_confidence": a number from 0 to 1,\n` +
     `  "form_lift_code": the lift or block code written in the header, or null if not visible,\n` +
     `  "items": [\n` +
-    `    { "result": "Pass" | "Defect" | "unreadable", "remark": string or null, "field_confidence": a number from 0 to 1 }\n` +
+    `    { "item_number": the number (1-${itemTexts.length}) of the numbered item this row answers, "result": "Pass" | "Defect" | "unreadable", "remark": string or null, "field_confidence": a number from 0 to 1 }\n` +
     `    ... exactly ${itemTexts.length} entries, one per numbered item above, in the same order\n` +
     `  ]\n` +
     `}\n\n` +
@@ -314,19 +314,29 @@ async function extractSpotCheckForm(imageUrl, itemTexts) {
     `one per numbered item above. Never split a single numbered item (even one with two ` +
     `questions, like "Functioning? Replacement date?") into two entries, and never add an entry ` +
     `for anything not in the numbered list (e.g. the header fields or servicing date, which are ` +
-    `already asked for separately above).`;
+    `already asked for separately above). Every entry's "item_number" must be the number of the ` +
+    `specific numbered item above that it answers, and every number from 1 to ${itemTexts.length} ` +
+    `must appear exactly once.`;
 
   // Vision output for a dense 25-item form occasionally comes back malformed
   // (truncated/invalid JSON, or the wrong item count) even at temperature 0 —
   // confirmed by re-scanning the exact same photo and getting 26 items back on
-  // a retry. One automatic retry clears most of these transient misreads
-  // without forcing the inspector to rescan by hand. A real outage
-  // (serviceUnavailable) is not retried — it won't succeed on a second try.
-  const MAX_ATTEMPTS = 2;
+  // a retry. Automatic retries clear most of these transient misreads without
+  // forcing the inspector to rescan by hand; each retry after the first tells
+  // the model what went wrong last time, since a bare re-ask tends to repeat
+  // the same mistake. A real outage (serviceUnavailable) is not retried — it
+  // won't succeed on a second try.
+  const MAX_ATTEMPTS = 3;
   let lastErr;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const attemptPrompt =
+      attempt === 1
+        ? prompt
+        : `${prompt}\n\nYour previous attempt was rejected: ${lastErr.message} Re-read the ` +
+          `form carefully and return exactly ${itemTexts.length} entries this time — do not ` +
+          `split any item into two, and give every entry the correct "item_number".`;
     try {
-      return await requestAndParseForm(client, prompt, imageUrl, itemTexts);
+      return await requestAndParseForm(client, attemptPrompt, imageUrl, itemTexts);
     } catch (err) {
       if (err.serviceUnavailable) throw err;
       lastErr = err;
@@ -380,10 +390,23 @@ async function requestAndParseForm(client, prompt, imageUrl, itemTexts) {
     throw new Error('OpenAI response was not valid JSON.');
   }
 
-  if (!Array.isArray(parsed.items) || parsed.items.length !== itemTexts.length) {
-    throw new Error(
-      `OpenAI response has ${parsed.items?.length ?? 0} items, expected ${itemTexts.length}.`
-    );
+  if (!Array.isArray(parsed.items)) {
+    throw new Error(`OpenAI response has 0 items, expected ${itemTexts.length}.`);
+  }
+
+  let items = parsed.items;
+  if (items.length !== itemTexts.length) {
+    // A wrong count is usually one item wrongly split in two — item_number
+    // says which numbered item each entry actually answers, so the right
+    // answer for every expected item can often be recovered without
+    // discarding the whole scan. Only safe when every number 1..N is
+    // actually covered; otherwise there's a genuine gap and the caller
+    // should retry instead of guessing.
+    const reconciled = reconcileByItemNumber(items, itemTexts.length);
+    if (!reconciled) {
+      throw new Error(`OpenAI response has ${items.length} items, expected ${itemTexts.length}.`);
+    }
+    items = reconciled;
   }
 
   const RESULTS = ['Pass', 'Defect', 'unreadable'];
@@ -392,12 +415,26 @@ async function requestAndParseForm(client, prompt, imageUrl, itemTexts) {
     serviced_at_confidence:
       typeof parsed.serviced_at_confidence === 'number' ? parsed.serviced_at_confidence : 0,
     form_lift_code: typeof parsed.form_lift_code === 'string' ? parsed.form_lift_code : null,
-    items: parsed.items.map((entry) => ({
+    items: items.map((entry) => ({
       result: RESULTS.includes(entry?.result) ? entry.result : 'unreadable',
       remark: typeof entry?.remark === 'string' ? entry.remark : null,
       field_confidence: typeof entry?.field_confidence === 'number' ? entry.field_confidence : 0,
     })),
   };
+}
+
+// Keeps the first entry claiming each item_number; returns null unless every
+// number from 1 to expectedCount is covered by exactly one such entry.
+function reconcileByItemNumber(items, expectedCount) {
+  const byNumber = new Map();
+  for (const entry of items) {
+    const n = entry?.item_number;
+    if (Number.isInteger(n) && n >= 1 && n <= expectedCount && !byNumber.has(n)) {
+      byNumber.set(n, entry);
+    }
+  }
+  if (byNumber.size !== expectedCount) return null;
+  return Array.from({ length: expectedCount }, (_, i) => byNumber.get(i + 1));
 }
 
 module.exports = {

@@ -1,6 +1,6 @@
 // Integration tests for UC-003 "my reports" — GET /api/my-reports/history (the
 // originator's closed records), GET /api/my-reports/:id (own detail + audit
-// history + checklist results) and POST /api/my-reports/:id/rating. The app runs
+// history + checklist results) and PATCH /api/my-reports/:id. The app runs
 // in-process (supertest); the Supabase auth and pg boundaries are mocked so the
 // real route/controller/model flow is exercised without a network or database.
 'use strict';
@@ -57,7 +57,7 @@ let checklistResults;
 
 function resetStore() {
   inspections = [
-    // res-1's complaint, resolved and unrated — the ratable one.
+    // res-1's complaint, resolved.
     {
       id: 'insp-1',
       source_type: 'resident_complaint',
@@ -68,12 +68,10 @@ function resetStore() {
       location_block: '44A',
       status: 'Resolved',
       category: 'Lift',
-      satisfaction_rating: null,
-      satisfaction_comment: null,
       is_deleted: false,
       created_at: '2026-07-01T09:15:00Z',
     },
-    // res-1's complaint, still being worked — not ratable yet.
+    // res-1's complaint, still being worked.
     {
       id: 'insp-2',
       source_type: 'resident_complaint',
@@ -83,11 +81,10 @@ function resetStore() {
       location_block: '44A',
       status: 'Assigned',
       category: 'Electrical',
-      satisfaction_rating: null,
       is_deleted: false,
       created_at: '2026-07-10T09:15:00Z',
     },
-    // res-1's complaint, already rated.
+    // res-1's complaint, resolved.
     {
       id: 'insp-3',
       source_type: 'resident_complaint',
@@ -97,8 +94,6 @@ function resetStore() {
       location_block: '44A',
       status: 'Resolved',
       category: 'Cleanliness',
-      satisfaction_rating: 4,
-      satisfaction_comment: 'Quick fix',
       is_deleted: false,
       created_at: '2026-06-20T09:15:00Z',
     },
@@ -112,13 +107,11 @@ function resetStore() {
       location_block: '44A',
       status: 'Assigned',
       category: 'Miscellaneous',
-      satisfaction_rating: null,
       is_deleted: false,
       created_at: '2026-07-12T09:15:00Z',
     },
-    // Closed and archived, never rated — the case the history view exists for:
-    // the workflow closes records without passing through 'Resolved', so this is
-    // the resident's only chance to rate it.
+    // Closed and archived — the case the history view exists for: the workflow
+    // closes records without passing through 'Resolved'.
     {
       id: 'insp-5',
       source_type: 'resident_complaint',
@@ -128,7 +121,6 @@ function resetStore() {
       location_block: '44A',
       status: 'Closed',
       category: 'Lift',
-      satisfaction_rating: null,
       is_deleted: true,
       created_at: '2026-05-01T09:15:00Z',
       closed_at: '2026-05-09T09:15:00Z',
@@ -143,7 +135,6 @@ function resetStore() {
       location_block: '44A',
       status: 'Closed',
       category: 'Lift',
-      satisfaction_rating: null,
       is_deleted: true,
       created_at: '2026-05-02T09:15:00Z',
       closed_at: '2026-05-10T09:15:00Z',
@@ -161,7 +152,6 @@ function resetStore() {
       location_unit: '12-05',
       status: 'Open',
       category: 'Lift',
-      satisfaction_rating: null,
       is_deleted: false,
       created_at: new Date().toISOString(),
     },
@@ -196,15 +186,6 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   if (/FROM users WHERE id/i.test(sql)) {
     const p = profiles[params[0]];
     return { rows: p ? [p] : [] };
-  }
-  // submitRating: UPDATE inspections SET satisfaction_rating = ...
-  if (/UPDATE inspections/i.test(sql) && /satisfaction_rating/i.test(sql)) {
-    const [id, residentId, rating, comment] = params;
-    const row = inspections.find((i) => i.id === id && i.resident_id === residentId);
-    if (!row) return { rows: [] };
-    row.satisfaction_rating = rating;
-    row.satisfaction_comment = comment ?? null;
-    return { rows: [{ ...row }] };
   }
   // updateOwnReport: UPDATE inspections SET title = $3, description = $4, ...
   if (/UPDATE inspections/i.test(sql) && /SET title/i.test(sql)) {
@@ -343,116 +324,6 @@ describe('GET /api/my-reports/:id', () => {
   it('401s without a token', async () => {
     const res = await request(app).get('/api/my-reports/insp-1');
     expect(res.status).toBe(401);
-  });
-});
-
-describe('POST /api/my-reports/:id/rating', () => {
-  it('stores a rating and comment on a resolved complaint', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 4, comment: 'Fixed quickly, thank you!' });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({
-      id: 'insp-1',
-      satisfaction_rating: 4,
-      satisfaction_comment: 'Fixed quickly, thank you!',
-    });
-    expect(inspections.find((i) => i.id === 'insp-1').satisfaction_rating).toBe(4);
-  });
-
-  it('accepts a rating without a comment', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 5 });
-
-    expect(res.status).toBe(200);
-    expect(res.body.satisfaction_comment).toBeNull();
-  });
-
-  it('409s ALREADY_RATED on a second submission', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-3/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 2 });
-
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('ALREADY_RATED');
-    // The original rating is untouched.
-    expect(inspections.find((i) => i.id === 'insp-3').satisfaction_rating).toBe(4);
-  });
-
-  it('accepts a rating on a closed record — the workflow closes without passing through Resolved', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-5/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 3, comment: 'Took a while but sorted' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.satisfaction_rating).toBe(3);
-    expect(inspections.find((i) => i.id === 'insp-5').satisfaction_rating).toBe(3);
-  });
-
-  it('409s INVALID_STATE when the work is not resolved yet', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-2/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 3 });
-
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('INVALID_STATE');
-  });
-
-  it('400s on an out-of-range rating', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 7 });
-
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
-  });
-
-  it('400s on a non-integer rating', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 4.5 });
-
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
-  });
-
-  it("404s when rating another resident's closed record", async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-6/rating')
-      .set(auth('resident-token'))
-      .send({ rating: 1 });
-
-    expect(res.status).toBe(404);
-    expect(inspections.find((i) => i.id === 'insp-6').satisfaction_rating).toBeNull();
-  });
-
-  it("404s when rating another resident's record", async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('other-resident-token'))
-      .send({ rating: 5 });
-
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('NOT_FOUND');
-  });
-
-  it('403s for a manager', async () => {
-    const res = await request(app)
-      .post('/api/my-reports/insp-1/rating')
-      .set(auth('manager-token'))
-      .send({ rating: 5 });
-
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe('FORBIDDEN');
   });
 });
 
