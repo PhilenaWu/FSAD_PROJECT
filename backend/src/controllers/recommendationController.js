@@ -9,6 +9,7 @@ const db = require('../config/db');
 const aiPredictionModel = require('../models/aiPredictionModel');
 const openaiService = require('../services/openaiService');
 const notificationService = require('../services/notificationService');
+const socketService = require('../services/socketService');
 const { calculateVelocity } = require('../utils/velocityCalculator');
 
 const VELOCITY_ALERT_THRESHOLD = 40; // percent
@@ -224,6 +225,15 @@ async function acceptAlert(req, res, next) {
        RETURNING id`,
       [title, description, prediction.location_block, prediction.category]
     );
+
+    // Notify managers to refresh the priority queue with the new inspection
+    socketService.emitToRoom('manager-room', 'priority_queue_update', {
+      action: 'inspection_created',
+      inspection_id: rows[0].id,
+      title,
+      location_block: prediction.location_block,
+      category: prediction.category,
+    });
 
     res.json({
       prediction_id: prediction.id,
