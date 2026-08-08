@@ -10,8 +10,11 @@ const notificationController = require('../controllers/notificationController');
 
 const router = express.Router();
 
-// POST /api/notifications — manager sends or schedules a scoped notification.
-router.post('/', requireAuth, requireRole('manager'), notificationController.send);
+// POST /api/notifications — manager sends or schedules a scoped notification;
+// a contractor sends to the managers and inspectors (item 16b). Which scopes
+// each role may address is enforced in the controller (SCOPES_FOR_SENDER) —
+// the route only knows the role, not the audience being asked for.
+router.post('/', requireAuth, requireRole('manager', 'contractor'), notificationController.send);
 
 // GET /api/notifications — the caller's own persisted inbox (any role).
 // Declared before /:id/receipts; the paths are distinct, so order is only for

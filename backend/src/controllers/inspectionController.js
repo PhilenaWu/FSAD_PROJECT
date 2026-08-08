@@ -495,7 +495,13 @@ async function createLiftInspection(req, res, next) {
           scope: assignee.scope,
           message: `${summary} on a lift you service. Rectification is due within 2 weeks.`,
           urgency: worst,
-          link: '/contractor-inbox',
+          // ?defect= names the job. A contractor has no /inspections/:id page
+          // (that route is manager+inspector only), so their link is the inbox
+          // — and a bare inbox link left the bell opening the page with
+          // whichever job happened to be selected. The inbox reads the param
+          // and selects this record; an unknown or stale id falls back to the
+          // normal selection, so an old link still lands somewhere sensible.
+          link: `/contractor-inbox?defect=${inspection.id}`,
         });
       }
 
@@ -844,7 +850,7 @@ async function updateInspection(req, res, next) {
           // path, not an exception. It was Warning, so every routine assignment
           // arrived looking like an escalation.
           urgency: 'Informational',
-          link: '/contractor-inbox',
+          link: `/contractor-inbox?defect=${inspection.id}`,
         });
       }
       // The contractor who lost the job needs to know as much as the one who
@@ -856,6 +862,9 @@ async function updateInspection(req, res, next) {
           scope: previousAssignee.scope,
           message: `${recordLabel(inspection)} has been reassigned to another contractor — it is no longer in your inbox.`,
           urgency: 'Informational',
+          // No ?defect= here on purpose: the record has just left this
+          // contractor's inbox, so naming it would select something they can
+          // no longer see.
           link: '/contractor-inbox',
         });
       }
@@ -873,7 +882,7 @@ async function updateInspection(req, res, next) {
           urgency: ['Critical', 'High'].includes(inspection.priority)
             ? 'Warning'
             : 'Informational',
-          link: '/contractor-inbox',
+          link: `/contractor-inbox?defect=${inspection.id}`,
         });
       }
     }
@@ -1211,7 +1220,7 @@ async function rejectRectification(req, res, next) {
         scope: rejectAssignee.scope,
         message: `Rectification rejected on ${recordLabel(inspection)} — ${reason}`,
         urgency: 'Warning',
-        link: '/contractor-inbox',
+        link: `/contractor-inbox?defect=${inspection.id}`,
       });
     }
 
@@ -1292,7 +1301,7 @@ async function overdueChase(req, res, next) {
             },
             message: `${recordLabel(record)} is ${label}. Please rectify and submit your completion proof.`,
             urgency: days < 0 ? 'Critical' : 'Warning',
-            link: '/contractor-inbox',
+            link: `/contractor-inbox?defect=${record.id}`,
           });
         }
       } catch (err) {

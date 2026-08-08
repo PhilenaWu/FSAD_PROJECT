@@ -67,6 +67,9 @@ const mockClient = {
       return {
         rows: [{
           id: 'ins-1', status, location_block: '44A',
+          title: 'Lift door defect',
+          // The record's inspector — who item 17's task is addressed to.
+          inspector_id: 'insp-1',
           acknowledged_at: '2026-07-27T09:00:00Z',
           rectified_at: '2026-07-27T15:00:00Z',
           hold_reason: 'part on order',
@@ -89,6 +92,27 @@ jest.mock('../../src/config/db', () => ({
     }
     if (/FROM contractors WHERE user_id/i.test(sql)) {
       return { rows: [{ id: 'ctr-1', user_id: 'ctr-user-1', name: 'Otis' }] };
+    }
+    // Notification delivery: the row insert, then recipient resolution. Without
+    // these notifyEvent swallows its own failure (G13) and never reaches the
+    // socket, so the item 17 assertions below would have nothing to see.
+    if (/INSERT INTO notifications/i.test(sql)) {
+      // Mirrors the RETURNING * of the real insert; `scope` matters most —
+      // deliver() resolves recipients straight off the returned row.
+      return {
+        rows: [{
+          id: 'notif-1',
+          manager_id: params[0],
+          message: params[1],
+          scope: params[2],
+          urgency: params[3],
+          event_type: params[7],
+          link: params[8],
+        }],
+      };
+    }
+    if (/SELECT id FROM users/i.test(sql)) {
+      return { rows: [{ id: 'mgr-1' }] };
     }
     // signatureModel.create runs on the shared query() when no client passed —
     // but rectify passes the txn client, so this stays a catch-all.
@@ -162,6 +186,48 @@ describe('POST /api/contractor/:id/rectify', () => {
     expect(res.body).toMatchObject({
       id: 'ins-1', status: 'Rectified', finalized: true, signature_stored: true,
     });
+  });
+
+  // Item 17 — finishing the work is what raises the inspector's task. The
+  // record reaches their Rectified queue on its own; this is the nudge that
+  // tells them it is theirs to check.
+  test('finalize notifies the managers and tasks the record inspector', async () => {
+    emitToRooms.mockClear();
+
+    await request(app)
+      .post('/api/contractor/ins-1/rectify')
+      .set('Authorization', 'Bearer contractor-token')
+      .field('items', JSON.stringify([]))
+      .attach('signature', Buffer.from('fakepng'), 'sig.png');
+
+    const notifications = emitToRooms.mock.calls.filter(([, event]) => event === 'notification');
+    expect(notifications).toHaveLength(2);
+
+    const [managerRooms, , managerPayload] = notifications[0];
+    expect(managerRooms).toEqual(['manager-room']);
+    expect(managerPayload.event_type).toBe('rectified');
+
+    const [inspectorRooms, , inspectorPayload] = notifications[1];
+    expect(inspectorRooms).toEqual(['inspector-team']);
+    expect(inspectorPayload.event_type).toBe('review_requested');
+    expect(inspectorPayload.message).toMatch(/check the work/i);
+
+    // Disjoint audiences — the point of two rows rather than one (D.12).
+    expect(managerRooms).not.toContain('inspector-team');
+  });
+
+  test('a partial save raises no notification at all', async () => {
+    emitToRooms.mockClear();
+
+    await request(app)
+      .post('/api/contractor/ins-1/rectify')
+      .set('Authorization', 'Bearer contractor-token')
+      .field('finalize', 'false')
+      .field('items', JSON.stringify([]));
+
+    expect(
+      emitToRooms.mock.calls.filter(([, event]) => event === 'notification')
+    ).toHaveLength(0);
   });
 
   test('200 partial save (finalize=false) needs no signature — stays in progress', async () => {

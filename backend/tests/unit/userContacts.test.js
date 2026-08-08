@@ -1,6 +1,6 @@
 // Unit tests for GET /api/users/contacts — the role help/contacts block
-// (defect list items 4, 27, 28). Same mocked-supertest style as the feedback
-// and notifications tests.
+// (defect list items 4, 16, 27, 28). Same mocked-supertest style as the
+// feedback and notifications tests.
 'use strict';
 
 jest.mock('../../src/config/supabase', () => ({
@@ -11,6 +11,7 @@ jest.mock('../../src/config/supabase', () => ({
         'admin-token': 'adm-1',
         'resident-token': 'res-1',
         'inspector-token': 'ins-1',
+        'contractor-token': 'ctr-1',
       };
       if (ids[token]) {
         return { data: { claims: { sub: ids[token], email: `${ids[token]}@example.com` } }, error: null };
@@ -26,6 +27,7 @@ jest.mock('../../src/config/db', () => {
     'adm-1': 'admin',
     'res-1': 'resident',
     'ins-1': 'inspector',
+    'ctr-1': 'contractor',
   };
   const BY_ROLE = {
     admin: [
@@ -83,6 +85,17 @@ describe('GET /api/users/contacts', () => {
     const res = await request(app)
       .get('/api/users/contacts')
       .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toMatchObject({ full_name: 'Rachel Lim', phone: '6500 0321' });
+  });
+
+  // Item 16 — the number behind the contractor's "Need help?" card. Same
+  // counterpart as the inspector: the estate manager who assigned the defect.
+  test('a contractor gets the managers — the number behind their "Need help?" card', async () => {
+    const res = await request(app)
+      .get('/api/users/contacts')
+      .set('Authorization', 'Bearer contractor-token');
 
     expect(res.status).toBe(200);
     expect(res.body[0]).toMatchObject({ full_name: 'Rachel Lim', phone: '6500 0321' });

@@ -13,6 +13,9 @@ jest.mock('../../src/config/supabase', () => ({
       if (token === 'resident-token') {
         return { data: { claims: { sub: 'res-1', email: 'res@example.com' } }, error: null };
       }
+      if (token === 'contractor-token') {
+        return { data: { claims: { sub: 'ctr-1', email: 'ctr@example.com' } }, error: null };
+      }
       return { data: null, error: { message: 'invalid token' } };
     }),
   },
@@ -27,6 +30,7 @@ jest.mock('../../src/services/socketService', () => ({
 const profiles = {
   'mgr-1': { role: 'manager', status: 'active' },
   'res-1': { role: 'resident', status: 'active' },
+  'ctr-1': { role: 'contractor', status: 'active' },
 };
 
 jest.mock('../../src/config/db', () => ({
@@ -153,13 +157,62 @@ describe('POST /api/notifications', () => {
     expect(res.body.code).toBe('VALIDATION_ERROR');
   });
 
-  test('403 for a non-manager role', async () => {
+  test('403 for a role that may not send at all', async () => {
     const res = await request(app)
       .post('/api/notifications')
       .set('Authorization', 'Bearer resident-token')
       .send({ message: 'hi', scope: blocksScope, urgency: 'Warning' });
 
     expect(res.status).toBe(403);
+  });
+
+  // Item 16b — a contractor reports upwards and nowhere else.
+  test('201 when a contractor sends to the managers and inspectors', async () => {
+    const { emitToRooms } = require('../../src/services/socketService');
+    emitToRooms.mockClear();
+
+    const res = await request(app)
+      .post('/api/notifications')
+      .set('Authorization', 'Bearer contractor-token')
+      .send({
+        message: 'Lift 2 is unsafe — stopped work',
+        scope: { type: 'managers_and_inspectors' },
+        urgency: 'Critical',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'Sent', recipients_count: 2 });
+    // Both staff rooms, and no block-{n} — a resident must never be reached.
+    expect(emitToRooms).toHaveBeenCalledWith(
+      ['manager-room', 'inspector-team'],
+      'notification',
+      expect.objectContaining({ message: 'Lift 2 is unsafe — stopped work' })
+    );
+  });
+
+  // The contractor picks the audience, so the narrower staff scopes are open
+  // to them too — still staff-only.
+  test('201 when a contractor addresses the inspectors alone', async () => {
+    const res = await request(app)
+      .post('/api/notifications')
+      .set('Authorization', 'Bearer contractor-token')
+      .send({
+        message: 'Access to the motor room refused',
+        scope: { type: 'inspector_team' },
+        urgency: 'Warning',
+      });
+
+    expect(res.status).toBe(201);
+  });
+
+  test('403 when a contractor tries to address residents', async () => {
+    const res = await request(app)
+      .post('/api/notifications')
+      .set('Authorization', 'Bearer contractor-token')
+      .send({ message: 'hi neighbours', scope: blocksScope, urgency: 'Warning' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
   });
 
   test('401 without a token', async () => {
@@ -195,6 +248,20 @@ describe('GET /api/notifications', () => {
     expect(res.body.unread_count).toBe(1);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0]).toMatchObject({ id: 'notif-1', read: false });
+  });
+
+  // A recipient has to be able to tell who wrote a message — a contractor's
+  // report and an automatic lifecycle event read identically without it.
+  test('the inbox query joins the author so the recipient sees a sender', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+    await request(app).get('/api/notifications').set('Authorization', 'Bearer resident-token');
+
+    const [inboxSql] = query.mock.calls.find(([sql]) =>
+      /FROM notification_recipients r/i.test(sql)
+    );
+    expect(inboxSql).toMatch(/LEFT JOIN users u ON u\.id = n\.manager_id/i);
+    expect(inboxSql).toMatch(/u\.full_name AS sender_name/i);
   });
 
   test('scopes the query to the caller, not a client-supplied id', async () => {

@@ -15,6 +15,8 @@
 //                                               supplies rooms because a user's
 //                                               room depends on their role
 //   { type: 'managers_and_users', user_ids: [...], rooms: [...] }
+//   { type: 'managers_and_inspectors' }        — the only scope a contractor
+//                                                may send to (item 16b)
 //                                             — managers ∪ named individuals,
 //                                               deduped; one row for an event
 //                                               with two staff audiences
@@ -139,6 +141,19 @@ async function resolveRecipients(scope) {
     return { userIds, rooms };
   }
 
+  // Every active manager and inspector — the only audience a contractor may
+  // address (item 16b). A contractor on site reports upwards, so this is a
+  // fixed scope with nothing for the sender to choose: no blocks, no named
+  // individuals, and therefore no way to reach a resident. Roles are unioned in
+  // one query since neither set is named by the caller.
+  if (scope.type === 'managers_and_inspectors') {
+    const { rows } = await query(
+      `SELECT id FROM users
+       WHERE role IN ('manager', 'inspector') AND status = 'active'`
+    );
+    return { userIds: rows.map((r) => r.id), rooms: ['manager-room', 'inspector-team'] };
+  }
+
   return { userIds: [], rooms: [] };
 }
 
@@ -149,9 +164,14 @@ async function resolveRecipients(scope) {
 async function findForRecipient(userId, { unread_only = false, limit = 50 } = {}) {
   const { rows } = await query(
     `SELECT n.id, n.message, n.urgency, n.event_type, n.link, n.created_at,
-            r.read, r.read_at
+            r.read, r.read_at,
+            -- Who wrote it. NULL for a lifecycle event (manager_id is NULL on
+            -- those, migration 035), which is what lets the bell say "System"
+            -- for an automatic message and name the person for a human one.
+            u.full_name AS sender_name, u.role AS sender_role
      FROM notification_recipients r
      JOIN notifications n ON n.id = r.notification_id
+     LEFT JOIN users u ON u.id = n.manager_id
      WHERE r.resident_id = $1
        AND ($2::boolean = FALSE OR r.read = FALSE)
      ORDER BY n.created_at DESC
@@ -159,6 +179,18 @@ async function findForRecipient(userId, { unread_only = false, limit = 50 } = {}
     [userId, unread_only, limit]
   );
   return rows;
+}
+
+// The author of a notification, for the live socket payload — the stored row
+// carries only manager_id, and a recipient needs a name. Returns {} for a
+// lifecycle event, whose manager_id is NULL because no human wrote it.
+async function findSender(userId) {
+  if (!userId) return {};
+  const { rows } = await query(
+    `SELECT full_name, role FROM users WHERE id = $1`,
+    [userId]
+  );
+  return rows[0] ?? {};
 }
 
 // Unread count for the bell badge, independent of the page size above.
@@ -277,4 +309,5 @@ module.exports = {
   findForRecipient,
   countUnreadForRecipient,
   findByManager,
+  findSender,
 };

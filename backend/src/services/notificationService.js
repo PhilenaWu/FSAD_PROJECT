@@ -22,6 +22,11 @@ async function deliver(notification) {
   const { userIds, rooms } = await notificationModel.resolveRecipients(notification.scope);
   await notificationModel.addRecipients(notification.id, userIds);
 
+  // The live payload must carry what the persisted inbox already returns, or
+  // a message shows its sender only after a refresh. NULL for a lifecycle
+  // event — nobody wrote it — which the bell renders as "System".
+  const sender = await notificationModel.findSender(notification.manager_id);
+
   socketService.emitToRooms(rooms, 'notification', {
     id: notification.id,
     message: notification.message,
@@ -29,6 +34,8 @@ async function deliver(notification) {
     event_type: notification.event_type,
     link: notification.link,
     created_at: notification.created_at,
+    sender_name: sender.full_name ?? null,
+    sender_role: sender.role ?? null,
   });
 
   return userIds.length;
@@ -74,10 +81,15 @@ async function notifyEvent({ event_type, scope, message, urgency = 'Informationa
 //                             priority_changed · rectification_rejected ·
 //                             closed (managers + admins + originator) ·
 //                             defect_email_failed
-//   contractorController.js   acknowledged · on_hold · rectified · resumed
-//                             (each ONE notification to managers + the record's
+//   contractorController.js   acknowledged · on_hold · resumed (each ONE
+//                             notification to managers + the record's
 //                             inspector, via the managers_and_users scope — see
-//                             D.12/D.15 below)
+//                             D.12/D.15 below) · rectified + review_requested
+//                             (item 17: the managers get the notice, the
+//                             record's inspector gets the task. Two rows, but
+//                             to audiences that are disjoint by role, so no
+//                             recipient is written twice — the thing D.12 was
+//                             actually about)
 //   myReportsController.js    rating_submitted
 //   cvController.js           cv_detection
 //   vendorController.js       vendor_onboarded · vendor_renewed ·

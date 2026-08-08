@@ -72,6 +72,11 @@ const CONTACT_ROLE_FOR = {
   manager: 'admin',
   admin: 'manager',
   inspector: 'manager',
+  // Item 16: a contractor's "Need help?" card dials the estate manager — the
+  // person who assigned the defect. One number in a sidebar card, the same
+  // counterpart an inspector already gets; no contractor-facing page lists the
+  // staff directory.
+  contractor: 'manager',
 };
 
 // GET /api/users/contacts — the contacts the caller is meant to reach: the

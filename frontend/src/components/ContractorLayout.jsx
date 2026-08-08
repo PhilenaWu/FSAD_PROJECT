@@ -7,6 +7,7 @@ import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import AppShell from './AppShell';
 import { useAuth } from '../context/AuthContext';
+import { useRoleContacts } from '../lib/useRoleContacts';
 
 // The inbox is the contractor's whole workspace — no dashboard, no archive.
 const NAV_ITEMS = [
@@ -22,7 +23,20 @@ export default function ContractorLayout() {
     ? `Contractor · ${profile.job_title}`
     : 'Contractor';
 
+  // "Need help?" number for a contractor is the estate manager's — who assigns
+  // the defect and who a blocked contractor escalates to. Read from the users
+  // table (migration 038) rather than hardcoded, so it stays right when the
+  // manager on duty changes. First manager holding a number wins; the card
+  // falls back to the disabled support button while loading or if none has one.
+  const { helpPhone, helpCaption } = useRoleContacts();
+
   return (
-    <AppShell navItems={NAV_ITEMS} accountSubtitle={accountSubtitle} profileLinkEnabled />
+    <AppShell
+      navItems={NAV_ITEMS}
+      accountSubtitle={accountSubtitle}
+      profileLinkEnabled
+      helpPhone={helpPhone}
+      helpCaption={helpCaption}
+    />
   );
 }

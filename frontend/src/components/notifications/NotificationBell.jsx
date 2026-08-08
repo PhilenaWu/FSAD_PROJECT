@@ -35,6 +35,9 @@ const URGENCY_COLOR = {
 const EVENT_LABEL = {
   acknowledged: 'Acknowledged',
   rectified: 'Work submitted',
+  // The inspector's half of a contractor finishing (item 17) — a task, where
+  // 'rectified' is a notice to the managers.
+  review_requested: 'Check the work',
   on_hold: 'On hold',
   resumed: 'Resumed',
   defects_flagged: 'Defects flagged',
@@ -69,7 +72,8 @@ function labelFor(n) {
 export default function NotificationBell() {
   const { socket } = useSocket();
   const navigate = useNavigate();
-  // { id, message, urgency, event_type, link, created_at, read }
+  // { id, message, urgency, event_type, link, created_at, read,
+  //   sender_name, sender_role } — the sender pair is null on lifecycle events.
   const [items, setItems] = useState([]);
   const [anchor, setAnchor] = useState(null);
 
@@ -193,8 +197,22 @@ export default function NotificationBell() {
                       )}
                     </Box>
                   }
-                  secondary={n.message}
-                  secondaryTypographyProps={{ color: 'text.primary', sx: { mt: 0.5 } }}
+                  secondary={
+                    <>
+                      <Typography variant="body2" color="text.primary" sx={{ mt: 0.5 }}>
+                        {n.message}
+                      </Typography>
+                      {/* Who sent it. Only human-authored messages have a
+                          sender; a lifecycle event has no author, and
+                          "System" is more honest than a blank line. */}
+                      <Typography variant="caption" color="text.secondary">
+                        {n.sender_name
+                          ? `From ${n.sender_name}${n.sender_role ? ` · ${n.sender_role}` : ''}`
+                          : 'System'}
+                      </Typography>
+                    </>
+                  }
+                  secondaryTypographyProps={{ component: 'div' }}
                 />
               </ListItem>
             ))}

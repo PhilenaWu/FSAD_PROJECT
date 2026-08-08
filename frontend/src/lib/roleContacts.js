@@ -98,7 +98,15 @@ export const ROLE_CONTACTS = {
   },
 
   // --- contractor (item 16) ---
-  // contractor: { ... },
+  // A contractor on site escalates to the estate manager who assigned the
+  // defect — access refused, wrong part, anything the hold reason cannot
+  // resolve on its own. Card only, like the admin: the contractor's whole
+  // workspace is the inbox, so there is no contacts page and ContractorLayout
+  // offers no Quick access link.
+  contractor: {
+    helpSource: 'staff',
+    helpCaption: 'Call the estate manager',
+  },
 
   // --- admin (item 27) ---
   // Item 27 removed the admin card because it pointed at nobody; it is back

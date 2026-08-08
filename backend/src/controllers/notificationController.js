@@ -22,18 +22,36 @@ function validateScope(scope) {
       return null;
     case 'all_blocks':
     case 'inspector_team':
+    case 'managers':
+    case 'managers_and_inspectors':
       return null;
     case 'contractor':
       if (!scope.contractor_user_id) return 'scope.contractor_user_id is required.';
       return null;
     default:
-      return 'scope.type must be blocks, all_blocks, contractor or inspector_team.';
+      return 'scope.type must be blocks, all_blocks, contractor, inspector_team, '
+        + 'managers or managers_and_inspectors.';
   }
 }
 
-// POST /api/notifications — manager sends or schedules a notification.
+// Which audiences each sending role may address. A manager broadcasts to
+// anyone; a contractor reports upwards only (item 16b) and picks between the
+// managers, the inspectors, or both. Every scope open to a contractor names
+// roles rather than blocks or individuals, so none of them can reach a
+// resident whatever the request asks for. Enforced here rather than at the
+// route because the route can only see the role, not the scope.
+const SCOPES_FOR_SENDER = {
+  manager: ['blocks', 'all_blocks', 'contractor', 'inspector_team', 'managers_and_inspectors'],
+  contractor: ['managers_and_inspectors', 'managers', 'inspector_team'],
+};
+
+// POST /api/notifications — a manager sends or schedules a notification; a
+// contractor sends one to the managers and inspectors (item 16b).
 async function send(req, res, next) {
   try {
+    // The author. Named manager_id because that is the column (migration 012,
+    // written when a broadcast could only come from a manager); a contractor's
+    // send stores their own users.id in it just the same.
     const manager_id = req.user.id;
     const { message, scope, urgency, send_time } = req.body;
 
@@ -53,6 +71,14 @@ async function send(req, res, next) {
     const scopeError = validateScope(scope);
     if (scopeError) {
       return res.status(400).json({ code: 'VALIDATION_ERROR', message: scopeError });
+    }
+    // The role comes from the verified token, never the request body.
+    const allowed = SCOPES_FOR_SENDER[req.user.role] ?? [];
+    if (!allowed.includes(scope.type)) {
+      return res.status(403).json({
+        code: 'FORBIDDEN',
+        message: `A ${req.user.role} may not send to that audience.`,
+      });
     }
 
     // A send_time in the future defers the broadcast to the dispatcher; blank or
