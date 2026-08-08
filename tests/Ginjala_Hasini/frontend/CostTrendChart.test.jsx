@@ -16,7 +16,7 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 
-import CostTrendChart from '../../components/cost/CostTrendChart';
+import CostTrendChart from '../../../frontend/src/components/cost/CostTrendChart';
 
 const DATA = [
   { month: '2026-01', actual_cost: 4000, jobs: 3 },

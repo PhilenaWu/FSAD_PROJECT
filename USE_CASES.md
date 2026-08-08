@@ -346,7 +346,7 @@ drill-down table flags as outliers.
 
 **Actor:** Admin · **Owner:** Hasini (migrations `019`–`022`, the vendor API, the
 cron-guarded expiry job, `.github/workflows/contract-expiry-check.yml`,
-`AdminVendorPage.jsx`, and `tests/Ginjala_Hasini/vendors.test.js`)
+`AdminVendorPage.jsx`, and `tests/Ginjala_Hasini/backend/vendors.test.js`)
 **Client requirement:** R18 — "Admin / user control · add new equipment and users with rights"
 
 **Preconditions:** Caller is authenticated with `role = 'admin'`.

@@ -10,21 +10,21 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 
 const mockUseAuth = vi.fn();
-vi.mock('../../context/AuthContext', () => ({
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
 const mockListDirectory = vi.fn();
-vi.mock('../../services/contactService', () => ({
+vi.mock('../../../frontend/src/services/contactService', () => ({
   listDirectory: () => mockListDirectory(),
 }));
 
 const mockListContacts = vi.fn();
-vi.mock('../../services/userService', () => ({
+vi.mock('../../../frontend/src/services/userService', () => ({
   listContacts: () => mockListContacts(),
 }));
 
-import { useRoleContacts } from '../../lib/useRoleContacts';
+import { useRoleContacts } from '../../../frontend/src/lib/useRoleContacts';
 
 // migration 039 seeds exactly one is_help_line row — the managing office. The
 // national lines are in the same response and must not win the card.

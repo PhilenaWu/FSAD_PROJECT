@@ -10,6 +10,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   FormControl,
   Grid2 as Grid,
   IconButton,
@@ -112,6 +113,40 @@ function Panel({ title, subtitle, children, sx }) {
   );
 }
 
+// Shown while /api/users/me is still in flight. Without it the page rendered
+// ResidentPlaceholder during the gap, so a manager saw an empty dashed box for
+// as long as the profile took to load.
+function ProfileLoading() {
+  return (
+    <Box sx={{ p: { xs: 2, sm: 4 }, display: 'flex', justifyContent: 'center' }}>
+      <CircularProgress />
+    </Box>
+  );
+}
+
+// Shown when /api/users/me failed. The role is unknown, so the dashboard cannot
+// be rendered — but "we could not load your profile" is a different statement
+// from "you are not a manager", and the placeholder said the second one for
+// both. Suspended and pending accounts never reach here: RoleLayout intercepts
+// those codes and renders its own explanation instead of the routed page.
+function ProfileError() {
+  return (
+    <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 720, mx: 'auto' }}>
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+            Retry
+          </Button>
+        }
+      >
+        Could not load your profile, so the dashboard cannot tell which role you
+        are signed in as. Check your connection and try again.
+      </Alert>
+    </Box>
+  );
+}
+
 // Residents land on /dashboard too, but analytics is manager-only (the API
 // 403s other roles). They keep the original empty placeholder — the resident
 // home page is owned by another use case and stays untouched.
@@ -139,9 +174,18 @@ function ResidentPlaceholder() {
 }
 
 export default function DashboardPage() {
-  const { profile } = useAuth();
+  const { user, profile, profileLoading } = useAuth();
   const { socket } = useSocket();
   const isManager = profile?.role === 'manager';
+
+  // A null profile means one of three things and they are not interchangeable:
+  // the fetch is still in flight, the fetch failed, or this genuinely is not a
+  // manager. Treating all three as "not a manager" turned any /api/users/me
+  // failure into a blank dashed panel with no error and no retry — the
+  // dashboard simply looked empty. profileLoading is derived in AuthContext;
+  // a failure is the remaining case where a signed-in user still has no
+  // profile row loaded.
+  const profileFailed = Boolean(user) && !profile && !profileLoading;
 
   // Filters are the URL query string (bookmarkable/shareable dashboard state).
   const [searchParams, setSearchParams] = useSearchParams();
@@ -476,6 +520,15 @@ export default function DashboardPage() {
     () => (trends.length ? trends.slice(-14).map((t) => t.count) : undefined),
     [trends]
   );
+
+  // Order matters: the placeholder is only correct once the role is actually
+  // known. Anything else here is a lie about why the page is empty.
+  if (profileLoading) {
+    return <ProfileLoading />;
+  }
+  if (profileFailed) {
+    return <ProfileError />;
+  }
 
   // Non-managers: keep the untouched resident home placeholder.
   if (!isManager) {

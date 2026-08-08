@@ -1,7 +1,7 @@
 // Tests for the UC-005 trend bucketing — the axis has to stay linear in time
 // at every range, which is the bug these guard against.
 import { describe, expect, test } from 'vitest';
-import { bucketTrend } from '../../utils/trendBuckets';
+import { bucketTrend } from '../../../frontend/src/utils/trendBuckets';
 
 const row = (date, count) => ({ date, count });
 

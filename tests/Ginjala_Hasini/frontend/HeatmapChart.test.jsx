@@ -20,7 +20,7 @@ vi.mock('react-router', () => ({
   useNavigate: () => mockNavigate,
 }));
 
-import HeatmapChart from '../../components/analytics/HeatmapChart';
+import HeatmapChart from '../../../frontend/src/components/analytics/HeatmapChart';
 
 const DATA = [
   { block: '44A', category: 'Doors', count: 8 },

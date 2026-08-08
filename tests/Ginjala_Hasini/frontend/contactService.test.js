@@ -6,11 +6,11 @@
 // so these are the only assertions that the real functions address the routes
 // the backend actually mounts.
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import api from '../../services/api';
-import { listDirectory } from '../../services/contactService';
-import { listContacts } from '../../services/userService';
+import api from '../../../frontend/src/services/api';
+import { listDirectory } from '../../../frontend/src/services/contactService';
+import { listContacts } from '../../../frontend/src/services/userService';
 
-vi.mock('../../services/api', () => ({
+vi.mock('../../../frontend/src/services/api', () => ({
   default: { get: vi.fn(), post: vi.fn() },
 }));
 

@@ -1,38 +1,44 @@
 # Ginjala Hasini — unit tests
 
-**330 tests across 25 files. All passing.**
+**335 tests across 25 files. All passing.**
 
 [TEST_CASES.md](TEST_CASES.md) lists every one of them by name, generated from
 the runners' own JSON output rather than typed by hand.
 
-The tests themselves live inside the package they exercise, because this repo
-has two test runners with incompatible setups — `jest` in a Node environment
-for the Express API, `vitest` in jsdom for the React app. Neither can run the
-other's half, so a single folder could not hold both. This file is the index.
+The project runs two test runners with incompatible setups — `jest` in a Node
+environment for the Express API, `vitest` in jsdom for the React app — and
+neither can execute the other's files. They are split into two subfolders for
+that reason alone; both are unit tests of my own code.
 
 | | Folder | Files | Tests |
 |---|---|---|---|
-| Backend (jest) | [`backend/tests/Ginjala_Hasini/`](../../backend/tests/Ginjala_Hasini/) | 7 | 117 |
-| Frontend (vitest) | [`frontend/src/tests/Ginjala_Hasini/`](../../frontend/src/tests/Ginjala_Hasini/) | 18 | 213 |
+| Backend (jest) | [`backend/`](backend/) | 7 | 117 |
+| Frontend (vitest) | [`frontend/`](frontend/) | 18 | 218 |
 
 ## Running them
 
 From `backend/`:
 
 ```
-npx jest tests/Ginjala_Hasini
+npx jest ../tests/Ginjala_Hasini/backend
 ```
 
 From `frontend/`:
 
 ```
-npx vitest run src/tests/Ginjala_Hasini
+npx vitest run ../tests/Ginjala_Hasini/frontend
 ```
+
+Each runner is configured to reach this folder: `backend/jest.config.js` adds
+it to `roots` (with `moduleDirectories` so bare imports still resolve from
+`backend/node_modules`), and `frontend/vite.config.js` adds it to `test.include`
+(with aliases doing the same job for the React dependencies). Running the whole
+suite from either package — `npx jest` or `npx vitest run` — picks these up too.
 
 Neither needs a database, a Supabase project, or network access — the `pg`
 pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 
-## Backend — `backend/tests/Ginjala_Hasini/`
+## Backend — `tests/Ginjala_Hasini/backend/`
 
 | File | Tests | Covers |
 |---|---|---|
@@ -44,13 +50,13 @@ pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 | `userContacts.test.js` | 5 | `GET /api/users/contacts` — role→counterpart mapping from the verified token, null phone, `403` for a resident |
 | `recommendations.test.js` | 4 | UC-005 dashboard read of active AI alerts |
 
-## Frontend — `frontend/src/tests/Ginjala_Hasini/`
+## Frontend — `tests/Ginjala_Hasini/frontend/`
 
 | File | Tests | Covers |
 |---|---|---|
 | `costService.test.js` | 41 | UC-011 pure analytics — forecast, walk-forward backtest, top mover, lift watchlist, contractor benchmarks, generated insights |
 | `AdminCostPage.test.jsx` | 17 | The cost dashboard — filters, KPI tiles, drill-down, CSV and deck export, error states |
-| `DashboardPage.test.jsx` | 14 | The UC-005 manager dashboard — every panel against a mocked API |
+| `DashboardPage.test.jsx` | 19 | The UC-005 manager dashboard — every panel against a mocked API, plus the profile loading / failed / non-manager states |
 | `csvImport.test.js` | 13 | Data Playground CSV parsing and what-if validation |
 | `AdminVendorPage.test.jsx` | 9 | UC-012 vendor UI — list, onboard, renew, suspend, history |
 | `roleContacts.test.js` | 9 | The per-role contacts recipe — each role's sources, the admin block, icon fallback |

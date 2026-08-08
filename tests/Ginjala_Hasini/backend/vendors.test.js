@@ -10,7 +10,7 @@ const mockSignUp = jest.fn(async () => ({
   error: null,
 }));
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       if (token === 'admin-token') {
@@ -28,12 +28,12 @@ jest.mock('../../src/config/supabase', () => ({
   },
 }));
 
-jest.mock('../../src/services/cloudinaryService', () => ({
+jest.mock('../../../backend/src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(),
   uploadRaw: jest.fn(async () => 'https://res.cloudinary.com/test/contracts/doc.pdf'),
 }));
 
-jest.mock('../../src/services/socketService', () => ({
+jest.mock('../../../backend/src/services/socketService', () => ({
   emitToRoom: jest.fn(),
   emitToRooms: jest.fn(),
 }));
@@ -52,15 +52,15 @@ const profileRows = {
 
 const mockQuery = jest.fn();
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: (...args) => mockQuery(...args),
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
-const { emitToRoom } = require('../../src/services/socketService');
+const app = require('../../../backend/src/app');
+const { emitToRoom } = require('../../../backend/src/services/socketService');
 
 // Default db.query behaviour; individual tests override specific patterns by
 // mutating `state` below.
@@ -398,7 +398,7 @@ describe('POST /api/admin/vendors/:id/renew (VND-T06)', () => {
       .field('contract_end', '2028-06-30')
       .attach('contract_doc', Buffer.from('%PDF-fake'), 'renewal.pdf');
     expect(res.status).toBe(200);
-    const { uploadRaw } = require('../../src/services/cloudinaryService');
+    const { uploadRaw } = require('../../../backend/src/services/cloudinaryService');
     expect(uploadRaw).toHaveBeenCalledWith(expect.any(Buffer), 'contracts', 'renewal.pdf');
     // updateContract received the new Cloudinary URL (not null)
     expect(mockQuery).toHaveBeenCalledWith(

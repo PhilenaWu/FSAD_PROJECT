@@ -5,7 +5,7 @@
 // would still render a green dashboard test and a 404 in the browser. These
 // pin the request each function makes and the unwrapping of `res.data`.
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import api from '../../services/api';
+import api from '../../../frontend/src/services/api';
 import {
   SLA_THRESHOLD_HRS,
   getFilterOptions,
@@ -20,9 +20,9 @@ import {
   dismissRecommendation,
   runAnalysis,
   exportPptx,
-} from '../../services/analyticsService';
+} from '../../../frontend/src/services/analyticsService';
 
-vi.mock('../../services/api', () => ({
+vi.mock('../../../frontend/src/services/api', () => ({
   default: { get: vi.fn(), post: vi.fn() },
 }));
 

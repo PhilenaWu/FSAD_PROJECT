@@ -3,7 +3,7 @@
 // Same mocked-supertest style as the feedback tests.
 'use strict';
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       if (token === 'resident-token') {
@@ -14,7 +14,7 @@ jest.mock('../../src/config/supabase', () => ({
   },
 }));
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: jest.fn(async (sql, params = []) => {
@@ -50,7 +50,7 @@ jest.mock('../../src/config/db', () => ({
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
+const app = require('../../../backend/src/app');
 
 describe('GET /api/contacts', () => {
   test('a resident gets the directory in display order', async () => {

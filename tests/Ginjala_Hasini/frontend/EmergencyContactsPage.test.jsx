@@ -8,21 +8,21 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 
 const mockUseAuth = vi.fn();
-vi.mock('../../context/AuthContext', () => ({
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
 const mockListDirectory = vi.fn();
-vi.mock('../../services/contactService', () => ({
+vi.mock('../../../frontend/src/services/contactService', () => ({
   listDirectory: () => mockListDirectory(),
 }));
 
 const mockListContacts = vi.fn();
-vi.mock('../../services/userService', () => ({
+vi.mock('../../../frontend/src/services/userService', () => ({
   listContacts: () => mockListContacts(),
 }));
 
-import EmergencyContactsPage from '../../pages/EmergencyContactsPage';
+import EmergencyContactsPage from '../../../frontend/src/pages/EmergencyContactsPage';
 
 // Mirrors what migration 039 seeds into contact_directory.
 const DIRECTORY = [

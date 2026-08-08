@@ -14,7 +14,7 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 
-import CategoryBarChart from '../../components/cost/CategoryBarChart';
+import CategoryBarChart from '../../../frontend/src/components/cost/CategoryBarChart';
 
 const DATA = [
   { category: 'Doors', actual_cost: 18240.5, jobs: 7 },

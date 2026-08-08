@@ -4,7 +4,7 @@
 // bodies are asserted nowhere else. The renew call is the one with real logic:
 // it builds the FormData the backend's multer handler reads.
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import api from '../../services/api';
+import api from '../../../frontend/src/services/api';
 import {
   listVendors,
   onboardVendor,
@@ -13,9 +13,9 @@ import {
   updateVendorDetails,
   getVendorHistory,
   runExpiryCheck,
-} from '../../services/vendorService';
+} from '../../../frontend/src/services/vendorService';
 
-vi.mock('../../services/api', () => ({
+vi.mock('../../../frontend/src/services/api', () => ({
   default: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }));
 

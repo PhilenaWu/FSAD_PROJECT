@@ -15,7 +15,7 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 
-import SlaGauge from '../../components/analytics/SlaGauge';
+import SlaGauge from '../../../frontend/src/components/analytics/SlaGauge';
 
 const SLA = {
   sla_percentage: 76.4,

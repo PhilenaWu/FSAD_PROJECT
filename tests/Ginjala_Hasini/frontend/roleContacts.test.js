@@ -14,7 +14,7 @@ import {
   getRoleContacts,
   directoryIcon,
   STAFF_ICON,
-} from '../../lib/roleContacts';
+} from '../../../frontend/src/lib/roleContacts';
 
 describe('getRoleContacts', () => {
   test('a resident draws on the directory only, never on staff numbers', () => {

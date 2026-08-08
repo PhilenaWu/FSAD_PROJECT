@@ -7,14 +7,14 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-vi.mock('../../context/AuthContext', () => ({
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
   useAuth: () => ({ profile: { role: 'admin' } }),
 }));
-vi.mock('../../context/SocketContext', () => ({
+vi.mock('../../../frontend/src/context/SocketContext', () => ({
   useSocket: () => ({ socket: null }),
 }));
 
-vi.mock('../../services/vendorService', () => ({
+vi.mock('../../../frontend/src/services/vendorService', () => ({
   listVendors: vi.fn(),
   onboardVendor: vi.fn(),
   renewVendor: vi.fn(),
@@ -24,8 +24,8 @@ vi.mock('../../services/vendorService', () => ({
   runExpiryCheck: vi.fn(),
 }));
 
-import { listVendors } from '../../services/vendorService';
-import AdminVendorPage from '../../pages/AdminVendorPage';
+import { listVendors } from '../../../frontend/src/services/vendorService';
+import AdminVendorPage from '../../../frontend/src/pages/AdminVendorPage';
 
 // Shaped like GET /api/admin/vendors rows.
 const vendor = (over = {}) => ({

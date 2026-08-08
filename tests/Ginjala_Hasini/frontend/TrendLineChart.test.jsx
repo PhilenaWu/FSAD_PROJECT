@@ -15,7 +15,7 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 
-import TrendLineChart from '../../components/analytics/TrendLineChart';
+import TrendLineChart from '../../../frontend/src/components/analytics/TrendLineChart';
 
 const DB = [
   { date: '2026-03-01', count: 2 },

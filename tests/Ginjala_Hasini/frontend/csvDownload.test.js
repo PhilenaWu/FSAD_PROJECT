@@ -3,7 +3,7 @@
 // escaping rules and the BOM are the parts that quietly corrupt a file rather
 // than fail loudly, so they are what these assert.
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { BOM, downloadCsv } from '../../utils/csvDownload';
+import { BOM, downloadCsv } from '../../../frontend/src/utils/csvDownload';
 
 // jsdom implements neither createObjectURL nor anchor navigation, so both are
 // stubbed. The stub also captures the Blob, which is the only way to read back

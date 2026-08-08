@@ -7,19 +7,22 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-vi.mock('../../context/AuthContext', () => ({
-  useAuth: () => ({ profile: { role: 'manager' } }),
+// Mutable so the profile-state tests below can drive it; every other test gets
+// the signed-in manager set in beforeEach.
+const mockUseAuth = vi.fn();
+vi.mock('../../../frontend/src/context/AuthContext', () => ({
+  useAuth: () => mockUseAuth(),
 }));
-vi.mock('../../context/SocketContext', () => ({
+vi.mock('../../../frontend/src/context/SocketContext', () => ({
   useSocket: () => ({ socket: null }),
 }));
 
 // Chart.js needs a real canvas; the charts are not what these tests are about.
-vi.mock('../../components/analytics/HeatmapChart', () => ({ default: () => <div data-testid="heatmap" /> }));
-vi.mock('../../components/analytics/TrendLineChart', () => ({ default: () => <div data-testid="trend" /> }));
-vi.mock('../../components/analytics/SlaGauge', () => ({ default: () => <div data-testid="sla" /> }));
+vi.mock('../../../frontend/src/components/analytics/HeatmapChart', () => ({ default: () => <div data-testid="heatmap" /> }));
+vi.mock('../../../frontend/src/components/analytics/TrendLineChart', () => ({ default: () => <div data-testid="trend" /> }));
+vi.mock('../../../frontend/src/components/analytics/SlaGauge', () => ({ default: () => <div data-testid="sla" /> }));
 
-vi.mock('../../services/analyticsService', async (importOriginal) => ({
+vi.mock('../../../frontend/src/services/analyticsService', async (importOriginal) => ({
   ...(await importOriginal()),
   getFilterOptions: vi.fn(),
   getSummary: vi.fn(),
@@ -44,8 +47,8 @@ import {
   getContractorScorecard,
   getPriorityQueue,
   getRecommendations,
-} from '../../services/analyticsService';
-import DashboardPage from '../../pages/DashboardPage';
+} from '../../../frontend/src/services/analyticsService';
+import DashboardPage from '../../../frontend/src/pages/DashboardPage';
 
 const alert = (n) => ({
   id: `alert-${n}`,
@@ -66,6 +69,11 @@ const renderPage = () =>
 
 beforeEach(() => {
   sessionStorage.clear(); // a stored what-if preview must not leak between tests
+  mockUseAuth.mockReturnValue({
+    user: { id: 'auth-1' },
+    profile: { role: 'manager' },
+    profileLoading: false,
+  });
   getFilterOptions.mockResolvedValue({ blocks: ['44A'], categories: ['Doors'], sections: [] });
   getSummary.mockResolvedValue({
     open_count: 79,
@@ -284,5 +292,63 @@ describe('DashboardPage — data and failure states', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(screen.queryByText(/alert number 99\./)).not.toBeInTheDocument();
+  });
+});
+
+// The page renders from `profile`, which is null in three unrelated situations:
+// the fetch is in flight, the fetch failed, or the caller is not a manager.
+// Treating all three as "not a manager" showed the resident placeholder — a
+// dashed "page content area" box — so a failed /api/users/me looked exactly
+// like an empty dashboard, with no error and nothing to retry.
+describe('DashboardPage — profile states', () => {
+  test('a manager sees the dashboard, not a placeholder', async () => {
+    renderPage();
+
+    expect(await screen.findByText(/Reports filed/i)).toBeInTheDocument();
+    expect(screen.queryByText('page content area')).not.toBeInTheDocument();
+  });
+
+  test('while the profile is loading it shows a spinner, not an empty box', () => {
+    mockUseAuth.mockReturnValue({ user: { id: 'auth-1' }, profile: null, profileLoading: true });
+
+    renderPage();
+
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.queryByText('page content area')).not.toBeInTheDocument();
+  });
+
+  test('a failed profile fetch says so and offers a retry', () => {
+    // Signed in, no longer loading, still no profile — /api/users/me failed.
+    mockUseAuth.mockReturnValue({ user: { id: 'auth-1' }, profile: null, profileLoading: false });
+
+    renderPage();
+
+    expect(screen.getByText(/Could not load your profile/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByText('page content area')).not.toBeInTheDocument();
+  });
+
+  test('a genuine non-manager still gets the resident placeholder', () => {
+    mockUseAuth.mockReturnValue({
+      user: { id: 'auth-1' },
+      profile: { role: 'resident' },
+      profileLoading: false,
+    });
+
+    renderPage();
+
+    expect(screen.getByText('page content area')).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load your profile/i)).not.toBeInTheDocument();
+  });
+
+  test('a signed-out render does not claim the profile failed', () => {
+    // ProtectedRoute redirects before this normally; the guard is on `user` so
+    // a logged-out render cannot show a false error.
+    mockUseAuth.mockReturnValue({ user: null, profile: null, profileLoading: false });
+
+    renderPage();
+
+    expect(screen.queryByText(/Could not load your profile/i)).not.toBeInTheDocument();
+    expect(screen.getByText('page content area')).toBeInTheDocument();
   });
 });

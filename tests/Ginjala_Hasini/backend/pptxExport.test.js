@@ -9,7 +9,7 @@
 //      mocked, so no file is written and no network is touched.
 'use strict';
 
-jest.mock('../../src/config/supabase', () => ({
+jest.mock('../../../backend/src/config/supabase', () => ({
   auth: {
     getClaims: jest.fn(async (token) => {
       const subs = {
@@ -53,29 +53,29 @@ const mockQuery = jest.fn(async (sql, params = []) => {
   return { rows: [] };
 });
 
-jest.mock('../../src/config/db', () => ({
+jest.mock('../../../backend/src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: mockQuery,
 }));
 
-jest.mock('../../src/services/pptxService', () => ({
+jest.mock('../../../backend/src/services/pptxService', () => ({
   buildDashboardDeck: jest.fn(async () => Buffer.from('fake-pptx')),
   buildAdminCostDeck: jest.fn(),
   generateAdminCostPptx: jest.fn(async () => Buffer.from('fake-admin-pptx')),
 }));
-jest.mock('../../src/services/cloudinaryService', () => ({
+jest.mock('../../../backend/src/services/cloudinaryService', () => ({
   uploadImage: jest.fn(),
   uploadRaw: jest.fn(async () => 'https://res.cloudinary.com/demo/reports/admin-costs-1.pptx'),
 }));
 
 const request = require('supertest');
-const app = require('../../src/app');
-const pptxService = require('../../src/services/pptxService');
-const cloudinaryService = require('../../src/services/cloudinaryService');
+const app = require('../../../backend/src/app');
+const pptxService = require('../../../backend/src/services/pptxService');
+const cloudinaryService = require('../../../backend/src/services/cloudinaryService');
 
 // The genuine service + genuine PptxGenJS, bypassing the mock above.
-const realPptxService = jest.requireActual('../../src/services/pptxService');
+const realPptxService = jest.requireActual('../../../backend/src/services/pptxService');
 
 const PATH = '/api/export/admin-costs-pptx';
 

@@ -2,13 +2,13 @@
 
 Every test in my two folders, by name, as reported by the test runners themselves. Generated from `jest --json` and `vitest --reporter=json` on 2026-08-08, so this list cannot drift from what actually runs.
 
-**330 tests, 330 passing, 0 failing.**
+**335 tests, 335 passing, 0 failing.**
 
 See [README.md](README.md) for what each file covers and how to run it.
 
 ## Backend (jest)
 
-`backend/tests/Ginjala_Hasini/` — 7 files, 117 tests, run with `npx jest tests/Ginjala_Hasini`.
+`tests/Ginjala_Hasini/backend/` — 7 files, 117 tests, run with `npx jest ../tests/Ginjala_Hasini/backend`.
 
 ### analytics.test.js (27)
 
@@ -230,7 +230,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 
 ## Frontend (vitest)
 
-`frontend/src/tests/Ginjala_Hasini/` — 18 files, 213 tests, run with `npx vitest run src/tests/Ginjala_Hasini`.
+`tests/Ginjala_Hasini/frontend/` — 18 files, 218 tests, run with `npx vitest run ../tests/Ginjala_Hasini/frontend`.
 
 ### AdminCostPage.test.jsx (17)
 
@@ -482,7 +482,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 - recomputes percentage with resolved imported rows
 - returns the base unchanged when no imported rows are resolved
 
-### DashboardPage.test.jsx (14)
+### DashboardPage.test.jsx (19)
 
 **DashboardPage — AI risk alerts**
 
@@ -506,6 +506,14 @@ See [README.md](README.md) for what each file covers and how to run it.
 - ANA-T04: Export CSV downloads the priority queue when there are rows
 - ANA-T05: Export CSV is disabled and explains itself on an empty result
 - a superseded response cannot repaint the page (stale-request race)
+
+**DashboardPage — profile states**
+
+- a manager sees the dashboard, not a placeholder
+- while the profile is loading it shows a spinner, not an empty box
+- a failed profile fetch says so and offers a retry
+- a genuine non-manager still gets the resident placeholder
+- a signed-out render does not claim the profile failed
 
 ### EmergencyContactsPage.test.jsx (8)
 
