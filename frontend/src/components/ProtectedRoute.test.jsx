@@ -15,11 +15,14 @@ import ProtectedRoute from './ProtectedRoute';
 
 const SIGNED_IN = {
   user: { id: 'u-1' },
+  profile: { id: 'u-1', role: 'resident' },
   loading: false,
   profileLoading: false,
+  profileError: false,
   suspended: false,
   accountBlocked: null,
   logout: vi.fn(),
+  reloadProfile: vi.fn(),
 };
 
 function renderGate(auth) {
@@ -95,5 +98,29 @@ describe('ProtectedRoute', () => {
   test('the app does not mount while we still do not know if they are admitted', () => {
     renderGate({ profileLoading: true });
     expect(screen.queryByText('PORTAL')).not.toBeInTheDocument();
+  });
+
+  // The Ahmad Faizal case: a suspended vendor whose profile row could not be
+  // read answers 404, not ACCOUNT_SUSPENDED. That is not a refusal the app can
+  // explain — and it must not become "resident", which is what RoleLayout's old
+  // fallback did, putting a contractor in the resident portal.
+  test('an unreadable profile is an error, never the resident portal', () => {
+    renderGate({ profileError: true, profile: null });
+    expect(screen.getByText('Could not load your account')).toBeInTheDocument();
+    expect(screen.queryByText('PORTAL')).not.toBeInTheDocument();
+  });
+
+  test('a missing profile without an explicit error is refused too', () => {
+    renderGate({ profile: null });
+    expect(screen.getByText('Could not load your account')).toBeInTheDocument();
+    expect(screen.queryByText('PORTAL')).not.toBeInTheDocument();
+  });
+
+  // Refusals we CAN explain keep their own screen — the error screen must not
+  // swallow them, since profileError is true for those too.
+  test('a suspended account still gets the revoked screen, not the error screen', () => {
+    renderGate({ suspended: true, profileError: true, profile: null });
+    expect(screen.getByText('Access revoked')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your account')).not.toBeInTheDocument();
   });
 });

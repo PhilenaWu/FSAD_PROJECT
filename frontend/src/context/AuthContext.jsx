@@ -26,6 +26,9 @@ export function AuthProvider({ children }) {
   // to resident chrome exactly as suspended accounts used to.
   const [accountBlocked, setAccountBlocked] = useState(null); // 'pending' | 'rejected'
   const [loading, setLoading] = useState(true);
+  // Bumped by reloadProfile() to re-run the fetch below — the manual retry
+  // offered when the profile could not be loaded.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Derived, not state: true from the instant a user exists until the profile
   // resolves or errors. Deriving it closes the one-render gap right after
@@ -62,23 +65,41 @@ export function AuthProvider({ children }) {
     setProfileError(false);
     setSuspended(false);
     setAccountBlocked(null);
-    api
-      .get('/api/users/me')
-      .then((res) => {
-        if (active) setProfile(res.data);
-      })
-      .catch((err) => {
-        if (!active) return;
-        setProfileError(true);
-        const code = err.response?.data?.code;
-        setSuspended(code === 'ACCOUNT_SUSPENDED');
-        if (code === 'ACCOUNT_PENDING') setAccountBlocked('pending');
-        if (code === 'ACCOUNT_REJECTED') setAccountBlocked('rejected');
-      });
+
+    // Transient failures get retried before we give up: the backend sleeps on
+    // Render's free tier, and a cold start is a timeout, not an answer about
+    // who this user is. A 4xx IS an answer — suspended, unapproved, no profile
+    // row — so those stop immediately. profileLoading stays true throughout,
+    // so a cold start shows the spinner and usually resolves unseen.
+    async function loadProfile() {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const res = await api.get('/api/users/me');
+          if (active) setProfile(res.data);
+          return;
+        } catch (err) {
+          const transient = !err.response || err.response.status >= 500;
+          if (transient && attempt < 2) {
+            await new Promise((r) => setTimeout(r, 600 * 2 ** attempt));
+            if (!active) return;
+            continue;
+          }
+          if (!active) return;
+          setProfileError(true);
+          const code = err.response?.data?.code;
+          setSuspended(code === 'ACCOUNT_SUSPENDED');
+          if (code === 'ACCOUNT_PENDING') setAccountBlocked('pending');
+          if (code === 'ACCOUNT_REJECTED') setAccountBlocked('rejected');
+          return;
+        }
+      }
+    }
+    loadProfile();
+
     return () => {
       active = false;
     };
-  }, [user?.id]);
+  }, [user?.id, reloadKey]);
 
   // Return the signIn result so callers can read its { error }.
   const login = (email, password) => signIn(email, password);
@@ -88,6 +109,11 @@ export function AuthProvider({ children }) {
     user,
     profile,
     profileLoading,
+    // Exposed so the route gate can tell "refused" (suspended/unapproved, which
+    // have their own screens) from "we could not find out" — which must not be
+    // guessed at, since guessing meant resident chrome for everyone.
+    profileError,
+    reloadProfile: () => setReloadKey((k) => k + 1),
     suspended,
     accountBlocked,
     loading,

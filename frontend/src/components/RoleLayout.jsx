@@ -31,8 +31,10 @@ export default function RoleLayout() {
     );
   }
 
-  // Unknown role (profile fetch failed for another reason): resident chrome is
-  // the safe default.
+  // ProtectedRoute guarantees a profile by here, so this dispatches on a role
+  // we actually know. It used to end in a bare `return <ResidentLayout />` that
+  // also caught "profile failed to load" — which is how a vendor whose profile
+  // 404s ended up in the resident portal. That case is now refused at the gate.
   if (profile?.role === 'manager') return <ManagerLayout />;
   if (profile?.role === 'admin') return <AdminLayout />;
   if (profile?.role === 'contractor') return <ContractorLayout />;

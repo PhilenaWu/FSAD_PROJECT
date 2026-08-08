@@ -15,6 +15,7 @@ import { Navigate, Outlet } from 'react-router';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import AccountBlockedScreen from './AccountBlockedScreen';
+import ProfileUnavailableScreen from './ProfileUnavailableScreen';
 
 function FullPageSpinner() {
   return (
@@ -33,7 +34,8 @@ function FullPageSpinner() {
 }
 
 export default function ProtectedRoute() {
-  const { user, loading, profileLoading, suspended, accountBlocked } = useAuth();
+  const { user, profile, loading, profileLoading, profileError, suspended, accountBlocked } =
+    useAuth();
 
   // Still restoring the session — render nothing rather than flash the login
   // page at someone who is signed in.
@@ -46,6 +48,12 @@ export default function ProtectedRoute() {
 
   if (suspended) return <AccountBlockedScreen reason="suspended" />;
   if (accountBlocked) return <AccountBlockedScreen reason={accountBlocked} />;
+
+  // Signed in, not refused, but we still could not read the profile — a missing
+  // row, or the backend erroring. The app used to admit these and let RoleLayout
+  // fall through to resident chrome, which is how a suspended vendor whose
+  // profile 404s ended up looking at the resident portal.
+  if (profileError || !profile) return <ProfileUnavailableScreen />;
 
   return <Outlet />;
 }
