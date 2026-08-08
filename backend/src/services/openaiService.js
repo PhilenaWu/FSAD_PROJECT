@@ -285,8 +285,10 @@ async function extractSpotCheckForm(imageUrl, itemTexts) {
   const prompt =
     `This image is a completed, handwritten lift spot-check form. It has a ` +
     `"Servicing Date" field, a lift/block identifier in the header, and a ` +
-    `checklist of ${itemTexts.length} numbered items, each ticked as Pass or ` +
-    `marked as a Defect with a handwritten remark.\n\n` +
+    `checklist of ${itemTexts.length} numbered items, each ticked Pass (✓) or ` +
+    `marked Defect (✗/X) in its own check column. A written remark next to a row ` +
+    `is optional and uncommon — most rows, including most Defect rows, have no ` +
+    `remark at all.\n\n` +
     `The checklist items, in order, are:\n${numberedItems}\n\n` +
     `Read the form and return strict JSON, and nothing else, in exactly this shape:\n` +
     `{\n` +
@@ -298,6 +300,14 @@ async function extractSpotCheckForm(imageUrl, itemTexts) {
     `    ... exactly ${itemTexts.length} entries, one per numbered item above, in the same order\n` +
     `  ]\n` +
     `}\n\n` +
+    `Base "result" ONLY on that row's own check-column mark, not on whether there's handwriting ` +
+    `nearby — a remark elsewhere on the page belongs to whichever row it's actually written next ` +
+    `to, not to every Defect row.\n` +
+    `For "remark": read only literal handwritten text actually written next to that specific row. ` +
+    `null is the correct, expected answer whenever no such text exists — that is the normal case, ` +
+    `not a failure. Never restate, paraphrase, or reuse the numbered question text (or any part of ` +
+    `it) as the remark; a remark that just repeats the question is always wrong and must be null ` +
+    `instead.\n` +
     `Never guess a severity or invent a remark that isn't legible — mark a row "unreadable" and ` +
     `use a low field_confidence instead of forcing a Pass/Defect you aren't confident about. ` +
     `The "items" array MUST contain EXACTLY ${itemTexts.length} entries, no more and no fewer — ` +
@@ -342,7 +352,12 @@ async function requestAndParseForm(client, prompt, imageUrl, itemTexts) {
           ],
         },
       ],
-      max_tokens: 2000,
+      // 2000 was tight for a 25-item response (per-item result + remark +
+      // confidence) and risked truncating mid-JSON on a dense form, which
+      // surfaces as a confusing "not valid JSON" / OCR_UNREADABLE rather than
+      // the real cause. More headroom costs little and avoids that failure
+      // mode outright.
+      max_tokens: 3500,
       temperature: 0,
       response_format: { type: 'json_object' },
     });
