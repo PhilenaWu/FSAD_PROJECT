@@ -36,4 +36,13 @@ router.post(
   myReportsController.submitRating
 );
 
+// PATCH /api/my-reports/:id — resident edits their own complaint within 30
+// minutes of filing it (title, description, category, location).
+router.patch(
+  '/:id',
+  requireAuth,
+  requireRole('resident'),
+  myReportsController.updateOwnReport
+);
+
 module.exports = router;

@@ -10,15 +10,19 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  MenuItem,
   Paper,
   Rating,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { groupBySection } from '../../utils/myReports';
 import { statusDisplay } from '../../utils/statusDisplay';
 import { timeAgo } from '../../utils/timeAgo';
+import { BLOCKS } from '../../utils/blocks';
+import { CATEGORIES } from '../../utils/inspectionOptions';
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -41,6 +45,17 @@ export default function ReportCard({
   onRetryDetail,
   onDraftChange,
   onSubmitRating,
+  // Editable for 30 minutes after filing (myReportsController's
+  // EDIT_WINDOW_MS) — computed by the parent via utils/myReports.isEditable.
+  editable,
+  editing,
+  editDraft,
+  editSaving,
+  editError,
+  onEditToggle,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
 }) {
   const display = statusDisplay(report.status);
   const panelId = `report-detail-${report.id}`;
@@ -142,8 +157,82 @@ export default function ReportCard({
             >
               Could not load the details for this report.
             </Alert>
+          ) : detail && editing ? (
+            <Stack spacing={2}>
+              {editError && <Alert severity="error">{editError}</Alert>}
+              <TextField
+                label="Title"
+                size="small"
+                fullWidth
+                required
+                value={editDraft.title}
+                onChange={(e) => onEditChange({ ...editDraft, title: e.target.value })}
+              />
+              <TextField
+                label="Description"
+                size="small"
+                fullWidth
+                required
+                multiline
+                minRows={3}
+                value={editDraft.description}
+                onChange={(e) => onEditChange({ ...editDraft, description: e.target.value })}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  select
+                  label="Category"
+                  size="small"
+                  fullWidth
+                  value={editDraft.category}
+                  onChange={(e) => onEditChange({ ...editDraft, category: e.target.value })}
+                >
+                  {CATEGORIES.map((c) => (
+                    <MenuItem key={c} value={c}>{c}</MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  label="Block"
+                  size="small"
+                  fullWidth
+                  value={editDraft.location_block}
+                  onChange={(e) => onEditChange({ ...editDraft, location_block: e.target.value })}
+                >
+                  {BLOCKS.map((b) => (
+                    <MenuItem key={b} value={b}>{b}</MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  label="Unit (optional)"
+                  size="small"
+                  fullWidth
+                  value={editDraft.location_unit ?? ''}
+                  onChange={(e) => onEditChange({ ...editDraft, location_unit: e.target.value })}
+                />
+              </Stack>
+              <Stack direction="row" spacing={1}>
+                <Button variant="contained" size="small" disabled={editSaving} onClick={onEditSave}>
+                  {editSaving ? 'Saving…' : 'Save changes'}
+                </Button>
+                <Button size="small" disabled={editSaving} onClick={onEditCancel}>
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
           ) : detail ? (
             <Stack spacing={2}>
+              {editable && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<EditOutlinedIcon fontSize="small" />}
+                  onClick={onEditToggle}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  Edit report
+                </Button>
+              )}
               {detail.description && <Typography variant="body2">{detail.description}</Typography>}
 
               {detail.closing_remark && (

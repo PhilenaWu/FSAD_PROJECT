@@ -5,12 +5,11 @@
 // and takes a satisfaction rating on the outcome.
 // REST listing (task 3.11); Socket.IO wiring lives in SocketContext/SocketService.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router';
+import { Link as RouterLink } from 'react-router';
 import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Collapse,
   FormControl,
@@ -18,7 +17,6 @@ import {
   InputAdornment,
   MenuItem,
   Paper,
-  Rating,
   Select,
   Snackbar,
   Stack,
@@ -38,29 +36,17 @@ import ReportCard from '../components/inspections/ReportCard';
 import StatTile from '../components/common/StatTile';
 import EmptyState from '../components/common/EmptyState';
 import { useSocket } from '../context/SocketContext';
-import { STATUS_DISPLAY, statusDisplay, statusGroup } from '../utils/statusDisplay';
+import { STATUS_DISPLAY, statusGroup } from '../utils/statusDisplay';
 import {
+  applyEdit,
   applyRating,
   applyStatusUpdate,
   countAwaitingRating,
+  isEditable,
   isRatable,
 } from '../utils/myReports';
 
 const EMPTY_DRAFT = { value: null, comment: '' };
-
-// Ratable once the work is done; rating submission is a later task.
-// Closed records do reach this page — /api/inspections/my returns the caller's
-// full history including archived ones, so their own record of a report never
-// disappears.
-const RATABLE_STATUSES = ['Resolved', 'Closed'];
-
-function formatDate(iso) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
 
 // Search matches the title or the record id (a resident pasting part of a
 // link/id still finds it); status filter is an exact match, 'all' = no filter.
@@ -73,7 +59,6 @@ function matchesFilter(r, query, status) {
 
 export default function MyReportsPage() {
   const { profile } = useAuth();
-  const navigate = useNavigate();
   const isInspector = profile?.role === 'inspector';
   const [reports, setReports] = useState([]);
   const [history, setHistory] = useState([]);
@@ -91,6 +76,13 @@ export default function MyReportsPage() {
   const [drafts, setDrafts] = useState({});
   const [ratingBusyId, setRatingBusyId] = useState(null);
   const [toast, setToast] = useState(null);
+
+  // Editing (within 30 minutes of filing — utils/myReports.isEditable).
+  // Resident-only: editable is false for an inspector's own inspections.
+  const [editingId, setEditingId] = useState(null);
+  const [editDrafts, setEditDrafts] = useState({});
+  const [editSavingId, setEditSavingId] = useState(null);
+  const [editErrors, setEditErrors] = useState({});
 
   const { socket, connected, joinRoom, leaveRoom } = useSocket();
 
@@ -250,6 +242,54 @@ export default function MyReportsPage() {
     }
   }
 
+  // Start editing a report — seeds the draft from the summary row plus the
+  // already-loaded detail (the Edit button only renders once detail has
+  // loaded, so detail.description is available here).
+  function startEdit(report) {
+    setEditingId(report.id);
+    setEditErrors((prev) => ({ ...prev, [report.id]: null }));
+    setEditDrafts((prev) => ({
+      ...prev,
+      [report.id]: {
+        title: report.title,
+        description: detail?.description ?? '',
+        category: report.category,
+        location_block: report.location_block,
+        location_unit: report.location_unit ?? '',
+      },
+    }));
+  }
+
+  function cancelEdit(id) {
+    setEditingId(null);
+    setEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setEditErrors((prev) => ({ ...prev, [id]: null }));
+  }
+
+  async function saveEdit(id) {
+    const draftData = editDrafts[id];
+    if (!draftData) return;
+    setEditSavingId(id);
+    setEditErrors((prev) => ({ ...prev, [id]: null }));
+    try {
+      const res = await api.patch(`/api/my-reports/${id}`, draftData);
+      setReports((prev) => applyEdit(prev, id, res.data));
+      cancelEdit(id);
+      setToast({ severity: 'success', text: 'Report updated.' });
+    } catch (err) {
+      setEditErrors((prev) => ({
+        ...prev,
+        [id]: err.response?.data?.message ?? 'Could not save your changes — please try again.',
+      }));
+    } finally {
+      setEditSavingId(null);
+    }
+  }
+
   // Shared props for a card in either list.
   const cardProps = (r) => ({
     report: r,
@@ -264,6 +304,24 @@ export default function MyReportsPage() {
     onRetryDetail: () => loadDetail(r.id),
     onDraftChange: (draft) => setDrafts((prev) => ({ ...prev, [r.id]: draft })),
     onSubmitRating: () => submitRating(r.id),
+    // Resident-only, and only within 30 minutes of filing (matches the
+    // server's EDIT_WINDOW_MS in myReportsController.js).
+    editable: !isInspector && isEditable(r),
+    editing: editingId === r.id,
+    editDraft:
+      editDrafts[r.id] ?? {
+        title: r.title,
+        description: detail?.description ?? '',
+        category: r.category,
+        location_block: r.location_block,
+        location_unit: r.location_unit ?? '',
+      },
+    editSaving: editSavingId === r.id,
+    editError: editErrors[r.id] ?? null,
+    onEditToggle: () => startEdit(r),
+    onEditChange: (draft) => setEditDrafts((prev) => ({ ...prev, [r.id]: draft })),
+    onEditSave: () => saveEdit(r.id),
+    onEditCancel: () => cancelEdit(r.id),
   });
 
   const unratedCount = countAwaitingRating(history);
@@ -432,75 +490,9 @@ export default function MyReportsPage() {
             </Paper>
           ) : (
             <Stack spacing={2}>
-              {filteredReports.map((r) => {
-                const display = statusDisplay(r.status);
-                const ratable = !isInspector && RATABLE_STATUSES.includes(r.status);
-                return (
-                  <Paper
-                    key={r.id}
-                    variant="outlined"
-                    onClick={isInspector ? () => navigate(`/inspections/${r.id}`) : undefined}
-                    sx={{
-                      p: { xs: 2.5, sm: 3 },
-                      borderRadius: 2,
-                      ...(isInspector && {
-                        cursor: 'pointer',
-                        transition: (theme) => theme.transitions.create('box-shadow'),
-                        '&:hover': { boxShadow: 3 },
-                      }),
-                    }}
-                  >
-                    <Stack direction="row" spacing={2}>
-                      {r.photo_url && (
-                        <Box
-                          component="img"
-                          src={r.photo_url}
-                          alt=""
-                          sx={{
-                            width: 72,
-                            height: 72,
-                            objectFit: 'cover',
-                            borderRadius: 2,
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Stack
-                          direction="row"
-                          justifyContent="space-between"
-                          alignItems="flex-start"
-                          spacing={1}
-                        >
-                          <Typography variant="subtitle1" fontWeight={700} sx={{ minWidth: 0 }}>
-                            {r.title}
-                          </Typography>
-                          <Chip size="small" color={display.color} label={display.label} />
-                        </Stack>
-                        <Typography variant="body2" color="text.secondary" noWrap>
-                          {r.category} · Block {r.location_block}
-                          {r.location_unit ? ` #${r.location_unit}` : ''} ·{' '}
-                          {formatDate(r.created_at)}
-                        </Typography>
-
-                        {ratable && (
-                          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-                            <Rating
-                              size="small"
-                              value={r.satisfaction_rating ?? null}
-                              readOnly={Boolean(r.satisfaction_rating)}
-                              disabled={!r.satisfaction_rating}
-                            />
-                            <Typography variant="caption" color="text.secondary">
-                              {r.satisfaction_rating ? 'Your rating' : 'Not yet rated'}
-                            </Typography>
-                          </Stack>
-                        )}
-                      </Box>
-                    </Stack>
-                  </Paper>
-                );
-              })}
+              {filteredReports.map((r) => (
+                <ReportCard key={r.id} {...cardProps(r)} />
+              ))}
             </Stack>
           )}
         </>

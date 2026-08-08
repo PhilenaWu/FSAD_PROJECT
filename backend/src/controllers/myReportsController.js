@@ -7,6 +7,14 @@
 
 const myReportModel = require('../models/myReportModel');
 const notificationService = require('../services/notificationService');
+const { CATEGORIES } = require('../utils/inspectionOptions');
+
+// A resident's report can be edited for a short window after submission —
+// long enough to fix a typo or add detail shortly after filing. Time-only:
+// not also gated on status, so an edit still goes through even if a manager
+// has already started triaging within the window — a deliberately simple
+// rule, not a guarantee against that overlap.
+const EDIT_WINDOW_MS = 30 * 60 * 1000;
 
 // A rating is offered once the work is done. 'Closed' is included deliberately:
 // the workflow runs Assigned → Acknowledged → Rectified → Closed and only reaches
@@ -102,4 +110,54 @@ async function submitRating(req, res, next) {
   }
 }
 
-module.exports = { getOwnDetail, listOwnHistory, submitRating };
+// PATCH /api/my-reports/:id — resident edits their own complaint (title,
+// description, category, location) within EDIT_WINDOW_MS of filing it. The
+// photo is not editable here — see myReportModel.updateOwnReport.
+async function updateOwnReport(req, res, next) {
+  try {
+    const existing = await myReportModel.findOwnRecord(req.params.id, req.user.id);
+    if (!existing || existing.resident_id !== req.user.id) {
+      // Not found, or it's the caller's own *inspection* (inspector role) —
+      // either way this route only edits a resident's complaint, and the
+      // caller shouldn't be able to tell those two cases apart.
+      return res.status(404).json({
+        code: 'NOT_FOUND',
+        message: 'Report not found.',
+      });
+    }
+
+    if (Date.now() - new Date(existing.created_at).getTime() > EDIT_WINDOW_MS) {
+      return res.status(409).json({
+        code: 'EDIT_WINDOW_EXPIRED',
+        message: 'Reports can only be edited within 30 minutes of submission.',
+      });
+    }
+
+    const { title, description, category, location_block, location_unit } = req.body;
+    if (!title || !description || !location_block || !category) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: 'title, description, location_block and category are required.',
+      });
+    }
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
+      });
+    }
+
+    const inspection = await myReportModel.updateOwnReport(req.params.id, req.user.id, {
+      title,
+      description,
+      category,
+      location_block,
+      location_unit: location_unit || null,
+    });
+    res.json(inspection);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getOwnDetail, listOwnHistory, submitRating, updateOwnReport };

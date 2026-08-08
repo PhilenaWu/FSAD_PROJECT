@@ -148,6 +148,23 @@ function resetStore() {
       created_at: '2026-05-02T09:15:00Z',
       closed_at: '2026-05-10T09:15:00Z',
     },
+    // res-1's complaint, filed moments ago — the one case still inside the
+    // 30-minute edit window (every other fixture above is weeks/months old).
+    {
+      id: 'insp-7',
+      source_type: 'resident_complaint',
+      resident_id: 'res-1',
+      inspector_id: null,
+      title: 'Fresh complaint',
+      description: 'Original description',
+      location_block: '44A',
+      location_unit: '12-05',
+      status: 'Open',
+      category: 'Lift',
+      satisfaction_rating: null,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+    },
   ];
   history = [
     {
@@ -187,6 +204,14 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     if (!row) return { rows: [] };
     row.satisfaction_rating = rating;
     row.satisfaction_comment = comment ?? null;
+    return { rows: [{ ...row }] };
+  }
+  // updateOwnReport: UPDATE inspections SET title = $3, description = $4, ...
+  if (/UPDATE inspections/i.test(sql) && /SET title/i.test(sql)) {
+    const [id, residentId, title, description, category, location_block, location_unit] = params;
+    const row = inspections.find((i) => i.id === id && i.resident_id === residentId);
+    if (!row) return { rows: [] };
+    Object.assign(row, { title, description, category, location_block, location_unit });
     return { rows: [{ ...row }] };
   }
   // findOwnArchived: WHERE (resident_id = $1 OR inspector_id = $1) AND is_deleted = TRUE
@@ -428,5 +453,83 @@ describe('POST /api/my-reports/:id/rating', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
+  });
+});
+
+describe('PATCH /api/my-reports/:id', () => {
+  const validEdit = {
+    title: 'Updated title',
+    description: 'Updated description',
+    category: 'Electrical',
+    location_block: '44B',
+    location_unit: '08-01',
+  };
+
+  it('edits a report filed within the last 30 minutes', async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-7')
+      .set(auth('resident-token'))
+      .send(validEdit);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject(validEdit);
+    expect(inspections.find((i) => i.id === 'insp-7').title).toBe('Updated title');
+  });
+
+  it('409s EDIT_WINDOW_EXPIRED past 30 minutes of submission', async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-1') // insp-1 is weeks old
+      .set(auth('resident-token'))
+      .send(validEdit);
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('EDIT_WINDOW_EXPIRED');
+    // Untouched — the original title survives.
+    expect(inspections.find((i) => i.id === 'insp-1').title).toBe('Lift button broken at Level 3');
+  });
+
+  it('400s when a required field is missing', async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-7')
+      .set(auth('resident-token'))
+      .send({ ...validEdit, title: '' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('400s on a category outside the whitelist', async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-7')
+      .set(auth('resident-token'))
+      .send({ ...validEdit, category: 'Uncategorised' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it("404s when editing another resident's report", async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-7')
+      .set(auth('other-resident-token'))
+      .send(validEdit);
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  it('403s for an inspector — this route only edits a resident complaint', async () => {
+    const res = await request(app)
+      .patch('/api/my-reports/insp-4')
+      .set(auth('inspector-token'))
+      .send(validEdit);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  it('401s without a token', async () => {
+    const res = await request(app).patch('/api/my-reports/insp-7').send(validEdit);
+    expect(res.status).toBe(401);
   });
 });

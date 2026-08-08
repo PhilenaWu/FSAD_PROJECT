@@ -3,10 +3,12 @@
 // Run with `npm test` (vitest).
 import { describe, expect, test } from 'vitest';
 import {
+  applyEdit,
   applyRating,
   applyStatusUpdate,
   countAwaitingRating,
   groupBySection,
+  isEditable,
   isRatable,
 } from './myReports';
 
@@ -116,6 +118,36 @@ describe('applyRating', () => {
 
   test('leaves the list alone when the id is not in it', () => {
     const next = applyRating([MINE], 'nope', 5, null);
+    expect(next[0]).toBe(MINE);
+  });
+});
+
+describe('isEditable', () => {
+  test('a report filed moments ago is editable', () => {
+    expect(isEditable({ created_at: new Date().toISOString() })).toBe(true);
+  });
+
+  test('a report filed over 30 minutes ago is not', () => {
+    const old = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    expect(isEditable({ created_at: old })).toBe(false);
+  });
+
+  test('right at the boundary (29 minutes) is still editable', () => {
+    const almostExpired = new Date(Date.now() - 29 * 60 * 1000).toISOString();
+    expect(isEditable({ created_at: almostExpired })).toBe(true);
+  });
+});
+
+describe('applyEdit', () => {
+  test('merges the updated fields onto the matching record only', () => {
+    const next = applyEdit([MINE, ALSO_MINE], 'insp-1', { title: 'New title', category: 'Plumbing' });
+
+    expect(next[0]).toMatchObject({ title: 'New title', category: 'Plumbing', status: 'Assigned' });
+    expect(next[1]).toBe(ALSO_MINE);
+  });
+
+  test('leaves the list alone when the id is not in it', () => {
+    const next = applyEdit([MINE], 'nope', { title: 'x' });
     expect(next[0]).toBe(MINE);
   });
 });

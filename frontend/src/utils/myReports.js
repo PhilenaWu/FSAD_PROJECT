@@ -59,6 +59,21 @@ export function applyRating(reports, id, rating, comment) {
   );
 }
 
+// A report can be edited for 30 minutes after it was filed — mirrors the
+// server-side EDIT_WINDOW_MS in myReportsController.js. Time-only: not also
+// gated on status, so this stays true even if a manager has already started
+// triaging within the window.
+const EDIT_WINDOW_MS = 30 * 60 * 1000;
+
+export function isEditable(report) {
+  return Date.now() - new Date(report.created_at).getTime() <= EDIT_WINDOW_MS;
+}
+
+// Write a saved edit (PATCH response) onto the list holding the record.
+export function applyEdit(reports, id, updated) {
+  return reports.map((r) => (r.id === id ? { ...r, ...updated } : r));
+}
+
 // Checklist results arrive ordered by section then display_order; fold them into
 // [section, items[]] pairs for rendering without re-sorting.
 export function groupBySection(results) {

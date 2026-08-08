@@ -89,4 +89,28 @@ async function submitRating(id, residentId, { rating, comment }) {
   return result.rows[0];
 }
 
-module.exports = { findOwnArchived, findOwnDetail, findOwnRecord, submitRating };
+// Edit a resident's own complaint (UC-003 extension): title, description,
+// category, and location only — the photo stays as originally submitted (no
+// re-upload handling, no question of re-running CV detection on a changed
+// photo). Scoped to resident_id specifically, not the broader
+// resident-or-inspector predicate findOwnRecord uses: an inspector's own
+// spot-check has a structurally different shape (checklist, GPS, signature)
+// and isn't editable through this path. The controller has already checked
+// the 30-minute window and validated the fields before calling this.
+async function updateOwnReport(id, residentId, {
+  title, description, category, location_block, location_unit,
+}) {
+  const result = await query(
+    `UPDATE inspections
+       SET title = $3, description = $4, category = $5,
+           location_block = $6, location_unit = $7, updated_at = NOW()
+     WHERE id = $1 AND resident_id = $2
+     RETURNING *`,
+    [id, residentId, title, description, category, location_block, location_unit]
+  );
+  return result.rows[0];
+}
+
+module.exports = {
+  findOwnArchived, findOwnDetail, findOwnRecord, submitRating, updateOwnReport,
+};
