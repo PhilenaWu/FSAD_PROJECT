@@ -12,7 +12,6 @@ import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
-import StarOutlinedIcon from '@mui/icons-material/StarOutlined';
 
 // Nav items per role. Managers, admins and contractors have their own layout
 // components; this one serves residents and inspectors.
@@ -38,7 +37,6 @@ const QUICK_ACCESS_BY_ROLE = {
   resident: [
     { label: 'Emergency contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },
     { label: 'FAQ', to: '/faq', icon: HelpOutlineOutlinedIcon },
-    { label: 'Feedback', to: '/feedback', icon: StarOutlinedIcon },
   ],
   inspector: [
     { label: 'Contacts', to: '/emergency-contacts', icon: LocalPhoneOutlinedIcon },

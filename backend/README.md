@@ -125,7 +125,6 @@ Responses are JSON. The per-endpoint reference lives in
 | `/api/admin/vendors` | `vendors.js` | UC-012 vendor lifecycle (admin) |
 | `/api/reports` | `reports.js` | PDF generation + listing |
 | `/api/admin` | `admin.js` | UC-011 cost analytics (admin) |
-| `/api/feedback` | `feedback.js` | Satisfaction feedback |
 | `/health` | `app.js` | Liveness check (UptimeRobot) |
 
 `/api/admin/vendors` is mounted **before** `/api/admin` so the more specific
@@ -157,10 +156,10 @@ every file in filename order, each in its own transaction, and replays them all 
 every run (there is no applied-migrations ledger), so **every migration must be
 idempotent**.
 
-18 tables: `users`, `contractors`, `lifts`, `inspections`, `inspection_history`,
+17 tables: `users`, `contractors`, `lifts`, `inspections`, `inspection_history`,
 `checklist_items`, `checklist_results`, `signatures`, `cv_detections`,
 `ai_predictions`, `ai_jobs`, `notifications`, `notification_recipients`,
-`reports`, `retry_queue`, `vendor_history`, `defect_email_log`, `feedback`.
+`reports`, `retry_queue`, `vendor_history`, `defect_email_log`.
 
 `inspections` is the core table; a `source_type` discriminator
 (`resident_complaint` | `lift_inspection`) separates resident-filed defects from

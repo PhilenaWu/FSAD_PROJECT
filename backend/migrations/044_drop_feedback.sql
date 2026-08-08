@@ -1,0 +1,19 @@
+-- Migration: drop the general app feedback table.
+--
+-- The sidebar "Feedback" form has been removed from the resident workspace
+-- along with its page, service, route, controller and model. Nothing in the
+-- app ever read this table back — POST /api/feedback was write-only, with no
+-- screen anywhere that listed what had been submitted — so the rows informed
+-- nothing and the table is going with the feature.
+--
+-- Note this does NOT delete 036_create_feedback.sql, and that is deliberate.
+-- migrate.js replays every file in order on every run, and 040 counts rows in
+-- `feedback` when deciding whether a vendor login has recorded activity that
+-- blocks deletion (040, line 99). Removing 036 would leave 040 querying a table
+-- that never existed on a fresh database, which aborts the whole run. So 036
+-- still creates it, 040 still reads it, and this file drops it at the end —
+-- the table exists only for the few milliseconds between them.
+--
+-- The satisfaction rating a resident leaves on their own resolved report is a
+-- different feature (inspections/ratings, UC-003) and is untouched.
+DROP TABLE IF EXISTS feedback;

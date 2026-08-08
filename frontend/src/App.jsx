@@ -19,7 +19,6 @@ import ProfilePage from './pages/ProfilePage'
 import ContractorInboxPage from './pages/ContractorInboxPage'
 import EmergencyContactsPage from './pages/EmergencyContactsPage'
 import FAQPage from './pages/FAQPage'
-import FeedbackPage from './pages/FeedbackPage'
 import NoticesPage from './pages/NoticesPage'
 
 // Admin pages are lazy-loaded: only the admin role ever visits them, and the
@@ -71,7 +70,6 @@ function App() {
           {/* Sidebar "quick access" pages. */}
           <Route path="/emergency-contacts" element={<EmergencyContactsPage />} />
           <Route path="/faq" element={<FAQPage />} />
-          <Route path="/feedback" element={<FeedbackPage />} />
           <Route path="/notices" element={<NoticesPage />} />
           <Route
             path="/admin/costs"
