@@ -1,6 +1,15 @@
-// UC-008: manager notification composer. Pick a target scope, write a message,
-// set urgency, optionally schedule, confirm, and send. After an immediate send
-// the read-receipt badge polls live counts.
+// UC-008: notification composer. /notifications serves two roles, so the
+// default export below picks by role — a contractor gets ContractorNotifyPage,
+// everyone else the manager composer in this file.
+//
+// The split is a component boundary, not an early return, because the manager
+// composer's hooks fetch manager-only endpoints (/notifications/sent, the
+// contractor list). A contractor rendering this component ran those anyway and
+// got a 403 painted as "Could not load your notification history."
+//
+// Manager composer: pick a target scope, write a message, set urgency,
+// optionally schedule, confirm, and send. After an immediate send the
+// read-receipt badge polls live counts.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -37,6 +46,8 @@ import MarkEmailReadOutlinedIcon from '@mui/icons-material/MarkEmailReadOutlined
 import ReadReceiptBadge from '../components/notifications/ReadReceiptBadge';
 import { send, listSent } from '../services/notificationService';
 import { listContractors } from '../services/contractorService';
+import { useAuth } from '../context/AuthContext';
+import ContractorNotifyPage from './ContractorNotifyPage';
 
 // Card options for "Send to". `all_blocks` isn't in the reference mockup
 // (which only showed 3 cards) but is real, already-working scope this page
@@ -130,7 +141,7 @@ function describeStoredScope(scope) {
   }
 }
 
-export default function NotificationsPage() {
+function ManagerComposer() {
   const [scopeType, setScopeType] = useState('blocks');
   const [blocks, setBlocks] = useState(''); // comma-separated, e.g. "44A, 44B"
   const [contractorId, setContractorId] = useState('');
@@ -601,4 +612,12 @@ export default function NotificationsPage() {
       </Dialog>
     </Box>
   );
+}
+
+// /notifications for whoever is signed in. Only the contractor composer is
+// split out; the manager composer is also what an admin or inspector reaching
+// this route gets, unchanged from before.
+export default function NotificationsPage() {
+  const { profile } = useAuth();
+  return profile?.role === 'contractor' ? <ContractorNotifyPage /> : <ManagerComposer />;
 }

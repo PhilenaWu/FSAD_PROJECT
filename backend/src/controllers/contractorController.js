@@ -90,6 +90,52 @@ async function notifyTransition(inspection, { event_type, message, urgency }) {
   });
 }
 
+// Contractor finishes -> the inspector gets a task, the managers get a notice
+// (item 17). Two notifications on purpose, which is not a relapse into D.12:
+// that was one event written twice to *overlapping* audiences, so a person in
+// both saw it twice. These two audiences are disjoint by role — a manager is
+// never an inspector — so nobody is notified twice, and each side reads what
+// it actually has to do.
+//
+// The split exists because the endorsement close needs an inspector who has
+// looked at the work (UC-004), and a line addressed to managers ("ready for
+// joint endorsement") does not tell the inspector that anything is theirs.
+//
+// This is the trigger half of item 17 only. The destination — the inspector's
+// Rectified review queue and POST /:id/review — already exists and belongs to
+// UC-004, so inspectionController is not touched: the record enters that queue
+// on its own when the status becomes Rectified.
+async function notifyRectified(inspection, contractor) {
+  const link = `/inspections/${inspection.id}`;
+  const label = recordLabel(inspection);
+
+  // Informational, not Warning (D.13): a contractor finishing on time is the
+  // happy path for the people who only need to know it happened.
+  await notificationService.notifyEvent({
+    event_type: 'rectified',
+    scope: { type: 'managers' },
+    message: `${contractor.name} submitted work done on ${label} — ready for joint endorsement.`,
+    urgency: 'Informational',
+    link,
+  });
+
+  // A record with no inspector (an untriaged resident complaint) has nobody to
+  // task, and the managers' line above already covers it.
+  const inspector = inspectorOf(inspection);
+  if (!inspector) return;
+
+  // Warning rather than Informational, unlike the managers' copy: this one is
+  // a job with the close waiting on it, which is exactly the "actually needs
+  // action" test D.13 set for the label.
+  await notificationService.notifyEvent({
+    event_type: 'review_requested',
+    scope: { type: 'users', user_ids: inspector.user_ids, rooms: inspector.rooms },
+    message: `${label} — ${contractor.name} has finished. Check the work before the manager closes it.`,
+    urgency: 'Warning',
+    link,
+  });
+}
+
 // Human label for a record in a notification line.
 function recordLabel(inspection) {
   return inspection.location_block
@@ -214,15 +260,7 @@ async function rectify(req, res, next) {
     // stays socket-only — HLD §10 gives it no email, and a durable row per save
     // would bury the bell under progress noise.
     if (finalize) {
-      // Informational, not Warning (D.13): a contractor finishing on time is the
-      // happy path. Reserving Warning for things that actually need chasing is
-      // what stops the bell reading as though everything is a problem.
-      await notifyTransition(inspection, {
-        event_type: 'rectified',
-        message:
-          `${contractor.name} submitted work done on ${recordLabel(inspection)} — ready for joint endorsement.`,
-        urgency: 'Informational',
-      });
+      await notifyRectified(inspection, contractor);
     }
     res.json({
       id: inspection.id,

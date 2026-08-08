@@ -13,7 +13,7 @@
 // work panel on the right. Backend requireRole('contractor') is the real gate;
 // the UI-level redirect just avoids showing an empty portal to other roles.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router';
+import { Navigate, useSearchParams } from 'react-router';
 import {
   Alert,
   Box,
@@ -92,6 +92,7 @@ function DeadlineChip({ days }) {
 export default function ContractorInboxPage() {
   const { profile } = useAuth();
   const { socket } = useSocket();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -234,6 +235,29 @@ export default function ContractorInboxPage() {
   // the first load, so we don't toast for the initial inbox contents).
   const prevIdsRef = useRef(null);
 
+  // A defect id from a notification's ?defect= that has not been applied yet,
+  // because the inbox had not finished loading when we arrived. load() picks
+  // it up and clears it.
+  const deepLinkRef = useRef(null);
+
+  // Landing here from the bell. Two cases: the inbox is already loaded, so the
+  // job can be selected immediately; or we have just arrived and it is still
+  // fetching, so the id is parked for load(). Either way the param is stripped
+  // afterwards, which keeps the URL clean, stops a refresh dragging the
+  // contractor back to this job, and lets the same notification be tapped
+  // again later (a repeated identical param would otherwise be a no-op).
+  useEffect(() => {
+    const id = searchParams.get('defect');
+    if (!id) return;
+    if (items.some((d) => d.id === id)) {
+      deepLinkRef.current = null;
+      setSelectedId(id);
+    } else {
+      deepLinkRef.current = id;
+    }
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams, items]);
+
   // `background` refreshes (polling / tab focus) skip the full-page spinner and
   // error screen so the list doesn't flash while the contractor is working.
   const load = useCallback((background = false) => {
@@ -243,10 +267,18 @@ export default function ContractorInboxPage() {
         setItems(data);
         setLoadError(false);
         setLastUpdated(new Date());
-        // Keep the current selection if it still exists, else pick the first.
-        setSelectedId((prev) =>
-          data.some((d) => d.id === prev) ? prev : (data[0]?.id ?? null)
-        );
+        // A notification's ?defect= wins on the first load after arriving, so
+        // tapping "Blk 44B — Scratches on lift door" in the bell opens that
+        // job rather than whatever was selected. Consumed once (the ref below)
+        // so a later poll doesn't yank the contractor back to it while they
+        // are working something else. An id that is not in the inbox — stale
+        // link, job reassigned — falls through to the normal rule.
+        const deepLinkId = deepLinkRef.current;
+        deepLinkRef.current = null;
+        setSelectedId((prev) => {
+          if (deepLinkId && data.some((d) => d.id === deepLinkId)) return deepLinkId;
+          return data.some((d) => d.id === prev) ? prev : (data[0]?.id ?? null);
+        });
         // Toast + highlight when a defect appears that wasn't here before.
         if (prevIdsRef.current) {
           const prevSet = new Set(prevIdsRef.current);

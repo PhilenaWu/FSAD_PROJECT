@@ -55,13 +55,14 @@ router.get(
 );
 
 // GET /api/users/contacts — the help/contacts block for the caller's role: a
-// manager gets the admins, an admin and an inspector get the managers.
-// Restricted to those three staff roles, so a resident or contractor cannot
-// read staff phone numbers.
+// manager gets the admins; an admin, an inspector and a contractor get the
+// managers (item 16 added the contractor, who escalates to the manager who
+// assigned the defect). Residents stay out: they reach the managing office
+// through contact_directory, never an individual member of staff.
 router.get(
   '/contacts',
   requireAuth,
-  requireRole('manager', 'admin', 'inspector'),
+  requireRole('manager', 'admin', 'inspector', 'contractor'),
   userController.listContacts
 );
 
