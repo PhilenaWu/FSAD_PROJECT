@@ -22,6 +22,12 @@ const STATUSES = [
   'On Hold', 'Rectified', 'Resolved', 'Closed',
 ];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
+// Categories a resident picks on the report form and a manager can correct
+// during triage (migration 042).
+const CATEGORIES = [
+  'Structural', 'Electrical', 'Plumbing', 'Cleanliness', 'Lift', 'Doors',
+  'Cabin', 'Safety', 'Landscaping', 'Pest', 'Miscellaneous',
+];
 
 // HLD 14-day rectification rule, used whenever a deadline is left unset.
 // New records get the same window from the `inspections` column default
@@ -191,13 +197,21 @@ function gpsFields(body) {
 async function create(req, res, next) {
   try {
     const resident_id = req.user.id;
-    const { title, description, location_block, location_unit } = req.body;
+    const { title, description, location_block, location_unit, category } = req.body;
 
-    // Minimal required-field validation.
-    if (!title || !description || !location_block) {
+    // Minimal required-field validation. The resident picks the category on the
+    // form, so it is required alongside the rest — 'Miscellaneous' is the
+    // honest answer when they are unsure, not a blank.
+    if (!title || !description || !location_block || !category) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
-        message: 'title, description and location_block are required.',
+        message: 'title, description, location_block and category are required.',
+      });
+    }
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
       });
     }
 
@@ -225,8 +239,11 @@ async function create(req, res, next) {
       photo_url = await cloudinaryService.uploadImage(req.file.buffer, 'defects');
     }
 
-    // AI categorisation (currently stubbed).
-    const { category, priority_score } = await openaiService.categoriseIncident(
+    // The AI is still consulted for the priority score, but the resident's own
+    // choice of category is what gets stored — a person looking at the defect
+    // beats a guess made from its title (and beats CV, which never writes a
+    // category onto an existing report).
+    const { priority_score } = await openaiService.categoriseIncident(
       title,
       description
     );
@@ -682,9 +699,10 @@ async function getDetail(req, res, next) {
 // change live (Zoe's UC-003 layer listens for it).
 async function updateInspection(req, res, next) {
   try {
-    const { priority, status, contractor_id, target_deadline, hold_reason, note } = req.body;
+    const { priority, status, contractor_id, target_deadline, hold_reason, category, note } =
+      req.body;
 
-    const changes = { priority, status, contractor_id, target_deadline, hold_reason };
+    const changes = { priority, status, contractor_id, target_deadline, hold_reason, category };
     const hasChange = Object.values(changes).some((v) => v !== undefined);
     if (!hasChange) {
       return res.status(400).json({
@@ -702,6 +720,13 @@ async function updateInspection(req, res, next) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
         message: `priority must be one of: ${PRIORITIES.join(', ')}.`,
+      });
+    }
+    // Triage can correct a category the resident picked wrongly.
+    if (category !== undefined && !CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
       });
     }
 

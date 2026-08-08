@@ -54,7 +54,7 @@ function dueRecord(overrides = {}) {
   return {
     id: 'insp-1',
     title: 'Lift inspection — 44A-L1',
-    category: 'Uncategorised',
+    category: 'Miscellaneous',
     priority: 'Medium',
     status: 'Assigned',
     location_block: '44A',

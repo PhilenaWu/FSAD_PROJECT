@@ -1,6 +1,11 @@
 // /dashboard content switch: managers get the UC-005 analytics dashboard,
-// inspectors get their own landing page, contractors are sent to their inbox,
-// everyone else (residents) gets the resident home page.
+// inspectors get their own landing page, and the roles with no home page of
+// their own — contractor, admin — are sent to the first entry in their sidebar
+// nav. Everyone else (residents) gets the resident home page.
+//
+// The admin redirect matters because /dashboard is also the catch-all target
+// for any unrecognised URL: without it an admin landed on the resident home
+// page, quick actions and all.
 // The analytics dashboard is lazy-loaded: it pulls in Chart.js and the whole
 // chart component tree, which residents and inspectors never need — splitting
 // it keeps their first paint free of that weight.
@@ -25,6 +30,8 @@ export default function RoleHome() {
   if (profile?.role === 'inspector') return <InspectorHomePage />;
   // Contractors have no home page of their own — their inbox is the workspace.
   if (profile?.role === 'contractor') return <Navigate to="/contractor-inbox" replace />;
+  // Nor do admins — cost analytics is the first thing in their nav.
+  if (profile?.role === 'admin') return <Navigate to="/admin/costs" replace />;
   return (
     <Suspense fallback={<PageLoader />}>
       <HomePage />

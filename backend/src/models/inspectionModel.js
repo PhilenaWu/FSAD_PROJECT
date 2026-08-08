@@ -26,7 +26,7 @@ async function create(data) {
     location_block,
     location_unit,
     photo_url,
-    category = 'Uncategorised',
+    category = 'Miscellaneous',
     priority = 'Medium',
     ai_priority_score,
     source_flag = 'Resident',
@@ -518,7 +518,9 @@ async function updateByManager(id, changes, actorId, note) {
     }
 
     // Build SET clauses for just the provided fields.
-    const fields = ['priority', 'status', 'contractor_id', 'target_deadline', 'hold_reason'];
+    const fields = [
+      'priority', 'status', 'contractor_id', 'target_deadline', 'hold_reason', 'category',
+    ];
     const sets = [];
     const params = [];
     for (const field of fields) {

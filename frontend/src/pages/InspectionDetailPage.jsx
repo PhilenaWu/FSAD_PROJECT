@@ -33,7 +33,7 @@ import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
-import { PRIORITIES } from '../utils/inspectionOptions';
+import { CATEGORIES, PRIORITIES } from '../utils/inspectionOptions';
 import { nearestBlock } from '../utils/blocks';
 
 // Statuses a manager may set here — everything except Closed (UC-004 flow).
@@ -117,7 +117,7 @@ export default function InspectionDetailPage() {
 
   // Triage form state (seeded from the record once loaded).
   const [form, setForm] = useState({
-    status: '', priority: '', contractor_id: '', target_deadline: '', note: '',
+    status: '', priority: '', category: '', contractor_id: '', target_deadline: '', note: '',
   });
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
@@ -212,6 +212,7 @@ export default function InspectionDetailPage() {
         setForm({
           status: ins.status === 'Closed' ? '' : ins.status,
           priority: ins.priority,
+          category: ins.category,
           contractor_id: ins.contractor_id ?? '',
           target_deadline: ins.target_deadline ? ins.target_deadline.slice(0, 10) : '',
           note: '',
@@ -232,6 +233,7 @@ export default function InspectionDetailPage() {
     const body = {};
     if (form.status && form.status !== inspection.status) body.status = form.status;
     if (form.priority !== inspection.priority) body.priority = form.priority;
+    if (form.category !== inspection.category) body.category = form.category;
     if (form.contractor_id && form.contractor_id !== (inspection.contractor_id ?? '')) {
       body.contractor_id = form.contractor_id;
     }
@@ -615,6 +617,19 @@ export default function InspectionDetailPage() {
                   >
                     {PRIORITIES.map((p) => (
                       <MenuItem key={p} value={p}>{p}</MenuItem>
+                    ))}
+                  </TextField>
+
+                  {/* The resident categorises their own report; triage is where
+                      a wrong pick gets corrected. */}
+                  <TextField
+                    select label="Category" size="small" value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    helperText="Correct the category the reporter chose, if needed"
+                    sx={controlSx}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <MenuItem key={c} value={c}>{c}</MenuItem>
                     ))}
                   </TextField>
 

@@ -208,8 +208,9 @@ export default function HomePage() {
     ],
   };
 
+  // Full name, no nickname-splitting — every role's home greets identically
+  // (see InspectorHomePage).
   const fullName = profile?.full_name ?? 'there';
-  const firstName = fullName.split(' ')[0];
 
   const QUICK_ACTIONS = [
     { label: 'Report a new issue', caption: 'Let us know about a defect', to: '/report', icon: AddCircleOutlineIcon, color: 'primary' },
@@ -229,8 +230,8 @@ export default function HomePage() {
         sx={{ mb: 3 }}
       >
         <Box>
-          <Typography variant="h4" fontWeight={700}>
-            Hi {firstName} 👋
+          <Typography variant="h4" component="h1" fontWeight={700}>
+            Hi {fullName}
           </Typography>
           {profile?.block_number && (
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: 'text.secondary' }}>

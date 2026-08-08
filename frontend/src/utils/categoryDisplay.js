@@ -12,7 +12,6 @@ import HealthAndSafetyOutlinedIcon from '@mui/icons-material/HealthAndSafetyOutl
 import ParkOutlinedIcon from '@mui/icons-material/ParkOutlined';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
-import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 
 export const CATEGORY_DISPLAY = {
   Structural: { icon: ConstructionOutlinedIcon, color: 'secondary' },
@@ -25,8 +24,9 @@ export const CATEGORY_DISPLAY = {
   Safety: { icon: HealthAndSafetyOutlinedIcon, color: 'error' },
   Landscaping: { icon: ParkOutlinedIcon, color: 'success' },
   Pest: { icon: BugReportOutlinedIcon, color: 'error' },
-  Other: { icon: CategoryOutlinedIcon, color: 'secondary' },
-  Uncategorised: { icon: WarningAmberOutlinedIcon, color: 'warning' },
+  // Not a warning any more: 'Miscellaneous' is a category the resident chose,
+  // not the system admitting it failed to work one out (migration 042).
+  Miscellaneous: { icon: CategoryOutlinedIcon, color: 'secondary' },
 };
 
 // Unknown/new categories fall through unmapped rather than breaking the UI.
