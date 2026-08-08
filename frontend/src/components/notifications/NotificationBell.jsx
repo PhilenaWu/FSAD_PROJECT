@@ -130,9 +130,14 @@ export default function NotificationBell() {
 
   // Seed from the server so anything received while offline is still here. A
   // failure leaves the list empty and the socket path still works.
+  //
+  // Unread only: the bell is a to-do list, not an archive. Reading a
+  // notification takes it out of the list (below), and fetching only unread
+  // keeps it out after a refresh instead of resurrecting everything the user
+  // has already dealt with.
   useEffect(() => {
     let active = true;
-    list()
+    list({ unread_only: true })
       .then(({ data }) => {
         if (active) setItems(data.data ?? []);
       })
@@ -158,12 +163,19 @@ export default function NotificationBell() {
     return () => socket.off('notification', onNotification);
   }, [socket]);
 
-  const unreadCount = items.filter((i) => !i.read).length;
+  // Everything held here is unread — reading one removes it.
+  const unreadCount = items.length;
 
+  // Reading a notification drops it from the list rather than greying it in
+  // place. Rows used to stay after being read, so a busy week left the bell
+  // holding dozens of already-handled messages and the new ones were the hard
+  // part to find. The row is still marked read server-side, so a manager's read
+  // receipts (UC-008) are unaffected — it only leaves this list.
+  //
+  // Optimistic: remove locally, then persist. A failed PATCH leaves the server
+  // row unread, so it returns on the next refresh rather than being lost.
   async function handleMarkRead(id) {
-    // Optimistic: flip locally, then persist. A failed PATCH just leaves the
-    // server row unread; the next mark retries.
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, read: true } : i)));
+    setItems((prev) => prev.filter((i) => i.id !== id));
     try {
       await markRead(id);
     } catch {
@@ -172,22 +184,21 @@ export default function NotificationBell() {
   }
 
   // Clear the whole backlog. There is no bulk endpoint, so this fans out one
-  // PATCH per unread row — fine at inbox size, and it keeps the change to the
-  // frontend. Same optimistic flip as above: the list clears immediately.
+  // PATCH per row — fine at inbox size, and it keeps the change to the frontend.
   async function handleMarkAllRead() {
-    const unread = items.filter((i) => !i.read);
-    setItems((prev) => prev.map((i) => ({ ...i, read: true })));
+    const pending = items;
+    setItems([]);
     try {
-      await Promise.all(unread.map((i) => markRead(i.id)));
+      await Promise.all(pending.map((i) => markRead(i.id)));
     } catch {
       // no-op — a failed row stays unread server-side and comes back on reload
     }
   }
 
-  // Clicking a row marks it read and, for a lifecycle event, opens the record it
-  // refers to. Broadcasts have no link and stay put.
+  // Clicking a row reads it — which removes it — and, for a lifecycle event,
+  // opens the record it refers to.
   function handleClick(n) {
-    if (!n.read) handleMarkRead(n.id);
+    handleMarkRead(n.id);
     if (n.link) {
       setAnchor(null);
       navigate(n.link);
@@ -241,16 +252,15 @@ export default function NotificationBell() {
               <ListItem
                 key={`${n.id}-${idx}`}
                 alignItems="flex-start"
-                // Unread was a ~4% grey tint and nothing else — invisible
-                // unless a read row happened to sit next to it, and now
-                // outcompeted by the filled chips. A left accent bar in the
-                // row's own colour reads at a glance without adding another
-                // colour to the row.
+                // Every row here is unread — reading one removes it — so the
+                // tint and accent bar no longer distinguish rows from each
+                // other, they mark the whole list as outstanding work. The
+                // accent keeps the row's own event colour.
                 sx={{
-                  bgcolor: n.read ? 'transparent' : 'action.hover',
+                  bgcolor: 'action.hover',
                   borderLeft: 3,
-                  borderColor: n.read ? 'transparent' : colorFor(n),
-                  cursor: !n.read || n.link ? 'pointer' : 'default',
+                  borderColor: colorFor(n),
+                  cursor: 'pointer',
                 }}
                 onClick={() => handleClick(n)}
               >
@@ -267,32 +277,25 @@ export default function NotificationBell() {
                         label={labelFor(n)}
                         sx={{ bgcolor: colorFor(n), color: 'common.white' }}
                       />
-                      {n.link ? (
-                        <Typography variant="caption" color="primary">
-                          Tap to open
-                        </Typography>
-                      ) : (
-                        !n.read && (
-                          <Typography variant="caption" color="primary">
-                            Tap to mark read
-                          </Typography>
-                        )
-                      )}
+                      {/* Both actions now also clear the row, so say so — "Tap
+                          to open" alone left it looking like the message would
+                          still be here afterwards. */}
+                      <Typography variant="caption" color="primary">
+                        {n.link ? 'Tap to open' : 'Tap to dismiss'}
+                      </Typography>
                       {/* Unread dot, right-aligned. The accent bar says the
                           same thing, but the bar is easy to miss on the row
                           you are actually looking at. */}
-                      {!n.read && (
-                        <Box
-                          sx={{
-                            ml: 'auto',
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            bgcolor: 'primary.main',
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
+                      <Box
+                        sx={{
+                          ml: 'auto',
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          bgcolor: 'primary.main',
+                          flexShrink: 0,
+                        }}
+                      />
                     </Box>
                   }
                   secondary={
