@@ -52,6 +52,7 @@ import ContractorScorecard from '../components/analytics/ContractorScorecard';
 import AIAlertCard from '../components/analytics/AIAlertCard';
 import PriorityQueue from '../components/analytics/PriorityQueue';
 import { downloadCsv } from '../utils/csvDownload';
+import { statusDisplay } from '../utils/statusDisplay';
 import {
   getFilterOptions,
   getSummary,
@@ -879,8 +880,12 @@ export default function DashboardPage() {
               onChange={(e) => setQueueFilters((f) => ({ ...f, status: e.target.value }))}
             >
               <MenuItem value="">All open statuses</MenuItem>
-              {['Open', 'Pending Assignment', 'Assigned', 'Acknowledged', 'On Hold', 'Rectified'].map((s) => (
-                <MenuItem key={s} value={s}>{s}</MenuItem>
+              {/* The live states only, under the names the rest of the app
+                  uses — 'Rectified' is stored but reads as "Pending View By
+                  Inspector". 'Pending Assignment', 'Acknowledged' and
+                  'On Hold' are no longer set by anything. */}
+              {['Open', 'Assigned', 'Rectified'].map((s) => (
+                <MenuItem key={s} value={s}>{statusDisplay(s).label}</MenuItem>
               ))}
             </Select>
           </FormControl>

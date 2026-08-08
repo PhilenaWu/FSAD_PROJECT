@@ -237,14 +237,18 @@ describe('GET /api/inspections/overdue-chase', () => {
 
   // The scope rules live in SQL, so assert the query rather than the behaviour:
   // On Hold pauses the clock (G11) and must never be chased.
-  test('only Assigned/Acknowledged records are selected, never On Hold', async () => {
+  test('only Assigned/Acknowledged records are selected, never a held one', async () => {
     await runChase();
 
     const [sql] = mockQuery.mock.calls.find(([s]) =>
       /FROM inspections i\s+JOIN contractors c/i.test(s)
     );
     expect(sql).toMatch(/status IN \('Assigned', 'Acknowledged'\)/);
-    expect(sql).not.toMatch(/On Hold/);
+    // A hold is an audit-trail fact rather than a status now, so "not held" is
+    // a NOT over the latest 'On Hold'/'Resumed' row. COALESCE keeps a
+    // never-held record (no such row, so NULL) from being dropped by the NOT.
+    expect(sql).toMatch(/NOT \(COALESCE\(\(SELECT h\.action/);
+    expect(sql).toMatch(/action IN \('On Hold', 'Resumed'\)/);
     // D−3 and from D+0 onward, not a four-day countdown.
     expect(sql).toMatch(/= 3/);
     expect(sql).toMatch(/<= 0/);

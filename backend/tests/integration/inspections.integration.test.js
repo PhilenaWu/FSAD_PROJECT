@@ -2246,7 +2246,10 @@ describe('POST /api/inspections/:id/review', () => {
     return id;
   }
 
-  test('200 records an audit row without changing status', async () => {
+  // The inspector's check is what resolves a defect: it used to write an audit
+  // row and leave the record sitting in "Pending View By Inspector" even after
+  // they had looked at it.
+  test('200 resolves the record and records the audit row', async () => {
     const id = await seedRectified();
 
     const res = await request(app)
@@ -2260,10 +2263,11 @@ describe('POST /api/inspections/:id/review', () => {
     const reviewed = store.history.find((h) => h.action === 'Reviewed by Inspector');
     expect(reviewed).toBeTruthy();
     expect(reviewed.note).toBe('Looks good on site.');
-    expect(reviewed.new_status).toBe('Rectified');
+    expect(reviewed.previous_status).toBe('Rectified');
+    expect(reviewed.new_status).toBe('Resolved');
 
     const inspection = store.inspections.find((i) => i.id === id);
-    expect(inspection.status).toBe('Rectified');
+    expect(inspection.status).toBe('Resolved');
   });
 
   test('409 INVALID_STATE when the record is not Rectified', async () => {

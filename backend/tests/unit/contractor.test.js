@@ -39,7 +39,9 @@ const profiles = {
 // The record the portal acts on; tests flip `assigned` to simulate a record
 // reassigned away (UC-010 E3 → 404), and `lockedStatus` to drive the state the
 // action starts from (resume requires 'On Hold').
-const state = { assigned: true, lockedStatus: 'Assigned' };
+// `heldAction` is the latest 'On Hold'/'Resumed' audit row, which is what
+// "currently held" means now that a hold is not a status.
+const state = { assigned: true, lockedStatus: 'Assigned', heldAction: null };
 
 const mockClient = {
   query: jest.fn(async (sql, params = []) => {
@@ -48,22 +50,19 @@ const mockClient = {
         ? { rows: [{ id: 'ins-1', status: state.lockedStatus, location_block: '44A' }] }
         : { rows: [] };
     }
-    // resumeByContractor reads the hold's start time from the audit trail.
+    // resumeByContractor reads the latest hold/resume row: its action decides
+    // whether the record is currently held, its created_at when the pause began.
     if (/FROM inspection_history/i.test(sql)) {
       return {
-        rows: [{ previous_status: 'Acknowledged', created_at: '2026-07-22T09:00:00Z' }],
+        rows: state.heldAction
+          ? [{ action: state.heldAction, created_at: '2026-07-22T09:00:00Z' }]
+          : [],
       };
     }
     if (/UPDATE inspections/i.test(sql)) {
-      // Literal-status paths (acknowledge/finalize/hold) name the status inline;
-      // the partial-save path parameterises it as `status = $2`.
-      const status = /'Acknowledged'/.test(sql)
-        ? 'Acknowledged'
-        : /'Rectified'/.test(sql)
-          ? 'Rectified'
-          : /'On Hold'/.test(sql)
-            ? 'On Hold'
-            : params[1];
+      // Only finalising names a status inline now — acknowledging and holding
+      // leave the status alone and record themselves in the audit trail.
+      const status = /'Rectified'/.test(sql) ? 'Rectified' : state.lockedStatus;
       return {
         rows: [{
           id: 'ins-1', status, location_block: '44A',
@@ -127,20 +126,24 @@ const { emitToRooms } = require('../../src/services/socketService');
 beforeEach(() => {
   jest.clearAllMocks();
   state.assigned = true;
+  state.lockedStatus = 'Assigned';
+  state.heldAction = null;
 });
 
 describe('POST /api/contractor/:id/acknowledge', () => {
-  test('200 — sets status to Acknowledged and notifies the manager room', async () => {
+  // Accepting a job no longer moves the status — the record stays 'Assigned'
+  // and the acceptance lives in acknowledged_at plus the audit trail.
+  test('200 — records the acceptance and notifies the manager room', async () => {
     const res = await request(app)
       .post('/api/contractor/ins-1/acknowledge')
       .set('Authorization', 'Bearer contractor-token');
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Acknowledged' });
+    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Assigned' });
     expect(emitToRooms).toHaveBeenCalledWith(
       expect.arrayContaining(['manager-room']),
       'status_update',
-      expect.objectContaining({ id: 'ins-1', status: 'Acknowledged' })
+      expect.objectContaining({ id: 'ins-1', status: 'Assigned' })
     );
   });
 
@@ -238,19 +241,20 @@ describe('POST /api/contractor/:id/rectify', () => {
       .field('items', JSON.stringify([{ checklist_result_id: 'cr-1', rectified: true }]));
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      id: 'ins-1', status: 'Acknowledged', finalized: false, signature_stored: false,
+      id: 'ins-1', status: 'Assigned', finalized: false, signature_stored: false,
     });
   });
 });
 
 describe('POST /api/contractor/:id/hold', () => {
-  test('200 — sets status to On Hold with a reason (pauses the deadline)', async () => {
+  // A hold records a reason and pauses the deadline; the status stays 'Assigned'.
+  test('200 — records the hold reason (pauses the deadline)', async () => {
     const res = await request(app)
       .post('/api/contractor/ins-1/hold')
       .set('Authorization', 'Bearer contractor-token')
       .send({ hold_reason: 'part on order' });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: 'ins-1', status: 'On Hold' });
+    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Assigned', hold_reason: 'part on order' });
   });
 
   test('400 when no reason is supplied', async () => {
@@ -263,15 +267,12 @@ describe('POST /api/contractor/:id/hold', () => {
   });
 });
 
-// Z.2 / G11. Before this endpoint existed a held record had no way back —
-// 'On Hold' was terminal and the paused deadline never restarted.
+// Z.2 / G11. Before this endpoint existed a held record had no way back — the
+// paused deadline never restarted. "Held" is the latest 'On Hold'/'Resumed'
+// audit row now, not a status, so these drive state.heldAction.
 describe('POST /api/contractor/:id/resume', () => {
-  afterEach(() => {
-    state.lockedStatus = 'Assigned';
-  });
-
-  test('200 — restores the pre-hold status and extends the deadline', async () => {
-    state.lockedStatus = 'On Hold';
+  test('200 — clears the hold and extends the deadline', async () => {
+    state.heldAction = 'On Hold';
     mockClient.query.mockClear();
 
     const res = await request(app)
@@ -279,9 +280,8 @@ describe('POST /api/contractor/:id/resume', () => {
       .set('Authorization', 'Bearer contractor-token');
 
     expect(res.status).toBe(200);
-    // The audit row recorded 'Acknowledged' as the status before the pause, so
-    // that is what the record goes back to — not a hardcoded 'Assigned'.
-    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Acknowledged' });
+    // Nothing to restore — the record never left 'Assigned'.
+    expect(res.body).toMatchObject({ id: 'ins-1', status: 'Assigned' });
 
     // The deadline is pushed out by the held duration rather than reset.
     const [updateSql] = mockClient.query.mock.calls.find(([sql]) =>
@@ -294,7 +294,7 @@ describe('POST /api/contractor/:id/resume', () => {
   });
 
   test('writes a Resumed audit row (UC-015)', async () => {
-    state.lockedStatus = 'On Hold';
+    state.heldAction = 'On Hold';
     mockClient.query.mockClear();
 
     await request(app)
@@ -304,12 +304,12 @@ describe('POST /api/contractor/:id/resume', () => {
     const audit = mockClient.query.mock.calls.find(([sql]) =>
       /INSERT INTO inspection_history/i.test(sql)
     );
-    expect(audit[0]).toMatch(/'Resumed'/);
-    expect(audit[1][3]).toMatch(/deadline extended/i);
+    expect(audit[1][2]).toBe('Resumed');
+    expect(audit[1][5]).toMatch(/deadline extended/i);
   });
 
   test('409 when the record is not on hold', async () => {
-    state.lockedStatus = 'Assigned';
+    state.heldAction = null;
     const res = await request(app)
       .post('/api/contractor/ins-1/resume')
       .set('Authorization', 'Bearer contractor-token');

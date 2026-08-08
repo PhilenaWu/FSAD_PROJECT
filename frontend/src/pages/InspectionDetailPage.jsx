@@ -35,12 +35,7 @@ import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
 import { CATEGORIES, PRIORITIES } from '../utils/inspectionOptions';
 import { nearestBlock } from '../utils/blocks';
-
-// Statuses a manager may set here — everything except Closed (UC-004 flow).
-const SETTABLE_STATUSES = [
-  'Open', 'Pending Assignment', 'Assigned', 'Acknowledged',
-  'On Hold', 'Rectified', 'Resolved',
-];
+import { statusDisplay } from '../utils/statusDisplay';
 
 // Make the triage controls read as controls against the white card: tinted
 // input background, hover/focus border feedback (standard MUI outlined
@@ -117,7 +112,7 @@ export default function InspectionDetailPage() {
 
   // Triage form state (seeded from the record once loaded).
   const [form, setForm] = useState({
-    status: '', priority: '', category: '', contractor_id: '', target_deadline: '', note: '',
+    priority: '', category: '', contractor_id: '', target_deadline: '', note: '',
   });
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
@@ -210,7 +205,6 @@ export default function InspectionDetailPage() {
           setEndorserId(ins.inspector_id);
         }
         setForm({
-          status: ins.status === 'Closed' ? '' : ins.status,
           priority: ins.priority,
           category: ins.category,
           contractor_id: ins.contractor_id ?? '',
@@ -231,7 +225,7 @@ export default function InspectionDetailPage() {
 
     // Send only what changed, so the audit log reflects real actions.
     const body = {};
-    if (form.status && form.status !== inspection.status) body.status = form.status;
+    // No status here — the workflow owns it (see the read-only field below).
     if (form.priority !== inspection.priority) body.priority = form.priority;
     if (form.category !== inspection.category) body.category = form.category;
     if (form.contractor_id && form.contractor_id !== (inspection.contractor_id ?? '')) {
@@ -599,16 +593,21 @@ export default function InspectionDetailPage() {
                     </Alert>
                   )}
 
+                  {/* Status is not something the manager sets. It moves on its
+                      own: Open on arrival, Assigned when a contractor is
+                      chosen below, Pending View By Inspector when they finish,
+                      Resolved when the inspector checks the work. A dropdown
+                      here let a manager mark something Resolved that no
+                      inspector had seen — the same loophole the close gate
+                      gets right. */}
                   <TextField
-                    select label="Status" size="small" value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    helperText="Closing requires the e-signature flow (separate)"
+                    label="Status"
+                    size="small"
+                    value={statusDisplay(inspection.status).label}
+                    slotProps={{ input: { readOnly: true } }}
+                    helperText="Set by the workflow — assigning, finishing, and inspector review move it"
                     sx={controlSx}
-                  >
-                    {SETTABLE_STATUSES.map((s) => (
-                      <MenuItem key={s} value={s}>{s}</MenuItem>
-                    ))}
-                  </TextField>
+                  />
 
                   <TextField
                     select label="Priority" size="small" value={form.priority}

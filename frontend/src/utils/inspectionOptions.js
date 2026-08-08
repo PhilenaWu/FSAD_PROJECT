@@ -19,7 +19,10 @@ export const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 // empty. `statuses` is sent to the API as a comma-separated ?status= list.
 export const QUEUE_TABS = [
   { key: 'all', label: 'All open', statuses: [] },
+  // 'Pending Assignment', 'Acknowledged' and 'On Hold' are retired but still
+  // listed, so a record created before the change stays reachable from a tab.
   { key: 'needs-action', label: 'Needs action', statuses: ['Open', 'Pending Assignment'] },
   { key: 'in-progress', label: 'In progress', statuses: ['Assigned', 'Acknowledged', 'On Hold'] },
-  { key: 'awaiting', label: 'Awaiting endorsement', statuses: ['Rectified', 'Resolved'] },
+  { key: 'awaiting', label: 'Awaiting inspector', statuses: ['Rectified'] },
+  { key: 'resolved', label: 'Resolved', statuses: ['Resolved'] },
 ];
