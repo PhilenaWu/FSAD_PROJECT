@@ -7,15 +7,10 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const nodeModules = path.join(here, 'node_modules')
 
-// The per-student unit tests (tests/<student-name>/frontend, per the
-// submission guide) sit above this package, so Node's usual walk-up finds no
-// node_modules for their bare imports — react/jsx-dev-runtime, injected by the
-// React plugin, fails first. Naming each one keeps resolution inside this
-// package; everything those packages import in turn resolves from there.
-// react-chartjs-2 is here for a second reason: the chart tests mock it, and a
-// mock only applies when the specifier resolves to the same module id the
-// component under test imported. Without the alias the mock silently missed
-// and Chart.js tried to acquire a canvas jsdom does not implement.
+// react-chartjs-2 is aliased because the chart tests mock it, and a mock only
+// applies when the specifier resolves to the same module id the component
+// under test imported. Without the alias the mock silently missed and
+// Chart.js tried to acquire a canvas jsdom does not implement.
 //
 // These are applied under `test` ONLY (see below), never to the dev server or
 // the build. As a global resolve.alias they rewrote every bare specifier to an
@@ -59,17 +54,5 @@ export default defineConfig({
     setupFiles: ['./src/setupTests.js'],
     globals: true,
     restoreMocks: true,
-    // Anything colocated under src/, plus the per-student unit-test folders
-    // the submission guide puts at the repo root. Only the frontend half of
-    // each student folder is ours — the backend half is jest's.
-    include: [
-      'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
-      '../tests/*/frontend/**/*.{test,spec}.?(c|m)[jt]s?(x)',
-    ],
-  },
-  server: {
-    // The test files above sit outside this package, so Vite has to be
-    // allowed to read them.
-    fs: { allow: ['..'] },
   },
 })

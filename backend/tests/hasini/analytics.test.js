@@ -1,6 +1,6 @@
 // Unit tests for analytics (UC-005) — ANA-T01…T03 and T06…T13 from the phase
 // plan (ANA-T04/T05 are the CSV export, covered in
-// frontend/src/tests/Ginjala_Hasini/DashboardPage.test.jsx because the export is client-side) plus
+// frontend/tests/hasini/DashboardPage.test.jsx because the export is client-side) plus
 // role gating. Same approach as the users tests: the app runs in-process via
 // supertest with config/supabase and config/db mocked, so the real route →
 // middleware → controller chain runs with no network.

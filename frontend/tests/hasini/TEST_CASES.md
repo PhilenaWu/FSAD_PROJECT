@@ -8,7 +8,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 
 ## Backend (jest)
 
-`tests/Ginjala_Hasini/backend/` — 7 files, 117 tests, run with `npx jest ../tests/Ginjala_Hasini/backend`.
+`backend/tests/hasini/` — 7 files, 117 tests, run with `npx jest tests/hasini` (from `backend/`).
 
 ### analytics.test.js (27)
 
@@ -230,7 +230,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 
 ## Frontend (vitest)
 
-`tests/Ginjala_Hasini/frontend/` — 18 files, 218 tests, run with `npx vitest run ../tests/Ginjala_Hasini/frontend`.
+`frontend/tests/hasini/` — 18 files, 218 tests, run with `npx vitest run tests/hasini` (from `frontend/`).
 
 ### AdminCostPage.test.jsx (17)
 

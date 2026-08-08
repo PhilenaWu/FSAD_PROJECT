@@ -333,8 +333,8 @@ KPI tiles (total actual, total projected, variance %), cost by category, cost pe
 aggregates, and the pure functions (`groupTotals`, `buildTrend`, `forecastNext`,
 `backtestForecast`, `topMover`, `buildLiftWatchlist`, `contractorBenchmarks`,
 `buildInsights`) derive everything else client-side from the server-filtered
-rows `/costs/jobs` returns — one fetch feeds every row-level panel (the
-architecture decision in `docs/UC-011.md`). `/costs/breakdown` is consumed
+rows `/costs/jobs` returns — one fetch feeds every row-level panel.
+`/costs/breakdown` is consumed
 server-side by the admin PowerPoint deck (`exportController.js`); `/costs/trends`
 is served for API completeness but has no frontend consumer. The `liftId` filter
 is likewise API-level only — per-lift analysis in the UI is the watchlist's job.
@@ -356,7 +356,7 @@ drill-down table flags as outliers.
 
 **Actor:** Admin · **Owner:** Hasini (migrations `019`–`022`, the vendor API, the
 cron-guarded expiry job, `.github/workflows/contract-expiry-check.yml`,
-`AdminVendorPage.jsx`, and `tests/Ginjala_Hasini/backend/vendors.test.js`)
+`AdminVendorPage.jsx`, and `backend/tests/hasini/vendors.test.js`)
 **Client requirement:** R18 — "Admin / user control · add new equipment and users with rights"
 
 **Preconditions:** Caller is authenticated with `role = 'admin'`.

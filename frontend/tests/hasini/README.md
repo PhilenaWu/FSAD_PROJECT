@@ -12,33 +12,31 @@ that reason alone; both are unit tests of my own code.
 
 | | Folder | Files | Tests |
 |---|---|---|---|
-| Backend (jest) | [`backend/`](backend/) | 7 | 117 |
-| Frontend (vitest) | [`frontend/`](frontend/) | 18 | 218 |
+| Backend (jest) | [`backend/tests/hasini/`](../../../backend/tests/hasini/) | 7 | 117 |
+| Frontend (vitest) | [`frontend/tests/hasini/`](.) (this folder) | 18 | 218 |
 
 ## Running them
 
 From `backend/`:
 
 ```
-npx jest ../tests/Ginjala_Hasini/backend
+npx jest tests/hasini
 ```
 
 From `frontend/`:
 
 ```
-npx vitest run ../tests/Ginjala_Hasini/frontend
+npx vitest run tests/hasini
 ```
 
-Each runner is configured to reach this folder: `backend/jest.config.js` adds
-it to `roots` (with `moduleDirectories` so bare imports still resolve from
-`backend/node_modules`), and `frontend/vite.config.js` adds it to `test.include`
-(with aliases doing the same job for the React dependencies). Running the whole
-suite from either package — `npx jest` or `npx vitest run` — picks these up too.
+No special config needed — both live inside their own package now, so each
+runner's default test discovery already finds them. Running the whole suite
+from either package — `npx jest` or `npx vitest run` — picks these up too.
 
 Neither needs a database, a Supabase project, or network access — the `pg`
 pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 
-## Backend — `tests/Ginjala_Hasini/backend/`
+## Backend — `backend/tests/hasini/`
 
 | File | Tests | Covers |
 |---|---|---|
@@ -50,7 +48,7 @@ pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 | `userContacts.test.js` | 5 | `GET /api/users/contacts` — role→counterpart mapping from the verified token, null phone, `403` for a resident |
 | `recommendations.test.js` | 4 | UC-005 dashboard read of active AI alerts |
 
-## Frontend — `tests/Ginjala_Hasini/frontend/`
+## Frontend — `frontend/tests/hasini/`
 
 | File | Tests | Covers |
 |---|---|---|
