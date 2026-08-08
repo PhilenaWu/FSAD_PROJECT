@@ -10,6 +10,7 @@
 'use strict';
 
 const { execSync } = require('child_process');
+const fs = require('fs');
 
 const port = process.argv[2];
 if (!port) {
@@ -21,10 +22,32 @@ function run(cmd) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 }
 
+// Windows tools by absolute path. A PATH missing bare `C:\Windows\System32`
+// (only its subfolders present — Wbem, WindowsPowerShell, OpenSSH) is a common
+// broken setup, and there `netstat` resolves to nothing. The outer catch below
+// then read "command not found" as "nothing listening", so this script became a
+// silent no-op and every stale server surfaced as EADDRINUSE instead.
+const sys32 = `${process.env.SystemRoot || 'C:\\Windows'}\\System32`;
+const netstatExe = `${sys32}\\netstat.exe`;
+const NETSTAT = `"${netstatExe}"`;
+const TASKLIST = `"${sys32}\\tasklist.exe"`;
+const TASKKILL = `"${sys32}\\taskkill.exe"`;
+
+// Checked up front rather than inferred from a failure: cmd.exe reports a
+// missing program on stderr (which `run` discards) and exits non-zero, so a
+// missing tool is indistinguishable from "nothing listening" once it throws.
+if (process.platform === 'win32' && !fs.existsSync(netstatExe)) {
+  console.warn(
+    `[free-port] Skipping the port ${port} check — ${netstatExe} not found. ` +
+      'If dev now fails with EADDRINUSE, kill the stale node process by hand.'
+  );
+  process.exit(0);
+}
+
 try {
   if (process.platform === 'win32') {
     // netstat lines for a LISTENING socket on this port end with the PID.
-    const out = run(`netstat -ano -p TCP`);
+    const out = run(`${NETSTAT} -ano -p TCP`);
     const pids = new Set();
     for (const line of out.split('\n')) {
       const m = line.match(/^\s*TCP\s+\S*:(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
@@ -32,9 +55,9 @@ try {
     }
     for (const pid of pids) {
       try {
-        const name = run(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`);
+        const name = run(`${TASKLIST} /FI "PID eq ${pid}" /FO CSV /NH`);
         if (!/^"node\.exe"/i.test(name.trim())) continue; // safety: node only
-        execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' });
+        execSync(`${TASKKILL} /PID ${pid} /F`, { stdio: 'ignore' });
         console.log(`[free-port] Killed stray node process (PID ${pid}) on port ${port}`);
       } catch {
         // Process may have already exited between listing and killing — fine.
@@ -58,5 +81,7 @@ try {
   }
 } catch {
   // Nothing listening on the port (netstat/lsof exit non-zero when empty) —
-  // that's the common case, not an error.
+  // that's the common case, not an error. The one failure that used to hide
+  // here — the tool itself being unavailable — is caught by the existsSync
+  // check above, so this stays quiet.
 }

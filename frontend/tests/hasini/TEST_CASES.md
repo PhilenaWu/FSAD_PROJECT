@@ -1,14 +1,16 @@
 # Test case record — Ginjala Hasini
 
-Every test in my two folders, by name, as reported by the test runners themselves. Generated from `jest --json` and `vitest --reporter=json` on 2026-08-08, so this list cannot drift from what actually runs.
+Every test in my two folders, by name, as reported by the test runners themselves. Generated from `jest --json` and `vitest --reporter=json` on 2026-08-09, so this list cannot drift from what actually runs.
 
-**335 tests, 335 passing, 0 failing.**
+**391 tests, 390 passing, 0 failing, 1 todo.**
+
+The one `todo` is `auth.integration.test.js › token verification against protected routes` — a placeholder for the end-to-end token check, which needs a live Supabase project and so is not run here.
 
 See [README.md](README.md) for what each file covers and how to run it.
 
 ## Backend (jest)
 
-`backend/tests/hasini/` — 7 files, 117 tests, run with `npx jest tests/hasini` (from `backend/`).
+`backend/tests/hasini/` — 9 files, 124 tests, run with `npx jest tests/hasini` (from `backend/`).
 
 ### analytics.test.js (27)
 
@@ -71,6 +73,20 @@ See [README.md](README.md) for what each file covers and how to run it.
 - from after to is refused
 - the guard is mounted on every analytics route, not just one
 - valid dates still pass through and reach the query
+
+### auth.integration.test.js (1)
+
+- token verification against protected routes
+
+### auth.test.js (5)
+
+**requireRole**
+
+- 403 ACCOUNT_SUSPENDED for a suspended account, not FORBIDDEN
+- 403 FORBIDDEN for an active account with the wrong role
+- passes an active account holding an allowed role
+- 403 FORBIDDEN when the caller has no profile row at all
+- 401 when there is no authenticated user
 
 ### contactDirectory.test.js (3)
 
@@ -159,13 +175,14 @@ See [README.md](README.md) for what each file covers and how to run it.
 - 401 without a token
 - 403 for a non-manager role
 
-### userContacts.test.js (5)
+### userContacts.test.js (6)
 
 **GET /api/users/contacts**
 
 - a manager gets the admins — the number behind their "Need help?" card
 - an admin gets the managers, including one with no phone
 - an inspector gets the managers — the number their contacts page shows
+- a contractor gets the managers — the number behind their "Need help?" card
 - a resident is refused — staff numbers are not readable by other roles
 - no token is refused
 
@@ -230,7 +247,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 
 ## Frontend (vitest)
 
-`frontend/tests/hasini/` — 18 files, 218 tests, run with `npx vitest run tests/hasini` (from `frontend/`).
+`frontend/tests/hasini/` — 23 files, 267 tests, run with `npx vitest run tests/hasini` (from `frontend/`).
 
 ### AdminCostPage.test.jsx (17)
 
@@ -267,6 +284,34 @@ See [README.md](README.md) for what each file covers and how to run it.
 - a renewal date on or before the current contract end is rejected inline
 - each row links to the cost dashboard filtered to that vendor
 - the row cap shows the first 10 until All is chosen
+
+### AIAlertCard.test.jsx (14)
+
+**AIAlertCard — content**
+
+- heads the card with the block and category the cluster sits in
+- shows the alert text the model produced
+- the velocity chip is a whole per cent over the 30-day window
+- the cost chip is thousands-separated
+- renders as a warning alert, so it reads as amber next to the other panels
+
+**AIAlertCard — the cost chip is optional**
+
+- a null cost drops the chip rather than printing "Est. $null"
+- a zero cost is still a figure and keeps its chip
+
+**AIAlertCard — actions**
+
+- offers exactly Accept and Dismiss
+- Accept reports this prediction id and does not also dismiss it
+- Dismiss reports this prediction id and does not also accept it
+- each card reports its own id, not the first one rendered
+
+**AIAlertCard — busy**
+
+- busy disables both actions so the request cannot be fired twice
+- a click while busy reaches neither handler
+- both actions are live when not busy
 
 ### analyticsService.test.js (17)
 
@@ -346,6 +391,52 @@ See [README.md](README.md) for what each file covers and how to run it.
 - the directory comes from /api/contacts
 - the staff list asks for no role — the server decides from the token
 - both return the axios response, which the hook reads as res.data
+
+### ContractorScorecard.test.jsx (11)
+
+**ContractorScorecard — table shape**
+
+- names the six columns
+- renders one row per contractor, in the order supplied
+- no contractors renders the head and no data rows
+
+**ContractorScorecard — figures**
+
+- rectification average and repeat rate render to one decimal
+- avg re-opens keeps two decimals, since it is usually a fraction of one
+- a zero average is a real figure and must not render as a dash
+
+**ContractorScorecard — missing data**
+
+- each nullable column falls back to an em dash
+- a null figure never leaks the word null or a NaN
+
+**ContractorScorecard — overdue drill-through**
+
+- a non-zero count links to the triage queue filtered to that contractor
+- a contractor name with URL-unsafe characters is encoded, not broken
+- a zero count is shown but is not a link — there is nothing to open
+
+### CostPanel.test.jsx (10)
+
+**CostPanel — content**
+
+- renders the title, the period subtitle and the panel body
+- the children are the panel body, not a sibling of it
+- renders as an outlined Paper, matching the other dashboard cards
+- a panel with no children still renders its heading
+
+**CostPanel — the action slot**
+
+- renders an action when one is given
+- no action means no empty action box left behind
+- the action is hidden from print, since toggles mean nothing on paper
+
+**CostPanel — layout guarantees**
+
+- the title renders as a div so a Chip inside it stays valid HTML
+- the caption holds its height so panels without a subtitle still align
+- the subtitle is a div too, so the caption never nests a block in a <p>
 
 ### costService.test.js (41)
 
@@ -528,6 +619,13 @@ See [README.md](README.md) for what each file covers and how to run it.
 - numbers are dialable tel: links
 - a role with no contacts configured says so
 
+### ErrorBoundary.test.jsx (2)
+
+**ErrorBoundary**
+
+- renders children untouched when nothing throws
+- a throwing child yields a message and a reload, not a blank page
+
 ### HeatmapChart.test.jsx (11)
 
 **HeatmapChart — the grid it builds**
@@ -552,6 +650,32 @@ See [README.md](README.md) for what each file covers and how to run it.
 - a cell carrying imported rows is marked and broken down in the tooltip
 - the amber ring is drawn only around cells the import touched
 - cells the import did not touch keep an imported count of zero
+
+### PriorityQueue.test.jsx (12)
+
+**PriorityQueue — table shape**
+
+- names the six columns the manager triages on
+- renders one row per record
+- an empty queue renders the head and no data rows, not a crash
+
+**PriorityQueue — ordering**
+
+- keeps the server ranking instead of re-sorting by score
+- does not re-order by priority either
+
+**PriorityQueue — cells**
+
+- each title links to the record detail page under /inspections
+- block, category and status are printed as given
+- scores render to exactly one decimal, including whole numbers
+- a score is rounded, not truncated
+
+**PriorityQueue — priority chip**
+
+- a known priority carries its heat-ramp colours
+- the ramp gets hotter from Low to Critical
+- an unmapped priority still shows its own label rather than blanking
 
 ### roleContacts.test.js (9)
 
@@ -662,4 +786,3 @@ See [README.md](README.md) for what each file covers and how to run it.
 - sends contract_end as FormData
 - a replacement contract document is appended when one is given
 - no document means no contract_doc field, so the stored one survives
-

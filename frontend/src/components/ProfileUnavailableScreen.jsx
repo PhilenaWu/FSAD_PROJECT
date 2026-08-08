@@ -17,8 +17,20 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import { useAuth } from '../context/AuthContext';
 
 export default function ProfileUnavailableScreen() {
-  const { logout, reloadProfile } = useAuth();
+  const { logout, reloadProfile, profileUnreachable } = useAuth();
   const navigate = useNavigate();
+
+  // Two very different faults reach this screen. A reply that refuses us is
+  // about the account; no reply at all is about the server. The old copy said
+  // "the account may not be set up correctly" for both, which sent people
+  // hunting a data problem when the API was simply not running.
+  const heading = profileUnreachable ? 'Could not reach the server' : 'Could not load your account';
+  const summary = profileUnreachable
+    ? 'You are signed in, but the app could not reach the API server.'
+    : 'You are signed in, but we could not read your account details.';
+  const advice = profileUnreachable
+    ? 'Nothing is answering at the API address, so this is not a problem with your account. If you are running the app locally, start the backend (npm start, from backend/) and try again.'
+    : 'This is usually temporary — try again in a moment. If it keeps happening, contact the estate administrator, as the account may not be set up correctly.';
 
   return (
     <Box
@@ -36,16 +48,14 @@ export default function ProfileUnavailableScreen() {
           <Stack direction="row" spacing={1} alignItems="center">
             <ErrorOutlineIcon color="error" />
             <Typography variant="h6" fontWeight={700}>
-              Could not load your account
+              {heading}
             </Typography>
           </Stack>
           <Alert severity="error" sx={{ width: '100%' }}>
-            You are signed in, but we could not read your account details.
+            {summary}
           </Alert>
           <Typography variant="body2" color="text.secondary">
-            This is usually temporary — try again in a moment. If it keeps
-            happening, contact the estate administrator, as the account may not
-            be set up correctly.
+            {advice}
           </Typography>
           <Stack direction="row" spacing={1}>
             <Button variant="contained" onClick={reloadProfile}>
