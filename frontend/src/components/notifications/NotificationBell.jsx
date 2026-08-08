@@ -26,6 +26,46 @@ const URGENCY_COLOR = {
   Critical: 'error',
 };
 
+// What each lifecycle event is called in the bell (D.13). The chip used to print
+// the raw `urgency`, so a routine "contractor acknowledged the defect" arrived
+// stamped "Warning" alongside a genuine escalation — every row looked like a
+// problem and the label carried no information the message didn't already give.
+// Now the chip says what happened and only its *colour* carries urgency, so
+// Warning/Critical mean something again.
+const EVENT_LABEL = {
+  acknowledged: 'Acknowledged',
+  rectified: 'Work submitted',
+  on_hold: 'On hold',
+  resumed: 'Resumed',
+  defects_flagged: 'Defects flagged',
+  spot_check_passed: 'Spot check passed',
+  complaint_submitted: 'New complaint',
+  defect_assigned: 'Assigned to you',
+  defect_reassigned: 'Reassigned',
+  defect_unassigned: 'Unassigned',
+  priority_changed: 'Priority changed',
+  rectification_rejected: 'Sent back',
+  closed: 'Closed',
+  overdue_chase: 'Overdue',
+  defect_email_failed: 'Email failed',
+  cv_detection: 'AI detection',
+  ai_alerts_generated: 'AI alerts',
+  rating_submitted: 'Rating received',
+  report_ready: 'Report ready',
+  vendor_onboarded: 'Vendor onboarded',
+  vendor_renewed: 'Vendor renewed',
+  vendor_suspended: 'Vendor suspended',
+  vendor_expired: 'Contract expired',
+  vendor_expiring_soon: 'Contract expiring',
+};
+
+// A manager broadcast has no event_type — "Announcement" is the honest label for
+// it, and is still distinguishable from a system event by colour + wording.
+function labelFor(n) {
+  if (n.event_type) return EVENT_LABEL[n.event_type] ?? 'Update';
+  return n.urgency === 'Informational' ? 'Announcement' : n.urgency;
+}
+
 export default function NotificationBell() {
   const { socket } = useSocket();
   const navigate = useNavigate();
@@ -136,8 +176,9 @@ export default function NotificationBell() {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Chip
                         size="small"
-                        label={n.urgency}
+                        label={labelFor(n)}
                         color={URGENCY_COLOR[n.urgency] ?? 'default'}
+                        variant={n.urgency === 'Informational' ? 'outlined' : 'filled'}
                       />
                       {n.link ? (
                         <Typography variant="caption" color="primary">

@@ -181,7 +181,7 @@ export default function ManualReviewQueue() {
                   sx={{ maxHeight: 240 }}
                 />
                 <Typography variant="body2" color="text.secondary">
-                  CV guessed <strong>{selected.defect_class ?? 'unclassified'}</strong> at{' '}
+                  Automatic detection guessed <strong>{selected.defect_class ?? 'unclassified'}</strong> at{' '}
                   {formatConfidence(selected.confidence)} confidence — below the threshold for an
                   automatic ticket. Confirm what this actually is, or dismiss it as a false positive.
                 </Typography>

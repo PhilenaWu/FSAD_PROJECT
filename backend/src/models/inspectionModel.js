@@ -26,7 +26,7 @@ async function create(data) {
     location_block,
     location_unit,
     photo_url,
-    category = 'Uncategorised',
+    category = 'Miscellaneous',
     priority = 'Medium',
     ai_priority_score,
     source_flag = 'Resident',
@@ -466,6 +466,20 @@ async function markReviewed(id, note, actorId) {
   return true;
 }
 
+// Has an inspector marked this record as reviewed? The review is an audit row
+// rather than a column (markReviewed above), so the close gate asks the audit
+// trail. Any inspector's review counts — resident complaints have no inspector
+// of their own, so requiring the record's own would make them uncloseable.
+async function hasInspectorReview(inspectionId) {
+  const result = await query(
+    `SELECT 1 FROM inspection_history
+     WHERE inspection_id = $1 AND action = 'Reviewed by Inspector'
+     LIMIT 1`,
+    [inspectionId]
+  );
+  return result.rows.length > 0;
+}
+
 // Defect rows on a record that are not yet signed off (G8): either not marked
 // rectified, or rectified without the contractor's proof photo. Returns the
 // paper form's item numbers so the caller can name them in the error.
@@ -504,7 +518,9 @@ async function updateByManager(id, changes, actorId, note) {
     }
 
     // Build SET clauses for just the provided fields.
-    const fields = ['priority', 'status', 'contractor_id', 'target_deadline', 'hold_reason'];
+    const fields = [
+      'priority', 'status', 'contractor_id', 'target_deadline', 'hold_reason', 'category',
+    ];
     const sets = [];
     const params = [];
     for (const field of fields) {
@@ -982,6 +998,7 @@ module.exports = {
   findForStatusBoard,
   findUnrectifiedDefects,
   markReviewed,
+  hasInspectorReview,
   rejectRectification,
   queueRecurrenceJob,
   updateByManager,

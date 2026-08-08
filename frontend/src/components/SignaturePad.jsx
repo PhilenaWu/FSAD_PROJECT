@@ -73,11 +73,11 @@ const SignaturePad = forwardRef(function SignaturePad({ label }, ref) {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-        <Typography variant="body2" color="text.secondary" noWrap>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+        <Typography variant="body2" color="text.secondary">
           {label}
         </Typography>
-        <Button size="small" onClick={clear} disabled={!hasInk}>
+        <Button size="small" onClick={clear} disabled={!hasInk} sx={{ flexShrink: 0 }}>
           Clear
         </Button>
       </Stack>

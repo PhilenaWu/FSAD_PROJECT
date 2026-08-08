@@ -33,7 +33,8 @@ import BoundingBoxOverlay from '../components/cv/BoundingBoxOverlay';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { priorityDisplay } from '../utils/priorityDisplay';
-import { PRIORITIES } from '../utils/inspectionOptions';
+import { CATEGORIES, PRIORITIES } from '../utils/inspectionOptions';
+import { nearestBlock } from '../utils/blocks';
 
 // Statuses a manager may set here — everything except Closed (UC-004 flow).
 const SETTABLE_STATUSES = [
@@ -116,7 +117,7 @@ export default function InspectionDetailPage() {
 
   // Triage form state (seeded from the record once loaded).
   const [form, setForm] = useState({
-    status: '', priority: '', contractor_id: '', target_deadline: '', note: '',
+    status: '', priority: '', category: '', contractor_id: '', target_deadline: '', note: '',
   });
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState(null); // { severity, message }
@@ -165,6 +166,14 @@ export default function InspectionDetailPage() {
     [defectResults]
   );
 
+  // The other half of the close precondition: an inspector has to have checked
+  // the contractor's work. The review is an audit row, not a column, so it is
+  // read back off the history the detail endpoint already returns.
+  const reviewedByInspector = useMemo(
+    () => (inspection?.history ?? []).some((h) => h.action === 'Reviewed by Inspector'),
+    [inspection]
+  );
+
   // Second endorser for the dual e-signature. G7/R9: the endorsing signature
   // must belong to an inspector — the client asked for sign-off from EM
   // Services, so the contractor who did the work can't endorse it. Defaults to
@@ -203,6 +212,7 @@ export default function InspectionDetailPage() {
         setForm({
           status: ins.status === 'Closed' ? '' : ins.status,
           priority: ins.priority,
+          category: ins.category,
           contractor_id: ins.contractor_id ?? '',
           target_deadline: ins.target_deadline ? ins.target_deadline.slice(0, 10) : '',
           note: '',
@@ -223,6 +233,7 @@ export default function InspectionDetailPage() {
     const body = {};
     if (form.status && form.status !== inspection.status) body.status = form.status;
     if (form.priority !== inspection.priority) body.priority = form.priority;
+    if (form.category !== inspection.category) body.category = form.category;
     if (form.contractor_id && form.contractor_id !== (inspection.contractor_id ?? '')) {
       body.contractor_id = form.contractor_id;
     }
@@ -476,7 +487,7 @@ export default function InspectionDetailPage() {
                           variant="outlined"
                           color={inspection.cv_detection.status === 'low_confidence' ? 'warning' : 'default'}
                           icon={<AutoAwesomeOutlinedIcon fontSize="small" />}
-                          label={`CV: ${inspection.cv_detection.defect_class ?? 'unclassified'} · ${Math.round(
+                          label={`Detected: ${inspection.cv_detection.defect_class ?? 'unclassified'} · ${Math.round(
                             Number(inspection.cv_detection.confidence) * 100
                           )}% confidence`}
                         />
@@ -512,11 +523,20 @@ export default function InspectionDetailPage() {
                   </Box>
                 )}
 
+                {/* Lead with the nearest block: whoever reads this is at a desk
+                    and cannot check the coordinates against the estate. The raw
+                    lat/lng stays — this record is the audit trail, and the
+                    block is only derived from it. */}
                 {inspection.gps_lat && inspection.gps_lng && (
                   <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: 'text.secondary' }}>
                     <PlaceOutlinedIcon fontSize="small" />
                     <Typography variant="caption">
-                      GPS {Number(inspection.gps_lat).toFixed(5)},{' '}
+                      Near Block{' '}
+                      {nearestBlock({
+                        lat: Number(inspection.gps_lat),
+                        lng: Number(inspection.gps_lng),
+                      })}{' '}
+                      · GPS {Number(inspection.gps_lat).toFixed(5)},{' '}
                       {Number(inspection.gps_lng).toFixed(5)}
                       {inspection.gps_accuracy_m
                         ? ` (±${Math.round(inspection.gps_accuracy_m)}m)`
@@ -600,6 +620,19 @@ export default function InspectionDetailPage() {
                     ))}
                   </TextField>
 
+                  {/* The resident categorises their own report; triage is where
+                      a wrong pick gets corrected. */}
+                  <TextField
+                    select label="Category" size="small" value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    helperText="Correct the category the reporter chose, if needed"
+                    sx={controlSx}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <MenuItem key={c} value={c}>{c}</MenuItem>
+                    ))}
+                  </TextField>
+
                   <TextField
                     select label="Contractor" size="small" value={form.contractor_id}
                     onChange={(e) => setForm({ ...form, contractor_id: e.target.value })}
@@ -609,7 +642,14 @@ export default function InspectionDetailPage() {
                     <MenuItem value="" disabled>Select contractor</MenuItem>
                     {contractors.map((c) => (
                       <MenuItem key={c.id} value={c.id}>
-                        {c.name}{c.brands_serviced ? ` (${c.brands_serviced})` : ''}
+                        {/* Vendors onboarded without an explicit brand get the
+                            company name as their brand, so only append it when
+                            it actually adds something — otherwise this reads
+                            "FPTD Services (FPTD Services)". */}
+                        {c.name}
+                        {c.brands_serviced && c.brands_serviced !== c.name
+                          ? ` (${c.brands_serviced})`
+                          : ''}
                       </MenuItem>
                     ))}
                   </TextField>
@@ -850,6 +890,16 @@ export default function InspectionDetailPage() {
                   disabled={closed}
                 />
 
+                {/* The inspector's check is the one precondition with no
+                    override, so say it here rather than letting the manager
+                    fill the whole panel in and fail on submit. */}
+                {!reviewedByInspector && (
+                  <Alert severity="warning">
+                    No inspector has marked this record as reviewed yet. Closing
+                    stays disabled until one does — this cannot be waived.
+                  </Alert>
+                )}
+
                 {/* G8: closing over unrectified defects is allowed, but only as
                     an explicit, recorded exception. */}
                 {outstandingItems.length > 0 && (
@@ -919,7 +969,7 @@ export default function InspectionDetailPage() {
                   type="submit"
                   variant="contained"
                   color="error"
-                  disabled={!endorser || closing || closed}
+                  disabled={!endorser || !reviewedByInspector || closing || closed}
                   startIcon={
                     closing ? (
                       <CircularProgress size={16} color="inherit" />

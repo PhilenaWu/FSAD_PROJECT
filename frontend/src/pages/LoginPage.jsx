@@ -21,15 +21,18 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { isValidEmail, isValidPassword } from '../utils/validation';
 
-// Where each role lands after login. Contractor/admin workspaces aren't built
-// yet — those routes render a "not ready yet" placeholder rather than erroring.
+// Where each role lands after login: its home page, or — for the roles that
+// have none — the first entry in its own sidebar nav, so signing in leaves you
+// where the nav says you start. Residents used to land on /report, which
+// dropped them into a form rather than the home page they do have.
 const ROLE_HOME = {
-  resident: '/report',
-  inspector: '/dashboard',
-  manager: '/dashboard',
-  contractor: '/contractor-inbox',
-  admin: '/admin/costs',
+  resident: '/dashboard',       // RoleHome → HomePage
+  inspector: '/dashboard',      // RoleHome → InspectorHomePage
+  manager: '/dashboard',        // RoleHome → DashboardPage
+  contractor: '/contractor-inbox', // no home page; ContractorLayout's first nav item
+  admin: '/admin/costs',        // no home page; AdminLayout's first nav item
 };
 
 export default function LoginPage() {
@@ -43,10 +46,31 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(Boolean(savedEmail));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Field-level errors, shown only after a submit attempt — an existing user
+  // typing a valid password shouldn't be nagged mid-keystroke.
+  const [touched, setTouched] = useState({});
+
+  const emailValid = isValidEmail(email);
+  const passwordValid = isValidPassword(password);
+
+  // Post-login refusals keyed by the backend's error code. A pending account
+  // authenticates with Supabase perfectly well — the gate is our profile
+  // status, so it has to be checked here and the session dropped.
+  const BLOCKED_MESSAGES = {
+    ACCOUNT_SUSPENDED: 'This account is suspended. Contact the administrator.',
+    ACCOUNT_PENDING: 'Your account is awaiting manager approval.',
+    ACCOUNT_REJECTED:
+      'Your registration request was not approved. Contact the managing office.',
+  };
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    setTouched({ email: true, password: true });
+    // Same rules the registration form enforces — a credential that can't pass
+    // them can't belong to any account, so we don't spend a round trip on it.
+    if (!emailValid || !passwordValid) return;
+
     setBusy(true);
     const { error: signInError } = await login(email, password);
     setBusy(false);
@@ -54,14 +78,16 @@ export default function LoginPage() {
       setError(signInError.message);
       return;
     }
-    // UC-012: suspended accounts (expired/terminated vendors) authenticate at
-    // Supabase but the backend refuses the profile — sign out and explain.
+    // UC-012 suspended vendors, and residents still awaiting (or refused)
+    // manager approval: all authenticate at Supabase but are refused the
+    // profile by the backend — sign out and explain which it was.
     try {
       await api.get('/api/users/me');
     } catch (meErr) {
-      if (meErr.response?.data?.code === 'ACCOUNT_SUSPENDED') {
+      const blocked = BLOCKED_MESSAGES[meErr.response?.data?.code];
+      if (blocked) {
         await logout();
-        setError('This account is suspended. Contact the administrator.');
+        setError(blocked);
         return;
       }
       // Other profile errors: let the normal post-login flow handle them.
@@ -146,6 +172,11 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+                error={touched.email && !emailValid}
+                helperText={
+                  touched.email && !emailValid ? 'Enter a valid email address.' : ''
+                }
                 required
                 autoComplete="email"
                 fullWidth
@@ -156,6 +187,13 @@ export default function LoginPage() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onBlur={() => setTouched((t) => ({ ...t, password: true }))}
+                error={touched.password && !passwordValid}
+                helperText={
+                  touched.password && !passwordValid
+                    ? 'At least 8 characters, with a letter, a number and a special character.'
+                    : ''
+                }
                 required
                 autoComplete="current-password"
                 fullWidth
@@ -207,14 +245,6 @@ export default function LoginPage() {
                   Forgot password
                 </Link>
               </Stack>
-
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                align="center"
-              >
-                Residents and managers use the same login
-              </Typography>
             </Stack>
           </Box>
         </Paper>

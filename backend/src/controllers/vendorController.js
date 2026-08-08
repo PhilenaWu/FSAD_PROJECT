@@ -39,7 +39,14 @@ async function onboard(req, res, next) {
 
     // Account-holder fields are mandatory: every login must be traceable to a
     // named person, their position, and a recorded reason for access.
-    const missing = ['name', 'contact_email', 'contract_start', 'contract_end',
+    // contact_email is deliberately NOT here. It is the fallback recipient for
+    // defect mail when the holder's login is suspended or missing, so it has to
+    // exist — but making the admin type a second address at onboarding buys
+    // nothing when the login address is already a working mailbox. Left blank it
+    // defaults to login_email below, which keeps the NOT NULL column satisfied
+    // and mail deliverable. An admin who wants a shared company inbox (so the
+    // address outlives this individual) can still set one here or in Edit.
+    const missing = ['name', 'contract_start', 'contract_end',
       'account_holder_name', 'job_title', 'access_reason',
       'login_email', 'login_password'].filter((f) => !req.body[f]);
     if (missing.length > 0) {
@@ -105,8 +112,15 @@ async function onboard(req, res, next) {
       });
       contractor = await contractorModel.createVendor({
         name,
-        brands_serviced,
-        contact_email,
+        // The onboarding form no longer asks for either of these. A lift
+        // vendor's name generally carries the make it services ("Otis Service
+        // SG", "KONE Maintenance"), so it doubles as the capability hint the
+        // manager sees on the assignment dropdown; a vendor covering makes its
+        // name does not state is corrected in Edit.
+        brands_serviced: brands_serviced || name,
+        // Fall back to the holder's address so the column is never null and
+        // defect mail always has somewhere to go — see the note on `missing`.
+        contact_email: contact_email || login_email,
         user_id: user.id,
         contract_start,
         contract_end,

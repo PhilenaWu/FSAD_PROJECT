@@ -16,4 +16,20 @@ const rateLimiter = rateLimit({
   message: { code: 'RATE_LIMITED', message: 'Too many requests, please try again later.' },
 });
 
-module.exports = rateLimiter;
+// Tight limit for the self-registration path, which is the only endpoint an
+// unapproved caller can reach and the only one that inserts a users row.
+// Registering is a once-per-person action, so 5 attempts per IP per hour is
+// generous for a household sharing a connection and useless for scripting
+// signups. Applied on top of the global limiter above.
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    code: 'RATE_LIMITED',
+    message: 'Too many registration attempts. Please try again later.',
+  },
+});
+
+module.exports = { rateLimiter, registerLimiter };

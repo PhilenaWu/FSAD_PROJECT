@@ -14,6 +14,10 @@
 //                                             — named individuals; the caller
 //                                               supplies rooms because a user's
 //                                               room depends on their role
+//   { type: 'managers_and_users', user_ids: [...], rooms: [...] }
+//                                             — managers ∪ named individuals,
+//                                               deduped; one row for an event
+//                                               with two staff audiences
 'use strict';
 
 const { query } = require('../config/db');
@@ -115,6 +119,26 @@ async function resolveRecipients(scope) {
     return { userIds: rows.map((r) => r.id), rooms: scope.rooms ?? [] };
   }
 
+  // All active managers PLUS named individuals — "the managers and the inspector
+  // on this record". One scope rather than two notifyEvent calls, so a single
+  // transition writes a single row and nobody who falls in both sets sees the
+  // event twice (D.12). Ids are union-deduped before they reach the recipient
+  // insert, which is what makes the overlap impossible rather than merely
+  // unlikely. Named ids are verified against `users` for the same reason as the
+  // 'users' scope below.
+  if (scope.type === 'managers_and_users') {
+    const ids = (scope.user_ids ?? []).filter(Boolean);
+    const [managers, named] = await Promise.all([
+      query(`SELECT id FROM users WHERE role = 'manager' AND status = 'active'`),
+      ids.length
+        ? query(`SELECT id FROM users WHERE id = ANY($1) AND status = 'active'`, [ids])
+        : Promise.resolve({ rows: [] }),
+    ]);
+    const userIds = [...new Set([...managers.rows, ...named.rows].map((r) => r.id))];
+    const rooms = [...new Set(['manager-room', ...(scope.rooms ?? [])])];
+    return { userIds, rooms };
+  }
+
   return { userIds: [], rooms: [] };
 }
 
@@ -146,6 +170,30 @@ async function countUnreadForRecipient(userId) {
     [userId]
   );
   return rows[0]?.unread ?? 0;
+}
+
+// A manager's own outbox, newest first — the history behind
+// GET /api/notifications/sent. Receipt counts are joined in one query rather
+// than polled per row, because the history lists many notifications at once and
+// the per-notification /receipts endpoint is built for watching a single send.
+//
+// System events (manager_id IS NULL) are deliberately excluded: this is "what I
+// sent", not an audit log of every lifecycle notification the server raised.
+async function findByManager(managerId, { limit = 50 } = {}) {
+  const { rows } = await query(
+    `SELECT n.id, n.message, n.urgency, n.scope, n.status,
+            n.send_time, n.sent_at, n.created_at,
+            COUNT(r.*)::int AS total_recipients,
+            COUNT(r.*) FILTER (WHERE r.read)::int AS read_count
+     FROM notifications n
+     LEFT JOIN notification_recipients r ON r.notification_id = n.id
+     WHERE n.manager_id = $1
+     GROUP BY n.id
+     ORDER BY n.created_at DESC
+     LIMIT $2`,
+    [managerId, limit]
+  );
+  return rows;
 }
 
 // Bulk-insert one recipient row per user id. delivered = TRUE because the caller
@@ -228,4 +276,5 @@ module.exports = {
   getReceiptCounts,
   findForRecipient,
   countUnreadForRecipient,
+  findByManager,
 };

@@ -1,11 +1,12 @@
 // UC-008: manager notification composer. Pick a target scope, write a message,
 // set urgency, optionally schedule, confirm, and send. After an immediate send
 // the read-receipt badge polls live counts.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -30,8 +31,11 @@ import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import ErrorOutlineOutlinedIcon from '@mui/icons-material/ErrorOutlineOutlined';
+import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
+import ScheduleOutlinedIcon from '@mui/icons-material/ScheduleOutlined';
+import MarkEmailReadOutlinedIcon from '@mui/icons-material/MarkEmailReadOutlined';
 import ReadReceiptBadge from '../components/notifications/ReadReceiptBadge';
-import { send } from '../services/notificationService';
+import { send, listSent } from '../services/notificationService';
 import { listContractors } from '../services/contractorService';
 
 // Card options for "Send to". `all_blocks` isn't in the reference mockup
@@ -93,6 +97,39 @@ function describeScope(scopeType, blocks, contractorId, contractorName) {
   }
 }
 
+// Status chip colour for a row in the history (D.6).
+const STATUS_COLOR = {
+  Sent: 'success',
+  Scheduled: 'info',
+  Failed: 'error',
+  Cancelled: 'default',
+};
+
+function formatWhen(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// Re-describe a stored scope for the history list. The composer builds its
+// summary from form state; a history row only has the persisted JSONB back.
+function describeStoredScope(scope) {
+  if (!scope) return 'Unknown recipients';
+  switch (scope.type) {
+    case 'blocks':
+      return `Block(s) ${(scope.blocks ?? []).join(', ') || '—'}`;
+    case 'all_blocks':
+      return 'All blocks';
+    case 'contractor':
+      return 'One contractor';
+    case 'inspector_team':
+      return 'Inspector team';
+    default:
+      return scope.type ?? 'Unknown recipients';
+  }
+}
+
 export default function NotificationsPage() {
   const [scopeType, setScopeType] = useState('blocks');
   const [blocks, setBlocks] = useState(''); // comma-separated, e.g. "44A, 44B"
@@ -126,6 +163,21 @@ export default function NotificationsPage() {
     };
   }, []);
 
+  // Send history (D.6). Reloaded after each successful send so a new row shows
+  // without a refresh. Before this the manager could only ever see receipts for
+  // the notification still held in page state — navigating away lost the lot.
+  const [history, setHistory] = useState([]);
+  const [historyError, setHistoryError] = useState(false);
+  const loadHistory = useCallback(() => {
+    listSent()
+      .then(({ data }) => {
+        setHistory(data.data ?? []);
+        setHistoryError(false);
+      })
+      .catch(() => setHistoryError(true));
+  }, []);
+  useEffect(loadHistory, [loadHistory]);
+
   const scheduled = Boolean(sendTime);
   const selectedUrgency = URGENCIES.find((u) => u.value === urgency);
 
@@ -156,7 +208,7 @@ export default function NotificationsPage() {
       return 'Enter at least one block number.';
     }
     if (scopeType === 'contractor' && !contractorId.trim()) {
-      return "Enter the contractor's user id.";
+      return 'Select a contractor.';
     }
     return '';
   }
@@ -196,6 +248,7 @@ export default function NotificationsPage() {
       });
       setResult(data);
       setMessage('');
+      loadHistory();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not send the notification — please try again.');
     } finally {
@@ -230,6 +283,42 @@ export default function NotificationsPage() {
           </Typography>
         </Box>
       </Stack>
+
+      {/* "Send to recipients" banner (D.5). The audience was only ever spelled
+          out in the confirm dialog, i.e. after the manager had already composed
+          and committed to the message. Restating it above the form keeps who is
+          about to be messaged in view the whole time it is being written. */}
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2,
+          mb: 2,
+          borderRadius: 3,
+          borderColor: 'primary.main',
+          bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
+        }}
+      >
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <CampaignOutlinedIcon color="primary" />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle2" fontWeight={700}>
+              Send to recipients
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              This message will go to{' '}
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                {describeScope(
+                  scopeType,
+                  blocks,
+                  contractorId,
+                  contractors.find((c) => c.user_id === contractorId)?.name
+                )}
+              </Box>
+              {scheduled ? ' at the scheduled time.' : ', immediately.'}
+            </Typography>
+          </Box>
+        </Stack>
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: { xs: 3, sm: 4 }, borderRadius: 3 }}>
         <Stack spacing={3}>
@@ -417,6 +506,77 @@ export default function NotificationsPage() {
           <ReadReceiptBadge notificationId={result.notification_id} />
         </Box>
       )}
+
+      {/* Notification history (D.6) — everything this manager has sent or
+          scheduled, with read receipts already counted server-side. */}
+      <Box sx={{ mt: 4 }}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+          <HistoryOutlinedIcon color="action" />
+          <Typography variant="h6" fontWeight={700}>
+            Notification history
+          </Typography>
+        </Stack>
+
+        {historyError ? (
+          <Alert severity="error">Could not load your notification history.</Alert>
+        ) : history.length === 0 ? (
+          <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}>
+            <Typography variant="body2" color="text.secondary">
+              Nothing sent yet — notifications you send will be listed here.
+            </Typography>
+          </Paper>
+        ) : (
+          <Stack spacing={1.5}>
+            {history.map((n) => (
+              <Paper key={n.id} variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  useFlexGap
+                  sx={{ mb: 1 }}
+                >
+                  <Chip size="small" label={n.status} color={STATUS_COLOR[n.status] ?? 'default'} />
+                  <Chip size="small" variant="outlined" label={n.urgency} />
+                  <Chip size="small" variant="outlined" label={describeStoredScope(n.scope)} />
+                  <Box sx={{ flexGrow: 1 }} />
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    {n.status === 'Scheduled' ? (
+                      <>
+                        <ScheduleOutlinedIcon fontSize="small" color="action" />
+                        <Typography variant="caption" color="text.secondary">
+                          for {formatWhen(n.send_time)}
+                        </Typography>
+                      </>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">
+                        {formatWhen(n.sent_at ?? n.created_at)}
+                      </Typography>
+                    )}
+                  </Stack>
+                </Stack>
+
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {n.message}
+                </Typography>
+
+                {/* A scheduled row has no recipients yet — they are resolved at
+                    dispatch — so a "0 of 0 read" line there would be misleading. */}
+                {n.status !== 'Scheduled' && (
+                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 1 }}>
+                    <MarkEmailReadOutlinedIcon fontSize="small" color="action" />
+                    <Typography variant="caption" color="text.secondary">
+                      {n.read_count} of {n.total_recipients} recipient
+                      {n.total_recipients === 1 ? '' : 's'} read
+                    </Typography>
+                  </Stack>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+        )}
+      </Box>
 
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
         <DialogTitle>{scheduled ? 'Schedule notification?' : 'Send notification?'}</DialogTitle>

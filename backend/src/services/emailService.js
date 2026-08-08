@@ -54,6 +54,61 @@ function contractorInboxLink() {
   return `${base}/contractor-inbox`;
 }
 
+function loginLink() {
+  const base = (config.FRONTEND_URL || '').replace(/\/+$/, '');
+  return `${base}/login`;
+}
+
+/**
+ * Tell a self-registered resident their account has been approved. Until this
+ * arrives they have no way of knowing — login refuses them with "awaiting
+ * manager approval" and nothing on their side changes when the manager acts.
+ * The caller swallows failures so a mail hiccup never un-approves the account.
+ *
+ * @param {Object} resident - the approved `users` row.
+ * @param {string} resident.email
+ * @param {string} resident.full_name
+ * @param {string} [resident.block_number]
+ * @param {string} [resident.unit_number]
+ * @returns {Promise<void>} resolves when the message is accepted by the SMTP server.
+ * @throws {Error} if SMTP delivery fails (propagated from nodemailer).
+ */
+async function sendResidentApprovedEmail(resident) {
+  const link = loginLink();
+  const address = resident.unit_number
+    ? `Block ${resident.block_number}, Unit ${resident.unit_number}`
+    : `Block ${resident.block_number}`;
+  const subject = 'Your EM Services account has been approved';
+
+  const text =
+    `Hello ${resident.full_name},\n\n` +
+    `Good news — a manager has verified your details and approved your ` +
+    `EM Services account. You can now sign in and start reporting estate ` +
+    `issues.\n\n` +
+    `Registered address: ${address}\n` +
+    `Sign in with the email and password you registered with: ${link}\n\n` +
+    `This is an automated message from EM Services.`;
+  const html =
+    `<p>Hello ${resident.full_name},</p>` +
+    `<p>Good news — a manager has verified your details and approved your ` +
+    `EM Services account. You can now sign in and start reporting estate issues.</p>` +
+    `<table cellpadding="4" style="border-collapse:collapse">` +
+    `<tr><td><strong>Registered address</strong></td><td>${address}</td></tr>` +
+    `<tr><td><strong>Sign in with</strong></td><td>${resident.email}</td></tr>` +
+    `</table>` +
+    `<p><a href="${link}">Sign in to EM Services</a></p>` +
+    `<p>Use the password you chose when you registered.</p>` +
+    `<p style="color:#888;font-size:12px">This is an automated message from EM Services.</p>`;
+
+  await getTransport().sendMail({
+    from: config.SMTP_USER,
+    to: resident.email,
+    subject,
+    text,
+    html,
+  });
+}
+
 // Render the failed checkpoints as plain text and as an HTML table (D.2: section,
 // item no., text, severity, remark). Photos are Cloudinary links, NEVER
 // attachments — HLD §10 is explicit, and a 25-photo form would bounce on size.
@@ -246,4 +301,4 @@ async function sendDefectAlert(defect, recipientEmail, options = {}) {
   });
 }
 
-module.exports = { sendReportEmail, sendDefectAlert };
+module.exports = { sendReportEmail, sendDefectAlert, sendResidentApprovedEmail };

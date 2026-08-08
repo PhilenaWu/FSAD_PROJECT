@@ -22,6 +22,12 @@ const STATUSES = [
   'On Hold', 'Rectified', 'Resolved', 'Closed',
 ];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
+// Categories a resident picks on the report form and a manager can correct
+// during triage (migration 042).
+const CATEGORIES = [
+  'Structural', 'Electrical', 'Plumbing', 'Cleanliness', 'Lift', 'Doors',
+  'Cabin', 'Safety', 'Landscaping', 'Pest', 'Miscellaneous',
+];
 
 // HLD 14-day rectification rule, used whenever a deadline is left unset.
 // New records get the same window from the `inspections` column default
@@ -191,13 +197,21 @@ function gpsFields(body) {
 async function create(req, res, next) {
   try {
     const resident_id = req.user.id;
-    const { title, description, location_block, location_unit } = req.body;
+    const { title, description, location_block, location_unit, category } = req.body;
 
-    // Minimal required-field validation.
-    if (!title || !description || !location_block) {
+    // Minimal required-field validation. The resident picks the category on the
+    // form, so it is required alongside the rest — 'Miscellaneous' is the
+    // honest answer when they are unsure, not a blank.
+    if (!title || !description || !location_block || !category) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
-        message: 'title, description and location_block are required.',
+        message: 'title, description, location_block and category are required.',
+      });
+    }
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
       });
     }
 
@@ -225,8 +239,11 @@ async function create(req, res, next) {
       photo_url = await cloudinaryService.uploadImage(req.file.buffer, 'defects');
     }
 
-    // AI categorisation (currently stubbed).
-    const { category, priority_score } = await openaiService.categoriseIncident(
+    // The AI is still consulted for the priority score, but the resident's own
+    // choice of category is what gets stored — a person looking at the defect
+    // beats a guess made from its title (and beats CV, which never writes a
+    // category onto an existing report).
+    const { priority_score } = await openaiService.categoriseIncident(
       title,
       description
     );
@@ -682,9 +699,10 @@ async function getDetail(req, res, next) {
 // change live (Zoe's UC-003 layer listens for it).
 async function updateInspection(req, res, next) {
   try {
-    const { priority, status, contractor_id, target_deadline, hold_reason, note } = req.body;
+    const { priority, status, contractor_id, target_deadline, hold_reason, category, note } =
+      req.body;
 
-    const changes = { priority, status, contractor_id, target_deadline, hold_reason };
+    const changes = { priority, status, contractor_id, target_deadline, hold_reason, category };
     const hasChange = Object.values(changes).some((v) => v !== undefined);
     if (!hasChange) {
       return res.status(400).json({
@@ -702,6 +720,13 @@ async function updateInspection(req, res, next) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
         message: `priority must be one of: ${PRIORITIES.join(', ')}.`,
+      });
+    }
+    // Triage can correct a category the resident picked wrongly.
+    if (category !== undefined && !CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
       });
     }
 
@@ -815,7 +840,10 @@ async function updateInspection(req, res, next) {
           event_type: isReassignment ? 'defect_reassigned' : 'defect_assigned',
           scope: assignee.scope,
           message: `${recordLabel(inspection)} has been ${isReassignment ? 'reassigned' : 'assigned'} to you — due ${new Date(inspection.target_deadline).toLocaleDateString('en-SG')}.`,
-          urgency: 'Warning',
+          // Informational (D.13): being given work is the contractor's happy
+          // path, not an exception. It was Warning, so every routine assignment
+          // arrived looking like an escalation.
+          urgency: 'Informational',
           link: '/contractor-inbox',
         });
       }
@@ -839,7 +867,12 @@ async function updateInspection(req, res, next) {
           event_type: 'priority_changed',
           scope: assignee.scope,
           message: `${recordLabel(inspection)} is now ${inspection.priority} priority.`,
-          urgency: 'Warning',
+          // Urgency tracks the new priority rather than being Warning either way
+          // (D.13) — a drop to Low is not a warning. Same conditional shape as
+          // complaint_submitted above.
+          urgency: ['Critical', 'High'].includes(inspection.priority)
+            ? 'Warning'
+            : 'Informational',
           link: '/contractor-inbox',
         });
       }
@@ -922,6 +955,19 @@ async function closeInspection(req, res, next) {
       return res.status(409).json({
         code: 'INVALID_STATE',
         message: `Only a Rectified or Resolved inspection can be closed (this one is ${existing.status}).`,
+      });
+    }
+
+    // UC-004 precondition, second half: the contractor finishing the work is
+    // not enough — an inspector must have checked it. That check is the
+    // /review action, which until now only wrote an audit row nobody consulted,
+    // so a manager could endorse and close work no inspector had ever seen.
+    // Deliberately not waivable, unlike G8 below.
+    if (!(await inspectionModel.hasInspectorReview(req.params.id))) {
+      return res.status(409).json({
+        code: 'NOT_REVIEWED',
+        message:
+          'An inspector must mark this record as reviewed before it can be closed.',
       });
     }
 

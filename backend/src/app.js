@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 const config = require('./config/env');
-const rateLimiter = require('./middleware/rateLimiter');
+const { rateLimiter } = require('./middleware/rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const inspectionRoutes = require('./routes/inspections');
 const myReportRoutes = require('./routes/myReports');
@@ -24,6 +24,7 @@ const vendorRoutes = require('./routes/vendors');
 const reportRoutes = require('./routes/reports');
 const adminRoutes = require('./routes/admin');
 const feedbackRoutes = require('./routes/feedback');
+const contactRoutes = require('./routes/contacts');
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use('/api/reports', reportRoutes);
 // specific vendor router matches first and is not shadowed by this prefix.
 app.use('/api/admin', adminRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/contacts', contactRoutes);
 
 // 404 + central error handler — must stay last.
 app.use(notFound);

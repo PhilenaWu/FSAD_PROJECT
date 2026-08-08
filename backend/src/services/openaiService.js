@@ -16,7 +16,7 @@ const config = require('../config/env');
 // title/description and parse the model's category + priority. For now we return
 // a safe default so the create path is testable without a key.
 async function categoriseIncident(title, description) {
-  return { category: 'Uncategorised', priority_score: 50 };
+  return { category: 'Miscellaneous', priority_score: 50 };
 }
 
 // Specific preventive action per defect category (keys match the inspections
@@ -33,8 +33,7 @@ const CATEGORY_ACTIONS = {
   Safety: 'conduct a safety-equipment audit (alarms, signage, extinguishers)',
   Landscaping: 'schedule grounds maintenance and a pathway/tree inspection',
   Pest: 'arrange professional pest-control treatment',
-  Other: 'conduct a targeted preventive inspection of the affected area',
-  Uncategorised: 'conduct a targeted preventive inspection of the affected area',
+  Miscellaneous: 'conduct a targeted preventive inspection of the affected area',
 };
 
 /**
@@ -44,7 +43,7 @@ const CATEGORY_ACTIONS = {
  * @returns {string}
  */
 function actionFor(category) {
-  return CATEGORY_ACTIONS[category] || CATEGORY_ACTIONS.Uncategorised;
+  return CATEGORY_ACTIONS[category] || CATEGORY_ACTIONS.Miscellaneous;
 }
 
 /**

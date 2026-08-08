@@ -56,10 +56,17 @@ import {
   runExpiryCheck,
 } from '../services/vendorService';
 
+// Onboarding asks only for what identifies the vendor, their contract, and the
+// person who gets the login. Two fields are no longer asked for; the server
+// fills both, and either can still be corrected in Edit:
+//   contact_email   — defaults to the login email, so onboarding never asks for
+//                     a second address.
+//   brands_serviced — defaults to the company name, which for lift vendors
+//                     carries the make ("Otis Service SG", "KONE Maintenance").
+//                     Set it in Edit for a vendor servicing makes its name does
+//                     not state — FPTD Services covers Otis and KONE.
 const EMPTY_FORM = {
   name: '',
-  contact_email: '',
-  brands_serviced: '',
   contract_start: '',
   contract_end: '',
   account_holder_name: '',
@@ -84,15 +91,6 @@ function defaultRenewDate(currentEnd) {
   const base = currentEnd ? new Date(currentEnd) : new Date();
   base.setFullYear(base.getFullYear() + 1);
   return base.toISOString().slice(0, 10);
-}
-
-// Suggest a login email from the holder's name + the company email's domain:
-// "Sing En" + service@dymatics.com → sing.en@dymatics.com. Just a convenience
-// default — the admin can overwrite it with the person's real address.
-function suggestLoginEmail(holderName, companyEmail) {
-  const domain = companyEmail.split('@')[1];
-  const local = holderName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');
-  return domain && local ? `${local}@${domain}` : '';
 }
 
 // How many vendors the table shows before "All" is chosen.
@@ -201,7 +199,7 @@ export default function AdminVendorPage() {
   };
 
   const matchesSearch = (v, q) =>
-    !q || `${v.name} ${v.account_holder ?? ''} ${v.contact_email ?? ''} ${v.brands_serviced ?? ''}`
+    !q || `${v.name} ${v.account_holder ?? ''} ${v.contact_email ?? ''} ${v.login_email ?? ''} ${v.brands_serviced ?? ''}`
       .toLowerCase().includes(q);
 
   const visible = useMemo(() => {
@@ -277,23 +275,10 @@ export default function AdminVendorPage() {
     renewDate && renewTarget?.contract_end && renewDate <= renewTarget.contract_end.slice(0, 10)
   );
 
-  // Track whether the admin has typed in the login-email field themselves;
-  // until then we keep auto-suggesting from name + company domain.
-  const [loginEmailTouched, setLoginEmailTouched] = useState(false);
-
   function setField(field) {
     return (e) => {
       const value = e.target.value;
-      setForm((f) => {
-        const nextForm = { ...f, [field]: value };
-        if (!loginEmailTouched && (field === 'account_holder_name' || field === 'contact_email')) {
-          nextForm.login_email = suggestLoginEmail(
-            field === 'account_holder_name' ? value : nextForm.account_holder_name,
-            field === 'contact_email' ? value : nextForm.contact_email
-          );
-        }
-        return nextForm;
-      });
+      setForm((f) => ({ ...f, [field]: value }));
     };
   }
 
@@ -309,7 +294,6 @@ export default function AdminVendorPage() {
       setFormOpen(false);
       setForm(EMPTY_FORM);
       setContractDoc(null);
-      setLoginEmailTouched(false);
       setSuccess(`Vendor "${form.name}" onboarded.`);
       reload();
     } catch (err) {
@@ -337,9 +321,11 @@ export default function AdminVendorPage() {
   }
 
   function openEdit(v) {
+    // contact_email and brands_serviced are omitted: neither is asked for at
+    // onboarding any more (the server derives them from the login email and the
+    // company name), so editing them here would be the only place they could
+    // diverge. updateDetails still accepts both if they are ever needed again.
     setEditForm({
-      contact_email: v.contact_email || '',
-      brands_serviced: v.brands_serviced || '',
       account_holder_name: v.account_holder || '',
       job_title: v.job_title || '',
       access_reason: v.access_reason || '',
@@ -548,7 +534,7 @@ export default function AdminVendorPage() {
                 <TableRow>
                   <TableCell>{vendorSort.sortLabel('name', 'Vendor')}</TableCell>
                   <TableCell>{vendorSort.sortLabel('account_holder', 'Account holder')}</TableCell>
-                  <TableCell>Brands</TableCell>
+                  <TableCell>Lift brands</TableCell>
                   <TableCell>{vendorSort.sortLabel('contract_end', 'Contract')}</TableCell>
                   <TableCell>{vendorSort.sortLabel('days_until_expiry', 'Expires in')}</TableCell>
                   <TableCell>{vendorSort.sortLabel('status', 'Account')}</TableCell>
@@ -560,7 +546,17 @@ export default function AdminVendorPage() {
                   <TableRow key={v.id} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600}>{v.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">{v.contact_email}</Typography>
+                      {/* The account holder's login (users.email via the join in
+                          listByContractEnd), not contractors.contact_email — the
+                          company inbox was ambiguous here because it never
+                          identifies which account signs in for this vendor.
+                          contact_email is no longer entered anywhere in the UI
+                          (the server defaults it to this address); it remains on
+                          the record and in the CSV export, and is the fallback
+                          the vendor row keeps if a login is never linked. */}
+                      <Typography variant="caption" color="text.secondary">
+                        {v.login_email || v.contact_email}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       {v.account_holder ? (
@@ -579,7 +575,12 @@ export default function AdminVendorPage() {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell>{v.brands_serviced || '—'}</TableCell>
+                    {/* Same rule as the assign dropdown: a vendor onboarded
+                        without an explicit brand carries the company name, so
+                        repeating it beside the Vendor column says nothing. */}
+                    <TableCell>
+                      {v.brands_serviced && v.brands_serviced !== v.name ? v.brands_serviced : '—'}
+                    </TableCell>
                     <TableCell>
                       {v.contract_start && v.contract_end ? (
                         <Stack direction="row" spacing={0.5} alignItems="center">
@@ -677,11 +678,10 @@ export default function AdminVendorPage() {
                 {formError && <Alert severity="error">{formError}</Alert>}
 
                 <Typography variant="subtitle2" color="text.secondary">Company</Typography>
-                <TextField label="Company name" required value={form.name} onChange={setField('name')} />
-                <TextField label="Company contact email" type="email" required
-                  helperText="General service address, e.g. service@dymatics.com"
-                  value={form.contact_email} onChange={setField('contact_email')} />
-                <TextField label="Brands serviced (comma-separated)" value={form.brands_serviced} onChange={setField('brands_serviced')} />
+                <TextField label="Company name" required
+                  placeholder="e.g. Otis Service SG"
+                  helperText="Also used as the lift make shown to managers when assigning a defect."
+                  value={form.name} onChange={setField('name')} />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <TextField label="Contract start" type="date" required fullWidth
                     InputLabelProps={{ shrink: true }}
@@ -704,12 +704,8 @@ export default function AdminVendorPage() {
                     value={form.job_title} onChange={setField('job_title')} />
                 </Stack>
                 <TextField label="Login email (their work email)" type="email" required
-                  helperText="Suggested from name + company domain — replace with their real address if different"
-                  value={form.login_email}
-                  onChange={(e) => {
-                    setLoginEmailTouched(true);
-                    setForm((f) => ({ ...f, login_email: e.target.value }));
-                  }} />
+                  helperText="The address this person signs in with."
+                  value={form.login_email} onChange={setField('login_email')} />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
                   <TextField label="Vendor password (admin-set)" required fullWidth
                     helperText="This credential is managed by EM Services — record it and share it with the vendor securely"
@@ -783,12 +779,6 @@ export default function AdminVendorPage() {
           <DialogTitle>Edit details — {editTarget?.name}</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ mt: 1 }}>
-              <TextField label="Company contact email" type="email"
-                value={editForm.contact_email || ''}
-                onChange={(e) => setEditForm((f) => ({ ...f, contact_email: e.target.value }))} />
-              <TextField label="Brands serviced"
-                value={editForm.brands_serviced || ''}
-                onChange={(e) => setEditForm((f) => ({ ...f, brands_serviced: e.target.value }))} />
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField label="Account holder name" fullWidth
                   value={editForm.account_holder_name || ''}

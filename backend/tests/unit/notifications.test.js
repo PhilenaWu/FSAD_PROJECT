@@ -83,6 +83,25 @@ jest.mock('../../src/config/db', () => ({
     if (/COUNT\(\*\)::int AS unread/i.test(sql)) {
       return { rows: [{ unread: 1 }] };
     }
+    // The manager outbox (GET /api/notifications/sent).
+    if (/LEFT JOIN notification_recipients r/i.test(sql)) {
+      return {
+        rows: [
+          {
+            id: 'notif-1',
+            message: 'Water off 9–12',
+            urgency: 'Warning',
+            scope: { type: 'blocks', blocks: ['44A'] },
+            status: 'Sent',
+            send_time: null,
+            sent_at: '2026-07-15T00:00:00Z',
+            created_at: '2026-07-15T00:00:00Z',
+            total_recipients: 2,
+            read_count: 1,
+          },
+        ],
+      };
+    }
     // resolveRecipients (blocks / inspector_team / managers / admins).
     if (/SELECT id FROM users/i.test(sql)) {
       return { rows: [{ id: 'r1' }, { id: 'r2' }] };
@@ -204,6 +223,56 @@ describe('GET /api/notifications', () => {
   });
 });
 
+// The manager's send history (D.6). Before this endpoint the only way to see a
+// read receipt was the notification still held in page state after a send.
+describe('GET /api/notifications/sent', () => {
+  test('200 with the manager own sends and joined receipt counts', async () => {
+    const res = await request(app)
+      .get('/api/notifications/sent')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({
+      id: 'notif-1',
+      status: 'Sent',
+      total_recipients: 2,
+      read_count: 1,
+    });
+  });
+
+  test('scopes the query to the calling manager', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+    await request(app)
+      .get('/api/notifications/sent')
+      .set('Authorization', 'Bearer manager-token');
+
+    const outbox = query.mock.calls.find(([sql]) =>
+      /LEFT JOIN notification_recipients r/i.test(sql)
+    );
+    expect(outbox[1][0]).toBe('mgr-1');
+  });
+
+  test('403 for a non-manager role', async () => {
+    const res = await request(app)
+      .get('/api/notifications/sent')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  test('is not shadowed by the /:id/receipts route', async () => {
+    const res = await request(app)
+      .get('/api/notifications/sent')
+      .set('Authorization', 'Bearer manager-token');
+
+    // A receipts response would have notification_id/total_recipients at the
+    // top level; the history returns a `data` array.
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+});
+
 // notifyEvent is the seam lifecycle transitions call. It must persist a row and
 // emit exactly once, and it must never throw — the transition that triggered it
 // has already committed, so a notification failure cannot be allowed to turn a
@@ -280,6 +349,50 @@ describe('notificationService.notifyEvent', () => {
       false
     );
     expect(socketService.emitToRooms.mock.calls[0][0]).toEqual([]);
+  });
+
+  // D.12: a contractor transition used to be two notifyEvent calls (managers,
+  // then the originator), so it wrote two rows and anyone in both audiences saw
+  // the same event twice. One scope, union-deduped, makes that impossible.
+  test('managers_and_users unions managers with the named ids, deduped', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+
+    // The generic `SELECT id FROM users` mock returns r1/r2 for the managers
+    // leg; naming r2 as the inspector makes the two sets overlap.
+    const count = await notificationService.notifyEvent({
+      event_type: 'rectified',
+      scope: {
+        type: 'managers_and_users',
+        user_ids: ['r2'],
+        rooms: ['inspector-team'],
+      },
+      message: 'Work submitted on Blk 44A',
+      urgency: 'Informational',
+    });
+
+    // r1 + r2, not r1 + r2 + r2.
+    expect(count).toBe(2);
+    const insert = query.mock.calls.find(([sql]) =>
+      /INSERT INTO notification_recipients/i.test(sql)
+    );
+    expect(insert[1][1]).toEqual(['r1', 'r2']);
+    expect(socketService.emitToRooms.mock.calls[0][0]).toEqual([
+      'manager-room',
+      'inspector-team',
+    ]);
+  });
+
+  test('managers_and_users with no named ids still reaches the managers', async () => {
+    const count = await notificationService.notifyEvent({
+      event_type: 'acknowledged',
+      scope: { type: 'managers_and_users', user_ids: [], rooms: [] },
+      message: 'Acknowledged',
+      urgency: 'Informational',
+    });
+
+    expect(count).toBe(2);
+    expect(socketService.emitToRooms.mock.calls[0][0]).toEqual(['manager-room']);
   });
 
   test('swallows a delivery failure and does not throw (G13)', async () => {

@@ -214,6 +214,57 @@ describe('DashboardPage — data and failure states', () => {
     expect(link).toHaveAttribute('href', '/inspections/rec-1');
   });
 
+  // ANA-T04 / ANA-T05 from the phase-plan register. The export writes the
+  // priority queue, so an empty filter result has nothing to write — the button
+  // disables itself and says why, rather than downloading a headerless file.
+  test('ANA-T04: Export CSV downloads the priority queue when there are rows', async () => {
+    getPriorityQueue.mockResolvedValue({
+      data: [{
+        id: 'rec-1', title: 'Lift door misalignment', block: '44A', category: 'Lift',
+        priority: 'Critical', status: 'Assigned', ai_priority_score: 88,
+        composite_score: 71.4, created_at: '2026-06-22T09:15:00Z',
+      }],
+    });
+    renderPage();
+
+    const exportBtn = await screen.findByRole('button', { name: /Export CSV/i });
+    await waitFor(() => expect(exportBtn).toBeEnabled());
+
+    // downloadCsv builds a blob and clicks a synthetic anchor; assert on that
+    // rather than the file, which jsdom never writes anywhere.
+    const createObjectURL = vi.fn(() => 'blob:queue');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+
+    await userEvent.click(exportBtn);
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:queue');
+
+    clickSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test('ANA-T05: Export CSV is disabled and explains itself on an empty result', async () => {
+    getPriorityQueue.mockResolvedValue({ data: [] }); // filters match nothing
+    renderPage();
+
+    const exportBtn = await screen.findByRole('button', { name: /Export CSV/i });
+    expect(exportBtn).toBeDisabled();
+
+    // A disabled button fires no pointer events, so MUI puts the listener on
+    // the span wrapping it — that span is what has to be hovered for the
+    // reason to appear. mouseOver is the event MUI's Tooltip subscribes to.
+    fireEvent.mouseOver(exportBtn.parentElement);
+
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent(/No records match the current filters/i);
+  });
+
   test('a superseded response cannot repaint the page (stale-request race)', async () => {
     let releaseSlow;
     const slow = new Promise((resolve) => {

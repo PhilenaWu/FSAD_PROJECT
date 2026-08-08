@@ -11,6 +11,7 @@ import {
   AppBar,
   Box,
   Button,
+  Chip,
   Divider,
   Drawer,
   IconButton,
@@ -80,7 +81,7 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
       }
       sx={{ px: 1.5, py: sectionLabel ? 0 : 1 }}
     >
-      {navItems.map(({ label, to, icon: Icon }) => {
+      {navItems.map(({ label, to, icon: Icon, badgeCount }) => {
         const active = currentPath === to;
         return (
           <ListItemButton
@@ -107,6 +108,16 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
               primary={label}
               primaryTypographyProps={{ fontWeight: active ? 700 : 500, fontSize: '0.9rem' }}
             />
+            {/* Optional count pill (e.g. pending resident requests). Hidden at
+                zero so the sidebar only draws the eye when there's work. */}
+            {badgeCount > 0 && (
+              <Chip
+                size="small"
+                label={badgeCount}
+                color="primary"
+                sx={{ height: 20, minWidth: 20, '& .MuiChip-label': { px: 0.75, fontWeight: 700 } }}
+              />
+            )}
           </ListItemButton>
         );
       })}
@@ -115,12 +126,13 @@ function NavList({ navItems, currentPath, onNavigate, sectionLabel }) {
 }
 
 // Sidebar footer card. Two variants:
-// - `helpPhone` given: "Need urgent help? Call your managing office" + a real
-//   tel: link (resident chrome).
+// - `helpPhone` given: "Need urgent help?" + `helpCaption` naming who picks up
+//   + a real tel: link. Layouts get both from lib/useRoleContacts.js — the
+//   number from the database, the caption from lib/roleContacts.js.
 // - otherwise: "Contact support" — no support email/route exists anywhere in
 //   the app yet, so the button stays disabled rather than silently going
-//   nowhere on click (manager/admin chrome, unchanged from before).
-function HelpCard({ helpPhone }) {
+//   nowhere on click (roles with no number configured yet).
+function HelpCard({ helpPhone, helpCaption }) {
   return (
     <Box sx={{ p: 1.5 }}>
       <Box
@@ -154,9 +166,11 @@ function HelpCard({ helpPhone }) {
                 <Typography variant="body2" fontWeight={700} sx={{ color: 'sidebar.textActive' }}>
                   Need urgent help?
                 </Typography>
-                <Typography variant="caption" sx={{ color: 'sidebar.text', display: 'block', mb: 0.5 }}>
-                  Call your managing office
-                </Typography>
+                {helpCaption && (
+                  <Typography variant="caption" sx={{ color: 'sidebar.text', display: 'block', mb: 0.5 }}>
+                    {helpCaption}
+                  </Typography>
+                )}
                 <Typography
                   component="a"
                   href={`tel:${helpPhone.replace(/\s+/g, '')}`}
@@ -198,7 +212,8 @@ function HelpCard({ helpPhone }) {
 }
 
 /**
- * @param {{label: string, to: string, icon: React.ElementType}[]} navItems
+ * @param {{label: string, to: string, icon: React.ElementType, badgeCount?: number}[]} navItems
+ *   badgeCount renders a small count pill on the row; omitted or 0 renders none
  * @param {string} accountSubtitle - text under the name in the account menu
  * @param {boolean} profileLinkEnabled - whether "Profile" navigates to /profile
  *   (false renders it as a disabled placeholder, matching the pre-redesign
@@ -207,6 +222,8 @@ function HelpCard({ helpPhone }) {
  *   optional second nav section (e.g. Emergency contacts/FAQ/Feedback)
  * @param {string} [helpPhone] - if given, the sidebar footer shows this as a
  *   real "Need urgent help?" tel: link instead of the disabled support button
+ * @param {string} [helpCaption] - line under "Need urgent help?" naming who
+ *   answers that number (e.g. "Call your managing office")
  * @param {boolean} [showLogoutInSidebar] - also show a direct Logout row at
  *   the foot of the sidebar (logout is always available from the account menu
  *   regardless)
@@ -217,6 +234,7 @@ export default function AppShell({
   profileLinkEnabled,
   quickAccessItems,
   helpPhone,
+  helpCaption,
   showLogoutInSidebar,
 }) {
   const { logout } = useAuth();
@@ -275,7 +293,7 @@ export default function AppShell({
           </ListItemButton>
         </List>
       )}
-      <HelpCard helpPhone={helpPhone} />
+      <HelpCard helpPhone={helpPhone} helpCaption={helpCaption} />
     </Box>
   );
 

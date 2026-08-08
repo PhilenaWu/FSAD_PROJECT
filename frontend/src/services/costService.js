@@ -428,6 +428,11 @@ export async function getCostSummary(filters = {}) {
     total_projected: overall.total_projected,
     jobs: overall.jobs,
     prior_actual: priorActual,
+    // The figure the movement is actually measured on. Without it the tile
+    // showed a percentage and the prior total but never the current window's
+    // total, so the movement read as though it described total_actual — which
+    // is the all-time figure, not this window.
+    window_actual: windowActual,
     variance_pct:
       priorActual > 0
         ? Math.round(((windowActual - priorActual) / priorActual) * 1000) / 10

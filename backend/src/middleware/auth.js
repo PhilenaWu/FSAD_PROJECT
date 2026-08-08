@@ -11,6 +11,31 @@ function authError(message) {
   return err;
 }
 
+// Statuses that hold a valid Supabase token but must reach no application
+// route. A self-registered resident sits at 'pending' until a manager approves
+// them, so gating this in one place (rather than per route) is what makes
+// "pending gets nothing" true of every endpoint, including future ones.
+// Each gets its own code so the frontend can explain the specific reason.
+const BLOCKED_STATUSES = {
+  pending: {
+    code: 'ACCOUNT_PENDING',
+    message: 'Your account is awaiting manager approval.',
+  },
+  rejected: {
+    code: 'ACCOUNT_REJECTED',
+    message: 'Your registration request was not approved.',
+  },
+};
+
+function blockedStatusError(status) {
+  const blocked = BLOCKED_STATUSES[status];
+  if (!blocked) return null;
+  const err = new Error(blocked.message);
+  err.statusCode = 403;
+  err.code = blocked.code;
+  return err;
+}
+
 // Verify the Supabase JWT sent by the frontend in `Authorization: Bearer <token>`.
 // On success, attaches `req.user = { id, email, role, status }`. Auth happens in
 // the browser (Supabase Auth); the backend only validates the resulting token
@@ -56,6 +81,11 @@ async function requireAuth(req, res, next) {
       err.code = 'ACCOUNT_SUSPENDED';
       return next(err);
     }
+    // Same gate, same place, for the self-registration statuses.
+    const blocked = blockedStatusError(profile.status);
+    if (blocked) {
+      return next(blocked);
+    }
     req.user.role = profile.role;
     req.user.status = profile.status;
   }
@@ -96,6 +126,11 @@ function requireRole(...roles) {
       err.statusCode = 403;
       err.code = 'ACCOUNT_SUSPENDED';
       return next(err);
+    }
+
+    const blocked = blockedStatusError(status);
+    if (blocked) {
+      return next(blocked);
     }
 
     if (!role || status !== 'active' || !roles.includes(role)) {
