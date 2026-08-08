@@ -102,9 +102,9 @@ async function notifyTransition(inspection, { event_type, message, urgency }) {
 // joint endorsement") does not tell the inspector that anything is theirs.
 //
 // This is the trigger half of item 17 only. The destination — the inspector's
-// Rectified review queue and POST /:id/review — already exists and belongs to
-// UC-004, so inspectionController is not touched: the record enters that queue
-// on its own when the status becomes Rectified.
+// review queue and POST /:id/review — already exists and belongs to UC-004, so
+// inspectionController is not touched: the record enters that queue on its own
+// when the status becomes Rectified ("Pending View By Inspector").
 async function notifyRectified(inspection, contractor) {
   const link = `/inspections/${inspection.id}`;
   const label = recordLabel(inspection);
@@ -119,17 +119,19 @@ async function notifyRectified(inspection, contractor) {
     link,
   });
 
-  // A record with no inspector (an untriaged resident complaint) has nobody to
-  // task, and the managers' line above already covers it.
-  const inspector = inspectorOf(inspection);
-  if (!inspector) return;
-
-  // Warning rather than Informational, unlike the managers' copy: this one is
-  // a job with the close waiting on it, which is exactly the "actually needs
+  // Every active inspector, not just the record's own. The review queue they
+  // see is estate-wide — it lists every record awaiting a check, whoever filed
+  // it — and any inspector's review satisfies the close gate. Addressing only
+  // inspection.inspector_id meant a resident complaint assigned to a contractor
+  // (no inspector on the record at all) appeared in that queue with nobody
+  // told, which is most of what lands there.
+  //
+  // Warning rather than Informational, unlike the managers' copy: this one is a
+  // job with the close waiting on it, which is exactly the "actually needs
   // action" test D.13 set for the label.
   await notificationService.notifyEvent({
     event_type: 'review_requested',
-    scope: { type: 'users', user_ids: inspector.user_ids, rooms: inspector.rooms },
+    scope: { type: 'inspector_team' },
     message: `${label} — ${contractor.name} has finished. Check the work before the manager closes it.`,
     urgency: 'Warning',
     link,

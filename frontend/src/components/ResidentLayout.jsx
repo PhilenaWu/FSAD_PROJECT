@@ -27,7 +27,7 @@ const NAV_BY_ROLE = {
     { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
     { label: 'New inspection', to: '/inspections/new', icon: AddCircleOutlineIcon },
     { label: 'My inspections', to: '/my-reports', icon: AssignmentOutlinedIcon },
-    { label: 'Completed work', to: '/inspections', icon: FactCheckOutlinedIcon },
+    { label: 'Needs your review', to: '/inspections', icon: FactCheckOutlinedIcon },
   ],
 };
 

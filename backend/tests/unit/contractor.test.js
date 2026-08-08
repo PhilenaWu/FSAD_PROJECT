@@ -41,7 +41,7 @@ const profiles = {
 // action starts from (resume requires 'On Hold').
 // `heldAction` is the latest 'On Hold'/'Resumed' audit row, which is what
 // "currently held" means now that a hold is not a status.
-const state = { assigned: true, lockedStatus: 'Assigned', heldAction: null };
+const state = { assigned: true, lockedStatus: 'Assigned', heldAction: null, inspectorId: 'insp-1' };
 
 const mockClient = {
   query: jest.fn(async (sql, params = []) => {
@@ -67,8 +67,9 @@ const mockClient = {
         rows: [{
           id: 'ins-1', status, location_block: '44A',
           title: 'Lift door defect',
-          // The record's inspector — who item 17's task is addressed to.
-          inspector_id: 'insp-1',
+          // The record's own inspector, if it has one. A resident complaint
+          // assigned straight to a contractor has none.
+          inspector_id: state.inspectorId,
           acknowledged_at: '2026-07-27T09:00:00Z',
           rectified_at: '2026-07-27T15:00:00Z',
           hold_reason: 'part on order',
@@ -128,6 +129,7 @@ beforeEach(() => {
   state.assigned = true;
   state.lockedStatus = 'Assigned';
   state.heldAction = null;
+  state.inspectorId = 'insp-1';
 });
 
 describe('POST /api/contractor/:id/acknowledge', () => {
@@ -217,6 +219,27 @@ describe('POST /api/contractor/:id/rectify', () => {
 
     // Disjoint audiences — the point of two rows rather than one (D.12).
     expect(managerRooms).not.toContain('inspector-team');
+  });
+
+  // The queue an inspector actually sees lists every record awaiting a check,
+  // whoever filed it — so the task goes to the whole team. Addressing only the
+  // record's own inspector meant a resident complaint assigned to a contractor,
+  // which has none, landed in that queue with nobody told.
+  test('finalize tasks the inspectors even when the record has no inspector', async () => {
+    emitToRooms.mockClear();
+    state.inspectorId = null;
+
+    await request(app)
+      .post('/api/contractor/ins-1/rectify')
+      .set('Authorization', 'Bearer contractor-token')
+      .field('items', JSON.stringify([]))
+      .attach('signature', Buffer.from('fakepng'), 'sig.png');
+
+    const notifications = emitToRooms.mock.calls.filter(([, event]) => event === 'notification');
+    expect(notifications).toHaveLength(2);
+    const [inspectorRooms, , inspectorPayload] = notifications[1];
+    expect(inspectorRooms).toEqual(['inspector-team']);
+    expect(inspectorPayload.event_type).toBe('review_requested');
   });
 
   test('a partial save raises no notification at all', async () => {

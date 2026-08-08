@@ -166,12 +166,12 @@ export default function InspectionListPage() {
   }
 
   const pageTitle = isInspector
-    ? 'Completed work'
+    ? 'Needs your review'
     : tab === REVIEW_TAB
     ? 'Needs Manual Review'
     : 'Triage queue';
   const pageSubtitle = isInspector
-    ? 'Lift inspections with rectified defects, awaiting your review'
+    ? 'Work a contractor has submitted, waiting on your check before it can be closed'
     : tab === REVIEW_TAB
     ? 'Low-confidence CV detections awaiting a manual call'
     : 'Open work, most urgent first — sorted by AI priority score';
@@ -303,7 +303,7 @@ export default function InspectionListPage() {
                 icon={FactCheckOutlinedIcon}
                 description={
                   isInspector
-                    ? 'No completed work is awaiting your review right now.'
+                    ? 'Nothing is waiting for your review right now.'
                     : 'No inspections match the current filters.'
                 }
               />
