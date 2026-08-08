@@ -11,6 +11,7 @@ const retryQueueModel = require('../models/retryQueueModel');
 const socketService = require('../services/socketService');
 const notificationService = require('../services/notificationService');
 const { priorityFromScore } = require('../utils/priorityFromScore');
+const { CATEGORIES } = require('../utils/inspectionOptions');
 
 // A photo that came with a real human report (resident/inspector upload —
 // originatingInspectionId is known) blends its CV confidence into that
@@ -287,6 +288,16 @@ async function createTicketFromDetection(req, res, next) {
       return res.status(400).json({
         code: 'VALIDATION_ERROR',
         message: 'category, priority, and location_block are required.',
+      });
+    }
+    // Same gate the resident create and manager PATCH paths apply. Without it a
+    // retired category ('Other', 'Uncategorised' — both dropped in migration
+    // 042) travels all the way to the inspections_category_check constraint and
+    // comes back as a 500 instead of a 400.
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `category must be one of: ${CATEGORIES.join(', ')}.`,
       });
     }
 

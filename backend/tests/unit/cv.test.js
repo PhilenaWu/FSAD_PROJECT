@@ -331,6 +331,44 @@ describe('cvController.detect', () => {
     expect(socketService.emitToRooms).not.toHaveBeenCalled();
   });
 
+  // Migration 042 retired 'Other' and 'Uncategorised'. This route validated only
+  // that a category was *present*, so a retired one travelled to the
+  // inspections_category_check constraint and came back a 500 — where the
+  // resident create and manager PATCH paths both answer 400.
+  test('a category migration 042 retired is refused as a 400, not left to the DB', async () => {
+    // The detection lookup: only a low_confidence row is ticketable.
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'cv-9',
+        status: 'low_confidence',
+        location_block: '44A',
+        image_url: 'https://example.com/photo.jpg',
+        confidence: 0.4,
+        defect_class: 'crack',
+      }],
+    });
+
+    const res = {
+      statusCode: null,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { this.body = payload; return this; },
+    };
+    await cvController.createTicketFromDetection(
+      { params: { id: 'cv-9' }, body: { category: 'Other', priority: 'High' }, user: { id: 'mgr-1' } },
+      res,
+      (err) => { throw err; }
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(res.body.message).toMatch(/category must be one of/);
+    // Refused before anything is written.
+    expect(
+      mockQuery.mock.calls.some(([sql]) => /INSERT INTO inspections/i.test(sql))
+    ).toBe(false);
+  });
+
   test('a non-429 failure propagates (caller logs and continues, per inspectionController)', async () => {
     jest.spyOn(roboflowService, 'detectDefect').mockRejectedValue(new Error('boom'));
 

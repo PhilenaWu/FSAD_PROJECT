@@ -15,6 +15,9 @@ const cvController = require('./cvController');
 const socketService = require('../services/socketService');
 const notificationService = require('../services/notificationService');
 const config = require('../config/env');
+// Categories a resident picks on the report form and a manager can correct
+// during triage (migration 042).
+const { CATEGORIES } = require('../utils/inspectionOptions');
 
 // Schema enums (migration 004 CHECKs) for PATCH validation.
 const STATUSES = [
@@ -22,12 +25,6 @@ const STATUSES = [
   'On Hold', 'Rectified', 'Resolved', 'Closed',
 ];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
-// Categories a resident picks on the report form and a manager can correct
-// during triage (migration 042).
-const CATEGORIES = [
-  'Structural', 'Electrical', 'Plumbing', 'Cleanliness', 'Lift', 'Doors',
-  'Cabin', 'Safety', 'Landscaping', 'Pest', 'Miscellaneous',
-];
 
 // HLD 14-day rectification rule, used whenever a deadline is left unset.
 // New records get the same window from the `inspections` column default
