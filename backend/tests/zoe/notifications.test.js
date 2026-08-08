@@ -33,6 +33,13 @@ const profiles = {
   'ctr-1': { role: 'contractor', status: 'active' },
 };
 
+// The two rows some tests below need to vary — receipt totals, and whether the
+// caller has a recipient row at all. Reset before each test.
+const state = {
+  receipts: { total: 5, read_count: 2 },
+  markReadRow: { id: 'nr-1', read: true, read_at: '2026-07-15T00:01:00Z' },
+};
+
 jest.mock('../../src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
@@ -61,6 +68,16 @@ jest.mock('../../src/config/db', () => ({
           },
         ],
       };
+    }
+    // getReceiptCounts — must precede the recipients matchers below.
+    if (/AS total,/i.test(sql) && /FROM notification_recipients/i.test(sql)) {
+      return { rows: [{ ...state.receipts }] };
+    }
+    // findSender — the author looked up for the live payload.
+    if (/SELECT full_name, role FROM users/i.test(sql)) {
+      return params[0] === 'mgr-1'
+        ? { rows: [{ full_name: 'Tan Wei Ming', role: 'manager' }] }
+        : { rows: [] };
     }
     // resolveRecipients ({ type: 'users' }) — must precede the generic users
     // matcher below, which would otherwise swallow it.
@@ -114,7 +131,7 @@ jest.mock('../../src/config/db', () => ({
       return { rows: [] };
     }
     if (/UPDATE notification_recipients SET read/i.test(sql)) {
-      return { rows: [{ id: 'nr-1', read: true, read_at: '2026-07-15T00:01:00Z' }] };
+      return { rows: state.markReadRow ? [state.markReadRow] : [] };
     }
     return { rows: [] };
   }),
@@ -124,6 +141,11 @@ const request = require('supertest');
 const app = require('../../src/app');
 
 const blocksScope = { type: 'blocks', blocks: ['44A'] };
+
+beforeEach(() => {
+  state.receipts = { total: 5, read_count: 2 };
+  state.markReadRow = { id: 'nr-1', read: true, read_at: '2026-07-15T00:01:00Z' };
+});
 
 describe('POST /api/notifications', () => {
   test('201 + recipients_count for an immediate manager send', async () => {
@@ -222,6 +244,88 @@ describe('POST /api/notifications', () => {
 
     expect(res.status).toBe(401);
   });
+
+  // The rest of the input guard. Each of these is also refused by the composer
+  // in the UI, so a request that goes round the form meets the same rules.
+  describe('validation', () => {
+    const post = (body) =>
+      request(app)
+        .post('/api/notifications')
+        .set('Authorization', 'Bearer manager-token')
+        .send(body);
+
+    test('400 on an empty message', async () => {
+      const res = await post({ message: '', scope: blocksScope, urgency: 'Warning' });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    test('400 on an urgency outside the three levels', async () => {
+      const res = await post({ message: 'hi', scope: blocksScope, urgency: 'Urgent' });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/Informational, Warning or Critical/);
+    });
+
+    test('400 when no scope is given', async () => {
+      const res = await post({ message: 'hi', urgency: 'Warning' });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/scope is required/);
+    });
+
+    test('400 on an unknown scope type', async () => {
+      const res = await post({ message: 'hi', scope: { type: 'everyone' }, urgency: 'Warning' });
+      expect(res.status).toBe(400);
+    });
+
+    test('400 when the blocks scope names no block', async () => {
+      const res = await post({
+        message: 'hi',
+        scope: { type: 'blocks', blocks: [] },
+        urgency: 'Warning',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/non-empty array/);
+    });
+
+    test('400 when the contractor scope names no contractor', async () => {
+      const res = await post({ message: 'hi', scope: { type: 'contractor' }, urgency: 'Warning' });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/contractor_user_id is required/);
+    });
+
+    test('a rejected send writes no notification and emits nothing', async () => {
+      const { query } = require('../../src/config/db');
+      const { emitToRooms } = require('../../src/services/socketService');
+      query.mockClear();
+      emitToRooms.mockClear();
+
+      await post({ message: 'hi', scope: { type: 'everyone' }, urgency: 'Warning' });
+
+      expect(query.mock.calls.some(([sql]) => /INSERT INTO notifications/i.test(sql))).toBe(false);
+      expect(emitToRooms).not.toHaveBeenCalled();
+    });
+  });
+
+  // The live payload has to carry what the persisted inbox returns, or a
+  // message shows its sender only after a refresh.
+  describe('the live socket payload', () => {
+    test('names the author of a human send', async () => {
+      const { emitToRooms } = require('../../src/services/socketService');
+      emitToRooms.mockClear();
+
+      await request(app)
+        .post('/api/notifications')
+        .set('Authorization', 'Bearer manager-token')
+        .send({ message: 'Water off 9–12', scope: blocksScope, urgency: 'Warning' });
+
+      const [, , payload] = emitToRooms.mock.calls[0];
+      expect(payload).toMatchObject({
+        message: 'Water off 9–12',
+        sender_name: 'Tan Wei Ming',
+        sender_role: 'manager',
+      });
+    });
+  });
 });
 
 describe('PATCH /api/notifications/:id/read', () => {
@@ -232,6 +336,118 @@ describe('PATCH /api/notifications/:id/read', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ notification_id: 'notif-1', read: true });
+  });
+
+  // Reading someone else's notification has to fail: the model returns no row
+  // when the caller has no recipient row for it, and that is a 404 rather than
+  // a silent success.
+  test('404 when the caller is not a recipient', async () => {
+    state.markReadRow = null;
+
+    const res = await request(app)
+      .patch('/api/notifications/notif-1/read')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+  });
+
+  test('updates the caller own row — the user id comes from the token', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+
+    await request(app)
+      .patch('/api/notifications/notif-1/read')
+      .set('Authorization', 'Bearer resident-token')
+      // A client-supplied id must not be honoured.
+      .send({ resident_id: 'mgr-1' });
+
+    const update = query.mock.calls.find(([sql]) =>
+      /UPDATE notification_recipients SET read/i.test(sql)
+    );
+    expect(update[1]).toEqual(['notif-1', 'res-1']);
+  });
+
+  test('401 without a token', async () => {
+    const res = await request(app).patch('/api/notifications/notif-1/read');
+    expect(res.status).toBe(401);
+  });
+});
+
+// The endpoint ReadReceiptBadge polls every 30 s. It is the only per-notification
+// count in the API — the history endpoint joins its counts for many rows at once.
+describe('GET /api/notifications/:id/receipts', () => {
+  test('200 with the totals for the manager who sent it', async () => {
+    const res = await request(app)
+      .get('/api/notifications/notif-1/receipts')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      notification_id: 'notif-1',
+      total_recipients: 5,
+      read_count: 2,
+      unread_count: 3,
+    });
+  });
+
+  // unread is derived rather than stored, so it has to stay consistent at both
+  // ends of the range instead of going negative or double-counting.
+  test('everyone has read it — unread_count is 0, not a leftover', async () => {
+    state.receipts = { total: 5, read_count: 5 };
+
+    const res = await request(app)
+      .get('/api/notifications/notif-1/receipts')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.body).toMatchObject({ total_recipients: 5, read_count: 5, unread_count: 0 });
+  });
+
+  test('a notification with no recipients answers zeros rather than failing', async () => {
+    state.receipts = { total: 0, read_count: 0 };
+
+    const res = await request(app)
+      .get('/api/notifications/notif-1/receipts')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total_recipients: 0, read_count: 0, unread_count: 0 });
+  });
+
+  test('counts the notification named in the path', async () => {
+    const { query } = require('../../src/config/db');
+    query.mockClear();
+
+    await request(app)
+      .get('/api/notifications/notif-42/receipts')
+      .set('Authorization', 'Bearer manager-token');
+
+    const counts = query.mock.calls.find(
+      ([sql]) => /AS total,/i.test(sql) && /FROM notification_recipients/i.test(sql)
+    );
+    expect(counts[1]).toEqual(['notif-42']);
+  });
+
+  // Who read a broadcast is the sender's business, not a recipient's.
+  test('403 for a non-manager role', async () => {
+    const res = await request(app)
+      .get('/api/notifications/notif-1/receipts')
+      .set('Authorization', 'Bearer resident-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  test('403 for a contractor, who may send but not audit', async () => {
+    const res = await request(app)
+      .get('/api/notifications/notif-1/receipts')
+      .set('Authorization', 'Bearer contractor-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  test('401 without a token', async () => {
+    const res = await request(app).get('/api/notifications/notif-1/receipts');
+    expect(res.status).toBe(401);
   });
 });
 
@@ -288,6 +504,46 @@ describe('GET /api/notifications', () => {
     const res = await request(app).get('/api/notifications');
     expect(res.status).toBe(401);
   });
+
+  // ?limit reaches SQL, so it is bounded in the controller rather than trusted.
+  describe('paging', () => {
+    const limitOf = () => {
+      const { query } = require('../../src/config/db');
+      return query.mock.calls.find(([sql]) => /FROM notification_recipients r/i.test(sql))[1][2];
+    };
+    const get = async (qs = '') => {
+      const { query } = require('../../src/config/db');
+      query.mockClear();
+      await request(app)
+        .get(`/api/notifications${qs}`)
+        .set('Authorization', 'Bearer resident-token');
+    };
+
+    test('defaults to 50', async () => {
+      await get();
+      expect(limitOf()).toBe(50);
+    });
+
+    test('honours a sensible limit', async () => {
+      await get('?limit=10');
+      expect(limitOf()).toBe(10);
+    });
+
+    test('caps an oversized limit at 100', async () => {
+      await get('?limit=5000');
+      expect(limitOf()).toBe(100);
+    });
+
+    test('falls back to the default on a non-numeric limit', async () => {
+      await get('?limit=all');
+      expect(limitOf()).toBe(50);
+    });
+
+    test('falls back to the default on a zero or negative limit', async () => {
+      await get('?limit=-1');
+      expect(limitOf()).toBe(50);
+    });
+  });
 });
 
 // The manager's send history (D.6). Before this endpoint the only way to see a
@@ -337,6 +593,32 @@ describe('GET /api/notifications/sent', () => {
     // A receipts response would have notification_id/total_recipients at the
     // top level; the history returns a `data` array.
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  describe('paging', () => {
+    const limitOf = () => {
+      const { query } = require('../../src/config/db');
+      return query.mock.calls.find(([sql]) =>
+        /LEFT JOIN notification_recipients r/i.test(sql)
+      )[1][1];
+    };
+    const get = async (qs = '') => {
+      const { query } = require('../../src/config/db');
+      query.mockClear();
+      await request(app)
+        .get(`/api/notifications/sent${qs}`)
+        .set('Authorization', 'Bearer manager-token');
+    };
+
+    test('defaults to 50', async () => {
+      await get();
+      expect(limitOf()).toBe(50);
+    });
+
+    test('caps an oversized limit at 100', async () => {
+      await get('?limit=5000');
+      expect(limitOf()).toBe(100);
+    });
   });
 });
 
@@ -462,6 +744,62 @@ describe('notificationService.notifyEvent', () => {
     expect(socketService.emitToRooms.mock.calls[0][0]).toEqual(['manager-room']);
   });
 
+  // A lifecycle event has no human author (manager_id is NULL), which is what
+  // lets the bell render it as "System" rather than attributing it to someone.
+  test('a lifecycle event has no sender rather than a stale one', async () => {
+    await notificationService.notifyEvent({
+      event_type: 'rectified',
+      scope: { type: 'managers' },
+      message: 'Work submitted on Blk 44A',
+    });
+
+    const [, , payload] = socketService.emitToRooms.mock.calls[0];
+    expect(payload.sender_name).toBeNull();
+    expect(payload.sender_role).toBeNull();
+  });
+
+  // The server half of the contractor deep link: the bell row carries a link
+  // with ?defect=<id>, and ContractorInboxPage opens that job on arrival. If the
+  // link is not persisted and emitted, tapping the notification can only drop
+  // the contractor on an inbox with nothing selected.
+  describe('the contractor deep link', () => {
+    const assignEvent = () =>
+      notificationService.notifyEvent({
+        event_type: 'defect_assigned',
+        scope: { type: 'users', user_ids: ['ctr-1'], rooms: ['contractor-ctr-1'] },
+        message: 'Blk 44B — Scratches on lift door has been assigned to you.',
+        urgency: 'Warning',
+        link: '/contractor-inbox?defect=insp-1',
+      });
+
+    test('persists the ?defect= link on the notification row', async () => {
+      const { query } = require('../../src/config/db');
+      query.mockClear();
+
+      await assignEvent();
+
+      const insert = query.mock.calls.find(([sql]) => /INSERT INTO notifications/i.test(sql));
+      // (manager_id, message, scope, urgency, status, send_time, sent_at, event_type, link)
+      expect(insert[1][0]).toBeNull(); // no human author
+      expect(insert[1][7]).toBe('defect_assigned');
+      expect(insert[1][8]).toBe('/contractor-inbox?defect=insp-1');
+    });
+
+    test('emits the same link live, to that contractor room only', async () => {
+      await assignEvent();
+
+      const [rooms, event, payload] = socketService.emitToRooms.mock.calls[0];
+      expect(rooms).toEqual(['contractor-ctr-1']);
+      expect(event).toBe('notification');
+      expect(payload).toMatchObject({
+        event_type: 'defect_assigned',
+        link: '/contractor-inbox?defect=insp-1',
+      });
+      // Never a block room — a neighbour must not be told about this job.
+      expect(rooms.some((r) => r.startsWith('block-'))).toBe(false);
+    });
+  });
+
   test('swallows a delivery failure and does not throw (G13)', async () => {
     socketService.emitToRooms.mockImplementationOnce(() => {
       throw new Error('socket down');
@@ -516,6 +854,16 @@ describe('dispatchDueNotifications', () => {
     expect(marked[1]).toEqual(['notif-due']);
 
     spy.mockRestore();
+  });
+
+  test('an empty queue is a no-op, not an error', async () => {
+    query.mockClear();
+    socketService.emitToRooms.mockClear();
+
+    const result = await notificationController.dispatchDueNotifications();
+
+    expect(result).toEqual({ due: 0, sent: 0, failed: 0 });
+    expect(socketService.emitToRooms).not.toHaveBeenCalled();
   });
 
   test('marks a successful send Sent', async () => {
