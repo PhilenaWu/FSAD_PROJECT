@@ -39,10 +39,22 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     // Seed from the current session, then subscribe to future changes.
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
+    // The catch matters: ProtectedRoute renders nothing while `loading` is
+    // true, so a rejected getSession() (unreachable auth host, corrupt stored
+    // session) left `loading` stuck on and painted the whole app blank white
+    // with no error and no way out. Failing to read a session is the same
+    // answer as having none — fall through to /login.
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setUser(data.session?.user ?? null);
+      })
+      .catch(() => {
+        setUser(null);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
 
     const unsubscribe = onAuthChange((session) => {
       setUser(session?.user ?? null);
