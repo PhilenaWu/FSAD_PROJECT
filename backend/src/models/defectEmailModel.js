@@ -8,6 +8,7 @@
 'use strict';
 
 const { query } = require('../config/db');
+const { onHoldSql } = require('../utils/onHold');
 
 // Recipient recorded when there is nobody to email (UC-014 A4). `recipient` is
 // NOT NULL, and a sentinel keeps the failure auditable rather than unloggable.
@@ -104,11 +105,13 @@ async function sentToday(inspectionId, emailType) {
  * contractor and either 3 days from the deadline or already past it.
  *
  * Only `Assigned` / `Acknowledged` qualify — a `Rectified` record is waiting on
- * the manager, not the contractor, so chasing it would be wrong. `On Hold` is
- * excluded because a hold pauses the rectification clock (G11) and the
- * dashboard's overdue count excludes it too; chasing a held record would make
- * the emails contradict the UI. Closed records carry is_deleted = TRUE and are
- * excluded by the status filter already.
+ * the inspector, not the contractor, so chasing it would be wrong. ('Acknowledged'
+ * is no longer set by anything; it stays here for records that still carry it.)
+ * Held records are excluded because a hold pauses the rectification clock (G11)
+ * and the dashboard's overdue count excludes them too; chasing a held record
+ * would make the emails contradict the UI. A hold is an audit-trail fact rather
+ * than a status now, so that exclusion comes from onHoldSql. Closed records
+ * carry is_deleted = TRUE and are excluded by the status filter already.
  *
  * Fires at D−3 and from D+0 onward (HLD §6.2: "3 days out or already past"),
  * deliberately not on D−2 or D−1 — the contractor gets one warning and then
@@ -147,6 +150,7 @@ async function findDueForChase() {
        LEFT JOIN users u  ON u.id = c.user_id AND u.status = 'active'
        LEFT JOIN lifts l  ON l.id = i.lift_id
       WHERE i.status IN ('Assigned', 'Acknowledged')
+        AND NOT ${onHoldSql('i')}
         AND i.target_deadline IS NOT NULL
         AND (
           (i.target_deadline::date - CURRENT_DATE) = 3

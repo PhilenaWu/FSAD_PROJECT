@@ -1109,10 +1109,9 @@ async function closeInspection(req, res, next) {
   }
 }
 
-// POST /api/inspections/:id/review — an inspector confirms they've looked
-// over a Rectified record (read-only otherwise). Writes an audit row only —
-// no status change, no accept/close authority; that stays with the manager's
-// joint-close flow.
+// POST /api/inspections/:id/review — an inspector checks the contractor's work
+// and resolves the record: 'Rectified' → 'Resolved'. Archiving it is still the
+// manager's joint-close flow; this is the step that says the work is good.
 async function reviewInspection(req, res, next) {
   try {
     const note = typeof req.body.note === 'string' ? req.body.note.trim() : '';
@@ -1128,11 +1127,24 @@ async function reviewInspection(req, res, next) {
     if (result === 'INVALID_STATE') {
       return res.status(409).json({
         code: 'INVALID_STATE',
-        message: 'Only a Rectified record can be marked as reviewed.',
+        message: 'Only a record awaiting inspector review can be marked as reviewed.',
       });
     }
 
-    res.json({ code: 'OK', message: 'Marked as reviewed.' });
+    // The review moves the status now, so it has to push like every other
+    // transition — otherwise the manager's open detail page keeps showing
+    // "Pending View By Inspector" for work that has just been resolved.
+    try {
+      socketService.emitToRooms(
+        ['manager-room', 'inspector-team', `block-${result.location_block}`],
+        'status_update',
+        { id: result.id, status: result.status, updated_at: result.updated_at }
+      );
+    } catch {
+      // Best-effort: a socket hiccup must not fail the review.
+    }
+
+    res.json({ code: 'OK', message: 'Marked as reviewed.', status: result.status });
   } catch (err) {
     next(err);
   }

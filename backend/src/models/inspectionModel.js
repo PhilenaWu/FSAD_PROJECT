@@ -5,6 +5,7 @@
 const { pool, query } = require('../config/db');
 const signatureModel = require('./signatureModel');
 const cvDetectionModel = require('./cvDetectionModel');
+const { onHoldSql } = require('../utils/onHold');
 
 // Insert a new inspection record. UC-001 uses source_type 'resident_complaint';
 // the caller supplies the resident + report fields plus the AI-derived
@@ -307,9 +308,12 @@ async function findAllForManager({ status, category, block, contractor, overdue,
   }
   // "Overdue" uses the scorecard's definition: past deadline and not held —
   // a hold pauses the rectification clock (G11), so held work is not late.
+  // A hold is an audit-trail fact rather than a status now, hence onHoldSql.
   if (overdue) {
     where.push(
-      `target_deadline < NOW() AND status NOT IN ('On Hold', 'Rectified', 'Resolved', 'Closed')`
+      `target_deadline < NOW()
+         AND status NOT IN ('Rectified', 'Resolved', 'Closed')
+         AND NOT ${onHoldSql('inspections')}`
     );
   }
 
@@ -446,24 +450,55 @@ async function rejectRectification(id, reason, actorId) {
   }
 }
 
-// Inspector marks a Rectified record as reviewed, ahead of the manager's joint
-// close. Read-only otherwise — this only appends an audit row (no status
-// change), so a plain SELECT + INSERT needs no transaction. Returns undefined
-// when the id doesn't match a live record, 'INVALID_STATE' when the record
-// isn't Rectified, or true on success.
+// Inspector checks the contractor's work: 'Rectified' → 'Resolved'.
+//
+// This used to write an audit row and nothing else, so a record sat in
+// "Pending View By Inspector" even after the inspector had looked at it, and
+// only the manager's close moved it on. The inspector's review is what resolves
+// a defect now; the manager's close then archives it.
+//
+// Returns the updated row, undefined when the id doesn't match a live record,
+// or 'INVALID_STATE' when the record isn't awaiting review.
 async function markReviewed(id, note, actorId) {
-  const before = await findById(id);
-  if (!before) return undefined;
-  if (before.status !== 'Rectified') return 'INVALID_STATE';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: beforeRows } = await client.query(
+      'SELECT * FROM inspections WHERE id = $1 AND is_deleted = FALSE FOR UPDATE',
+      [id]
+    );
+    const before = beforeRows[0];
+    if (!before) {
+      await client.query('ROLLBACK');
+      return undefined;
+    }
+    if (before.status !== 'Rectified') {
+      await client.query('ROLLBACK');
+      return 'INVALID_STATE';
+    }
 
-  await query(
-    `INSERT INTO inspection_history (
-       inspection_id, actor_id, action, previous_status, new_status, note
-     )
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, actorId, 'Reviewed by Inspector', before.status, before.status, note || null]
-  );
-  return true;
+    // id last, matching updateByManager's `WHERE id = $N` shape.
+    const updated = await client.query(
+      `UPDATE inspections SET status = $1, updated_at = NOW()
+        WHERE id = $2 RETURNING *`,
+      ['Resolved', id]
+    );
+    await client.query(
+      `INSERT INTO inspection_history (
+         inspection_id, actor_id, action, previous_status, new_status, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, actorId, 'Reviewed by Inspector', before.status, 'Resolved', note || null]
+    );
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Has an inspector marked this record as reviewed? The review is an audit row
@@ -717,9 +752,14 @@ async function lockAssigned(client, id, contractorId) {
   return rows[0];
 }
 
-// Contractor acknowledges a defect (UC-010 step 3): status → Acknowledged,
-// stamp acknowledged_at, write an audit row. Returns the updated row, or
-// undefined when the record isn't a live defect assigned to this contractor.
+// Contractor acknowledges a defect (UC-010 step 3): stamp acknowledged_at and
+// write an audit row. Returns the updated row, or undefined when the record
+// isn't a live defect assigned to this contractor.
+//
+// No status change: a record stays 'Assigned' from the moment a manager assigns
+// it until the contractor finishes. Accepting the job is a fact about the job,
+// not a new state of the record — it lives in acknowledged_at and the audit
+// trail, where nothing is lost.
 async function acknowledgeByContractor(id, contractorId, actorId) {
   const client = await pool.connect();
   try {
@@ -732,15 +772,15 @@ async function acknowledgeByContractor(id, contractorId, actorId) {
 
     const updated = await client.query(
       `UPDATE inspections
-       SET status = 'Acknowledged', acknowledged_at = NOW(), updated_at = NOW()
+       SET acknowledged_at = NOW(), updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [id]
     );
     await client.query(
       `INSERT INTO inspection_history
          (inspection_id, actor_id, action, previous_status, new_status)
-       VALUES ($1, $2, 'Acknowledged', $3, 'Acknowledged')`,
-      [id, actorId, before.status]
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, actorId, 'Acknowledged', before.status, before.status]
     );
 
     await client.query('COMMIT');
@@ -756,11 +796,12 @@ async function acknowledgeByContractor(id, contractorId, actorId) {
 // Contractor records rectification work (UC-010 steps 5–7 + Alt Flow B partial).
 // Writes each item's completion photo/remark and its `rectified` flag, then
 // branches on `finalize`:
-//   • finalize → status 'Rectified', stamp rectified_at, store the contractor
-//     e-signature, audit 'Rectified & Signed' (the full completion).
-//   • partial  → status 'Acknowledged' (only if it was 'Assigned'), audit
-//     'Work Progress Saved', no signature. The record stays in the contractor's
-//     inbox until every item is done and they finalize.
+//   • finalize → status 'Rectified' (shown as "Pending View By Inspector"),
+//     stamp rectified_at, store the contractor e-signature, audit
+//     'Rectified & Signed' (the full completion).
+//   • partial  → no status change, audit 'Work Progress Saved', no signature.
+//     The record stays 'Assigned' in the contractor's inbox until every item is
+//     done and they finalize.
 // `items` is an array of { checklist_result_id, completion_remark,
 // completion_photo_url, rectified }. All atomic. Returns the updated row, or
 // undefined when it isn't assigned to this contractor.
@@ -817,20 +858,19 @@ async function rectifyByContractor(
         [id, actorId, before.status, note]
       );
     } else {
-      // Partial save: nudge Assigned → Acknowledged (work in progress), keep any
-      // other status (e.g. On Hold) as-is.
-      const newStatus = before.status === 'Assigned' ? 'Acknowledged' : before.status;
+      // Partial save leaves the status alone — the record is still 'Assigned'
+      // work in progress, and saying so twice (once as a status, once in the
+      // audit trail) is what produced the extra states. The history row is the
+      // record that progress was saved.
       updated = await client.query(
-        `UPDATE inspections
-         SET status = $2, updated_at = NOW()
-         WHERE id = $1 RETURNING *`,
-        [id, newStatus]
+        `UPDATE inspections SET updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [id]
       );
       await client.query(
         `INSERT INTO inspection_history
            (inspection_id, actor_id, action, previous_status, new_status, note)
-         VALUES ($1, $2, 'Work Progress Saved', $3, $4, $5)`,
-        [id, actorId, before.status, newStatus, note]
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, actorId, 'Work Progress Saved', before.status, before.status, note]
       );
     }
 
@@ -844,9 +884,13 @@ async function rectifyByContractor(
   }
 }
 
-// Contractor puts a defect on hold (UC-010 Alt Flow A): status → On Hold with a
-// reason; the deadline countdown pauses (the frontend hides it while held).
+// Contractor puts a defect on hold (UC-010 Alt Flow A): records the reason; the
+// deadline countdown pauses (the frontend hides it while held).
 // Returns the updated row, or undefined when it isn't assigned to this contractor.
+//
+// The hold is no longer a status — the record stays 'Assigned'. It lives in
+// hold_reason plus the 'On Hold' audit row, and utils/onHold.js derives "held"
+// from that row for the overdue and chase queries that must skip it.
 async function holdByContractor(id, contractorId, actorId, hold_reason) {
   const client = await pool.connect();
   try {
@@ -859,15 +903,15 @@ async function holdByContractor(id, contractorId, actorId, hold_reason) {
 
     const updated = await client.query(
       `UPDATE inspections
-       SET status = 'On Hold', hold_reason = $2, updated_at = NOW()
+       SET hold_reason = $2, updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [id, hold_reason]
     );
     await client.query(
       `INSERT INTO inspection_history
          (inspection_id, actor_id, action, previous_status, new_status, note)
-       VALUES ($1, $2, 'On Hold', $3, 'On Hold', $4)`,
-      [id, actorId, before.status, hold_reason]
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, actorId, 'On Hold', before.status, before.status, hold_reason]
     );
 
     await client.query('COMMIT');
@@ -881,16 +925,16 @@ async function holdByContractor(id, contractorId, actorId, hold_reason) {
 }
 
 // Contractor resumes a held defect (UC-010 Alt Flow A, second half — G11).
-// Restores the status the record held before the pause, clears hold_reason, and
-// pushes target_deadline out by however long the hold lasted, so time spent
-// waiting on site access or a part is not counted against the contractor.
+// Clears hold_reason and pushes target_deadline out by however long the hold
+// lasted, so time spent waiting on site access or a part is not counted against
+// the contractor. No status to restore — the record never left 'Assigned'.
 //
 // The hold's start time is read from the append-only audit trail rather than a
 // dedicated column: holdByContractor writes its 'On Hold' row in the same
-// transaction as the status change, so that row's created_at *is* the moment the
-// clock stopped. Avoids a schema change, and the value cannot drift from the
-// history the record already shows. The most recent 'On Hold' row is used, so a
-// record held more than once extends correctly each time.
+// transaction, so that row's created_at *is* the moment the clock stopped.
+// Avoids a schema change, and the value cannot drift from the history the
+// record already shows. The most recent 'On Hold' row is used, so a record held
+// more than once extends correctly each time.
 //
 // Returns the updated row, undefined when the record isn't this contractor's, or
 // the string 'INVALID_STATE' when it isn't actually on hold.
@@ -903,54 +947,50 @@ async function resumeByContractor(id, contractorId, actorId) {
       await client.query('ROLLBACK');
       return undefined;
     }
-    if (before.status !== 'On Hold') {
-      await client.query('ROLLBACK');
-      return 'INVALID_STATE';
-    }
-
+    // "Held" is now the most recent of the 'On Hold' / 'Resumed' pair, not a
+    // status — the same rule utils/onHold.js applies in SQL. Reading the row
+    // here serves both jobs: the guard, and the hold's start time.
     const { rows: holdRows } = await client.query(
-      `SELECT previous_status, created_at
+      `SELECT action, created_at
          FROM inspection_history
-        WHERE inspection_id = $1 AND action = 'On Hold'
-        ORDER BY created_at DESC
+        WHERE inspection_id = $1 AND action IN ('On Hold', 'Resumed')
+        ORDER BY created_at DESC, id DESC
         LIMIT 1`,
       [id]
     );
     const hold = holdRows[0];
-    // No 'On Hold' row (a record whose status was set directly by a manager, or
-    // pre-audit legacy data): resume without extending, since there is no
-    // trustworthy start time to measure from. Better than inventing one.
-    const heldSince = hold?.created_at ?? null;
-    const restoredStatus = hold?.previous_status ?? 'Assigned';
+    if (hold?.action !== 'On Hold') {
+      await client.query('ROLLBACK');
+      return 'INVALID_STATE';
+    }
+    const heldSince = hold.created_at;
 
     const updated = await client.query(
       `UPDATE inspections
-          SET status = $2,
-              hold_reason = NULL,
+          SET hold_reason = NULL,
               target_deadline = CASE
-                WHEN $3::timestamp IS NULL THEN target_deadline
-                ELSE target_deadline + (NOW() - $3::timestamp)
+                WHEN $2::timestamp IS NULL THEN target_deadline
+                ELSE target_deadline + (NOW() - $2::timestamp)
               END,
               updated_at = NOW()
         WHERE id = $1
         RETURNING *`,
-      [id, restoredStatus, heldSince]
+      [id, heldSince]
     );
 
-    const heldDays = heldSince
-      ? Math.round(((Date.now() - new Date(heldSince).getTime()) / 86400000) * 10) / 10
-      : null;
+    const heldDays =
+      Math.round(((Date.now() - new Date(heldSince).getTime()) / 86400000) * 10) / 10;
     await client.query(
       `INSERT INTO inspection_history
          (inspection_id, actor_id, action, previous_status, new_status, note)
-       VALUES ($1, $2, 'Resumed', 'On Hold', $3, $4)`,
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         id,
         actorId,
-        restoredStatus,
-        heldDays === null
-          ? 'Resumed; deadline unchanged (no recorded hold start).'
-          : `Resumed after ${heldDays} day(s) on hold; deadline extended by the same period.`,
+        'Resumed',
+        before.status,
+        before.status,
+        `Resumed after ${heldDays} day(s) on hold; deadline extended by the same period.`,
       ]
     );
 

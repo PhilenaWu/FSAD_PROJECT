@@ -61,12 +61,20 @@ import { compressImage } from '../utils/imageCompress';
 import { statusDisplay } from '../utils/statusDisplay';
 import { getAssigned, acknowledge, rectify, hold, resume } from '../services/contractorService';
 
-// Statuses excluded from the Overdue/Due-soon counts: On Hold pauses the
-// deadline (matching the manager scorecard's G11-consistent definition), and
-// a finished record has nothing left "due". Not the same set as the
-// "Completed" stat tile below, which excludes On Hold — a paused defect is
-// still in-progress work, not done.
-const DEADLINE_INACTIVE_STATUSES = ['On Hold', 'Rectified', 'Resolved', 'Closed'];
+// A defect the contractor has nothing left to do on. 'Rectified' reads as
+// "Pending View By Inspector" — submitted, waiting on someone else.
+const FINISHED_STATUSES = ['Rectified', 'Resolved', 'Closed'];
+
+// Accepting a job and putting it on hold no longer change the status — a defect
+// stays 'Assigned' from assignment until it is submitted. Both facts still
+// exist on the record, so the inbox reads them directly: hold_reason is set by
+// a hold and cleared by a resume, acknowledged_at is stamped on acknowledge.
+const isHeld = (it) => Boolean(it.hold_reason);
+const isFinished = (it) => FINISHED_STATUSES.includes(it.status);
+// Excluded from Overdue/Due-soon: a hold pauses the deadline (matching the
+// manager scorecard's G11-consistent definition), and a finished record has
+// nothing left "due".
+const deadlinePaused = (it) => isHeld(it) || isFinished(it);
 const DUE_SOON_DAYS = 3; // matches DeadlineChip's own amber threshold below
 
 function formatDate(iso) {
@@ -140,9 +148,12 @@ export default function ContractorInboxPage() {
     let inProgress = 0;
     let completed = 0;
     for (const it of items) {
-      if (it.status === 'Assigned') newlyAssigned += 1;
-      else if (it.status === 'Acknowledged' || it.status === 'On Hold') inProgress += 1;
-      else completed += 1;
+      // "In progress" is now acknowledged-or-held rather than a status: the
+      // record reads 'Assigned' either way, and acknowledged_at/hold_reason are
+      // what actually say the contractor has picked it up.
+      if (isFinished(it)) completed += 1;
+      else if (it.acknowledged_at || isHeld(it)) inProgress += 1;
+      else newlyAssigned += 1;
     }
     return { newlyAssigned, inProgress, completed, total: items.length };
   }, [items]);
@@ -153,7 +164,7 @@ export default function ContractorInboxPage() {
         (it) =>
           it.days_remaining != null &&
           it.days_remaining < 0 &&
-          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+          !deadlinePaused(it)
       ).length,
     [items]
   );
@@ -164,7 +175,7 @@ export default function ContractorInboxPage() {
           it.days_remaining != null &&
           it.days_remaining >= 0 &&
           it.days_remaining <= DUE_SOON_DAYS &&
-          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+          !deadlinePaused(it)
       ).length,
     [items]
   );
@@ -183,7 +194,7 @@ export default function ContractorInboxPage() {
         (it) =>
           it.days_remaining != null &&
           it.days_remaining < 0 &&
-          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+          !deadlinePaused(it)
       );
     } else if (bucket === 'dueSoon') {
       list = list.filter(
@@ -191,14 +202,14 @@ export default function ContractorInboxPage() {
           it.days_remaining != null &&
           it.days_remaining >= 0 &&
           it.days_remaining <= DUE_SOON_DAYS &&
-          !DEADLINE_INACTIVE_STATUSES.includes(it.status)
+          !deadlinePaused(it)
       );
     } else if (bucket === 'newlyAssigned') {
-      list = list.filter((it) => it.status === 'Assigned');
+      list = list.filter((it) => !isFinished(it) && !it.acknowledged_at && !isHeld(it));
     } else if (bucket === 'inProgress') {
-      list = list.filter((it) => it.status === 'Acknowledged' || it.status === 'On Hold');
+      list = list.filter((it) => !isFinished(it) && (it.acknowledged_at || isHeld(it)));
     } else if (bucket === 'completed') {
-      list = list.filter((it) => it.status !== 'Assigned' && it.status !== 'Acknowledged' && it.status !== 'On Hold');
+      list = list.filter(isFinished);
     }
     if (blockFilter) list = list.filter((it) => it.location_block === blockFilter);
 
@@ -495,8 +506,9 @@ export default function ContractorInboxPage() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const canRectify =
-    selected && ['Assigned', 'Acknowledged', 'On Hold'].includes(selected.status);
+  // Anything not yet submitted is still theirs to work on — including a held
+  // defect, which they can resume.
+  const canRectify = Boolean(selected) && !isFinished(selected);
   const defects = selected?.checklist_results ?? [];
   const doneCount = defects.filter((d) => completion[d.id]?.done ?? d.rectified).length;
   const allDone = defects.length === 0 || doneCount === defects.length;
@@ -697,12 +709,12 @@ export default function ContractorInboxPage() {
                       <Typography variant="subtitle2" fontWeight={700} sx={{ pr: 1 }}>
                         {it.title}
                       </Typography>
-                      {it.status === 'On Hold'
+                      {isHeld(it)
                         ? <Chip size="small" color="warning" label="On hold" />
                         : <DeadlineChip days={it.days_remaining} />}
                     </Stack>
                     <Typography variant="caption" color="text.secondary">
-                      Block {it.location_block} · {statusDisplay(it.status).label}
+                      Block {it.location_block} · {isHeld(it) ? 'On hold' : statusDisplay(it.status).label}
                     </Typography>
                   </Paper>
                 );
@@ -748,7 +760,7 @@ export default function ContractorInboxPage() {
 
                 {/* On hold: the reason, plus the only way back out. Until resume
                     existed a held record was stuck there permanently. */}
-                {selected.status === 'On Hold' && (
+                {isHeld(selected) && (
                   <Alert
                     severity="warning"
                     sx={{ mb: 2 }}
@@ -1011,8 +1023,8 @@ export default function ContractorInboxPage() {
           <DialogTitle>Submit work as complete?</DialogTitle>
           <DialogContent>
             <DialogContentText>
-              This signs off the rectification and moves the defect to “Rectified” for the
-              manager's joint endorsement. You won't be able to edit it afterwards.
+              This signs off the rectification and moves the defect to “Pending View
+              By Inspector”. You won't be able to edit it afterwards.
             </DialogContentText>
           </DialogContent>
           <DialogActions>
