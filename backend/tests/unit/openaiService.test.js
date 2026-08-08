@@ -198,26 +198,28 @@ describe('extractSpotCheckForm (UC-013)', () => {
     ).rejects.toMatchObject({ message: 'vision model overloaded', serviceUnavailable: true });
   });
 
-  // A single bad response is retried once (see "recovers on retry" below) —
-  // both attempts must fail here for the call to ultimately throw.
-  test('throws when the model response is not valid JSON on both attempts', async () => {
+  // A bad response is retried up to MAX_ATTEMPTS - 1 times (see "recovers on
+  // retry" below) — every attempt must fail here for the call to ultimately
+  // throw.
+  test('throws when the model response is not valid JSON on every attempt', async () => {
     mockConfig.OPENAI_API_KEY = 'test-key';
     mockCreate.mockResolvedValue({ choices: [{ message: { content: 'not json at all' } }] });
 
     await expect(
       openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
     ).rejects.toThrow(/not valid JSON/);
-    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
   });
 
-  test('throws when the items array length does not match the input on both attempts', async () => {
+  test('throws when the items array length does not match the input and item_number cannot recover it', async () => {
     mockConfig.OPENAI_API_KEY = 'test-key';
     mockCreate.mockResolvedValue({
       choices: [{
         message: {
           content: JSON.stringify({
             serviced_at: null, serviced_at_confidence: 0,
-            items: [{ result: 'Pass', remark: null, field_confidence: 0.9 }], // only 1, expected 2
+            // Only 1, expected 2, and no item_number to recover item 2 from.
+            items: [{ result: 'Pass', remark: null, field_confidence: 0.9 }],
           }),
         },
       }],
@@ -226,7 +228,107 @@ describe('extractSpotCheckForm (UC-013)', () => {
     await expect(
       openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts)
     ).rejects.toThrow(/expected 2/);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+  });
+
+  // Retrying with the exact same prompt tends to reproduce the exact same
+  // mistake — telling the model what it got wrong last time gives the retry
+  // a real chance to fix it instead of just re-rolling the dice.
+  test('a retry prompt names the previous failure', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate
+      .mockResolvedValueOnce({ choices: [{ message: { content: 'not json at all' } }] })
+      .mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              serviced_at: null, serviced_at_confidence: 0,
+              items: [
+                { result: 'Pass', remark: null, field_confidence: 0.9 },
+                { result: 'Pass', remark: null, field_confidence: 0.9 },
+              ],
+            }),
+          },
+        }],
+      });
+
+    await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    const firstPrompt = mockCreate.mock.calls[0][0].messages[0].content[0].text;
+    const secondPrompt = mockCreate.mock.calls[1][0].messages[0].content[0].text;
+    expect(firstPrompt).not.toContain('previous attempt was rejected');
+    expect(secondPrompt).toContain('previous attempt was rejected');
+    expect(secondPrompt).toContain('not valid JSON');
+  });
+
+  // The real failure this recovery was added for: one item wrongly split
+  // into two entries. item_number says which numbered item each entry
+  // actually answers, so the correct answer for every expected item can be
+  // recovered on the spot — no retry, no rescan.
+  test('reconciles an overcount via item_number instead of retrying', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            serviced_at: '2026-03-22', serviced_at_confidence: 0.9,
+            items: [
+              { item_number: 1, result: 'Pass', remark: null, field_confidence: 0.95 },
+              // Item 2 wrongly split into two entries — the first wins.
+              { item_number: 2, result: 'Defect', remark: 'Noisy', field_confidence: 0.8 },
+              { item_number: 2, result: 'Pass', remark: null, field_confidence: 0.4 },
+            ],
+          }),
+        },
+      }],
+    });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
+    expect(mockCreate).toHaveBeenCalledTimes(1); // recovered without a retry
+    expect(result.items).toHaveLength(2);
+    expect(result.items[1]).toEqual({ result: 'Defect', remark: 'Noisy', field_confidence: 0.8 });
+    // item_number itself is bookkeeping, not part of the returned shape.
+    expect(result.items[0]).not.toHaveProperty('item_number');
+  });
+
+  // An overcount where item_number leaves a genuine gap (nothing claims item
+  // 2) can't be safely guessed at, so it must still fall through to a retry.
+  test('falls through to a retry when item_number leaves a gap', async () => {
+    mockConfig.OPENAI_API_KEY = 'test-key';
+    mockCreate
+      .mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              serviced_at: null, serviced_at_confidence: 0,
+              items: [
+                { item_number: 1, result: 'Pass', remark: null, field_confidence: 0.9 },
+                { item_number: 1, result: 'Pass', remark: null, field_confidence: 0.9 },
+                { item_number: 1, result: 'Pass', remark: null, field_confidence: 0.9 },
+              ],
+            }),
+          },
+        }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              serviced_at: '2026-03-22', serviced_at_confidence: 0.9,
+              items: [
+                { item_number: 1, result: 'Pass', remark: null, field_confidence: 0.9 },
+                { item_number: 2, result: 'Defect', remark: 'Noisy', field_confidence: 0.8 },
+              ],
+            }),
+          },
+        }],
+      });
+
+    const result = await openaiService.extractSpotCheckForm('https://example.com/form.jpg', itemTexts);
+
     expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(result.items).toHaveLength(2);
   });
 
   // Reproduces the real failure this retry was added for: the same photo
