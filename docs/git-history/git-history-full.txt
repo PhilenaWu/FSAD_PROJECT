@@ -1,0 +1,357 @@
+EM Services — FSAD_PROJECT: full commit graph (all branches)
+Generated: 2026-08-09
+
+=== Commits per author ===
+    76	philena
+    56	hasini
+    32	mahdiyaa
+    28	dav_1ann
+    22	zzzzz
+     9	Philena (school)
+
+=== Full graph ===
+*   25bd42c 2026-08-09 mahdiyaa (HEAD -> feat/git-history-docs, origin/main, origin/feat/git-history-docs, origin/HEAD, main) Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+|\  
+| * 056e463 2026-08-09 philena added c2 ai reflection into docs folder (philena)
+| * 48a1da0 2026-08-09 hasini (origin/feat/ai-reflection-hasini, feat/ai-reflection-hasini) docs(hasini): add C2 AI reflection
+* | c23f2c8 2026-08-09 mahdiyaa Update ai-reflection.md
+|/  
+* 104ae83 2026-08-09 dav_1ann Davian's reflection
+* f892a88 2026-08-09 zzzzz docs(zoe): add C2 AI reflection
+* 1d7937f 2026-08-09 hasini (origin/feat/docs-folder-structure, feat/docs-folder-structure) chore: add ai reflection folders
+* 3f9133f 2026-08-09 mahdiyaa mahdiya - ai reflection
+* 33ccc17 2026-08-09 philena (origin/docs/update-deployment-and-setup) docs: sync all project docs to current deployment, setup, and schema
+* 422499a 2026-08-09 philena chore: migrate frontend host Netlify -> Vercel
+*   101b43b 2026-08-09 philena Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+|\  
+| *   4badb78 2026-08-09 hasini Merge branch 'feat/last-touches'
+| |\  
+| | * 9dd4482 2026-08-09 hasini (origin/feat/last-touches, feat/last-touches) testcase (davian)
+* | | 8eb4a8b 2026-08-09 philena Create vercel.json for deployment
+|/ /  
+* |   beec7b0 2026-08-09 zzzzz Merge pull request #18 from PhilenaWu/fix/uc8-notifications
+|\ \  
+| * | cb98ff6 2026-08-09 zzzzz (origin/fix/uc8-notifications) test(zoe): add frontend test suite and extend notification backend coverage
+|/ /  
+* / 00f62f2 2026-08-09 philena test cases (philena)
+|/  
+*   14be244 2026-08-09 hasini Merge branch 'feat/update-docs'
+|\  
+| * 0d13e9a 2026-08-09 hasini (origin/feat/update-docs, feat/update-docs) fix(uc011): fill the cost seed's empty month, rebase its date window
+* | 27a89b1 2026-08-09 mahdiyaa test files
+* | d4bb37b 2026-08-09 mahdiyaa test files
+|/  
+* 47c1e59 2026-08-09 hasini (origin/feat/final-check-uc-011, feat/final-check-uc-011) fix(build): scope test-only aliases so MUI icons resolve in dev
+*   5a42a2d 2026-08-09 hasini Merge branch 'fix/last-errors'
+|\  
+| * e5374b8 2026-08-09 hasini feat(uc005/uc012): admin contacts, dashboard profile states, submission layout
+| * e442d9a 2026-08-08 hasini feat(contacts): give admins a contacts page; fix cost deck contractor totals
+* |   28fb2c8 2026-08-08 mahdiyaa Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+|\ \  
+| * \   74eec62 2026-08-08 philena Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+| |\ \  
+| * | | eecb8fc 2026-08-08 philena fix(uc10): notify every inspector when a contractor finishes
+* | | | f86395a 2026-08-08 mahdiyaa Update demo data
+| |/ /  
+|/| |   
+* | | 3af9527 2026-08-08 mahdiyaa Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+|\| | 
+| * | 23602cb 2026-08-08 philena feat(uc4): reduce the lifecycle to four statuses
+* | | e1ef52e 2026-08-08 mahdiyaa fix - form auto scan
+* | | 7ea43c0 2026-08-08 mahdiyaa removed unnecessary report rating
+|/ /  
+* | bef538d 2026-08-08 mahdiyaa Reviewing of "My Reports"
+* |   0171351 2026-08-08 dav_1ann Merge pull request #17 from PhilenaWu/fix-final
+|\ \  
+| * | 6883dc3 2026-08-08 dav_1ann (origin/fix-final) Emit status_update on inspection creation
+* | | a37c77d 2026-08-08 philena fix(uc8): clear a notification from the bell once it is read
+* | | f6f5e13 2026-08-08 philena chore: remove the feedback feature
+* | |   295e16e 2026-08-08 mahdiyaa Merge branch 'fix/uc-13-inspection-upload'
+|\ \ \  
+| * | | fea01a6 2026-08-08 mahdiyaa (origin/fix/uc-13-inspection-upload) fixed upload inconsistencies
+| | |/  
+| |/|   
+* | |   411a80a 2026-08-08 dav_1ann Merge pull request #16 from PhilenaWu/fix-final
+|\ \ \  
+| | |/  
+| |/|   
+| * | 851ee65 2026-08-08 dav_1ann Clean up demo data and notify managers of new inspections
+|/ /  
+* |   4bca7be 2026-08-08 zzzzz Merge pull request #15 from PhilenaWu/fix/uc8-notifications
+|\ \  
+| * | 55291a3 2026-08-08 zzzzz Fix: Notification bell — colour chips by event type, make unread obvious (UC-008)
+|/ /  
+* |   bb67ab0 2026-08-08 zzzzz Merge pull request #14 from PhilenaWu/fix/contractor-portal
+|\ \  
+| * | 5b68e39 2026-08-08 zzzzz (origin/fix/contractor-portal) Fix: Contractor portal: help card, own composer, inspector handoff, deep links
+| * |   c510984 2026-08-08 zzzzz Merge branch 'main' into fix/contractor-portal
+| |\ \  
+| * | | e176bc7 2026-08-08 zzzzz Fix: Block filter on the contractor inbox (UC-010)
+* | | | 7537e2e 2026-08-08 philena fix: suspended-vendor status seed guard + profile-fetch failure misread as resident
+* | | | 7cbe833 2026-08-08 philena (origin/fix/uc1-blocks-outlier-and-cv-category-whitelist) fix: 45B block-suggestion coordinate outlier + CV category whitelist
+* | | | 67267f2 2026-08-08 philena (origin/fix/suspended-account-routing) fixed suspended account routing
+| |/ /  
+|/| |   
+* | |   2d553ce 2026-08-08 philena Merge branch 'fix/uc1-category-override'
+|\ \ \  
+| * | | ccfaccb 2026-08-08 philena (origin/fix/uc1-category-override) fix(uc1): let residents categorise their own reports; standardise landing pages
+* | | |   dbc6b68 2026-08-08 zzzzz Merge pull request #12 from PhilenaWu/fix/uc8-notifications
+|\ \ \ \  
+| |_|_|/  
+|/| | |   
+| * | | 4a43e37 2026-08-08 zzzzz fix(notifications): UC-008 defect items 5, 6, 12, 13, 15  Send-scope banner, manager send history, de-duplicated contractor transitions, and notification labels that carry real signal.
+|/ / /  
+* | |   2aac17c 2026-08-08 hasini Merge branch 'fix/minor-issues'
+|\ \ \  
+| |/ /  
+|/| |   
+| * | c165675 2026-08-08 hasini fix(uc005/uc012): validate request input and source contacts from the database
+* | |   1224e3e 2026-08-07 philena Merge branch 'fix/uc4-close-precondition'
+|\ \ \  
+| * | | d5f89b1 2026-08-07 philena (origin/fix/uc4-close-precondition) fix(uc4): gate close on inspector review; remove duplicate completion banner
+| * | | 3d3fc70 2026-08-07 philena fix(uc4): name the nearest block on a record's GPS line
+| |/ /  
+* | |   fe52d80 2026-08-07 philena Merge branch 'fix/uc1-checklist-and-gps'
+|\ \ \  
+| |/ /  
+|/| |   
+| * | 8e4787e 2026-08-07 philena (origin/fix/uc1-checklist-and-gps) fix(uc1): one-line pass/defect, bulk marking, and a readable GPS hint
+* | |   dffd388 2026-08-07 hasini Merge branch 'fix/admin-seed.md-file'
+|\ \ \  
+| |/ /  
+|/| |   
+| * | 627dab6 2026-08-07 hasini docs edits
+| * | 858b0e8 2026-08-07 hasini feat(admin): source contact data from the database and tighten admin surfaces
+| * | 279a48d 2026-08-07 hasini fix(ci): wake the backend before the expiry check
+* | | 17ffee4 2026-08-07 philena (origin/feat/role-contacts-component) feat(contacts): make the help card and contacts page per-role
+|/ /  
+* | e51c878 2026-08-07 philena updated .env.example
+* |   1150dbb 2026-08-07 hasini Merge branch 'feat/admin_fix'
+|\ \  
+| * | 64d5f9e 2026-08-07 hasini feat(admin): seed admin logins by migration and correct the docs
+* | |   d4e8bb2 2026-08-07 mahdiyaa Merge branch 'chore/unique-demo-passwords'
+|\ \ \  
+| * | | 4517f59 2026-08-07 mahdiyaa (origin/chore/unique-demo-passwords) unique demo password
+| |/ /  
+* | | 62e5365 2026-08-07 philena (origin/feat/resident-signup-with-approval, feat/resident-signup-with-approval) Update block.js
+* | | 87dbb16 2026-08-07 philena feat: approval email notification for resident registration
+* | | 5ad9390 2026-08-07 philena feat: resident self-registration with manager approval
+|/ /  
+* | 9a778b2 2026-08-07 mahdiyaa UX/UI fix
+* | 8c2400a 2026-08-07 mahdiyaa (origin/fix/roboflow-model-v2) fixing CV model
+* | a852a3d 2026-08-06 zzzzz (origin/fix/UX/UI-changes-for-contractor-page) Merge pull request #11 from PhilenaWu/fix/contractor-portal
+|\| 
+| *   0ffb3d8 2026-08-06 zzzzz Merge branch 'main' into fix/contractor-portal
+| |\  
+| |/  
+|/|   
+* |   a4ee407 2026-08-06 mahdiyaa Merge branch 'feat/implementing-proper-UX/UI'
+|\ \  
+| * | 218bc06 2026-08-06 mahdiyaa (origin/feat/implementing-proper-UX/UI) UX/UI improvements
+| * | 631cc48 2026-08-06 mahdiyaa UX/UI update
+* | |   7a7756d 2026-08-05 zzzzz Merge pull request #10 from PhilenaWu/fix/contractor-portal
+|\ \ \  
+| | | * bf5526d 2026-08-06 zzzzz fix(contractor): give contractors their own chrome and route defect mail to the person
+| | |/  
+| |/|   
+| * | f6822f7 2026-08-05 zzzzz fix(contractor): specific suspension code + correct reassignment handling
+|/ /  
+* |   5e4a9ee 2026-08-05 dav_1ann Merge pull request #9 from PhilenaWu/fix-mail
+|\ \  
+| |/  
+|/|   
+| * eab6410 2026-08-05 dav_1ann fix: close three reported gaps in teammates' code (Z.5, P.14, CV retry)
+|/  
+* 011e1fc 2026-07-31 philena (origin/fix/uc1-2-4-doc-and-behaviour-gaps) feat: collapsible checklist sections with progress and review indicators (P.5)
+* 2608d4b 2026-07-31 philena fix: correct audit action names, status transitions, and doc drift (UC-001/002/004)
+* 4592c16 2026-07-31 hasini (origin/feat/check-for-dashboard-errors, feat/check-for-dashboard-errors) fix: close the round-2 audit findings across UC-005/011/012
+* 9a2adab 2026-07-31 hasini fix(uc011): honest projected-exposure tile, complete watchlist disclosure, 375px panel reflow
+* be06133 2026-07-31 hasini fix(ui): KPI tiles show a neutral flat state on exactly 0% movement
+* 1b9b133 2026-07-30 hasini fix(uc005): priority-queue rows link to /inspections/:id, not the retired /incidents path
+* 2461c28 2026-07-30 hasini docs: sync design artefacts with the build; correct the auth summary
+* 72eaedf 2026-07-30 hasini fix(uc003): add missing Chip and Rating imports in MyReportsPage
+* ee8b511 2026-07-30 hasini perf: lazy-load the chart-heavy dashboard and admin pages
+* 4e1f16d 2026-07-30 hasini feat(uc012): vendor rows link to their cost evidence; inline contract-date validation
+* 384ed94 2026-07-30 hasini feat(uc005): what-if preview survives an accidental refresh
+* afd5e86 2026-07-30 hasini feat(uc005): contractor scorecard drills through to the triage queue
+* 7fbcd9a 2026-07-30 hasini fix(uc005): KPI summary honours the form-section filter; CSV import rejects malformed dates
+*   2ce5a9c 2026-07-30 philena Merge remote-tracking branch 'origin/fix-email'
+|\  
+| * fb20562 2026-07-30 dav_1ann (origin/fix-email) fix: reach the contractor's socket room on assign and reject (D.5)
+* | f03f79c 2026-07-30 philena Create _redirects for deployment
+|/  
+* 51ca616 2026-07-30 philena fix: emit status_update on lift-inspection creation; non-blocking queue refresh
+*   057c9d3 2026-07-30 zzzzz Merge pull request #7 from PhilenaWu/feat/uc8-notification
+|\  
+| * bc10349 2026-07-30 zzzzz (origin/feat/uc8-notification) feat(UC-008): persist notifications and raise them on lifecycle events
+|/  
+*   7755f95 2026-07-30 philena Merge branch 'feat/uc3-resident-inspector-status-tracker'
+|\  
+| * a08e66b 2026-07-29 zzzzz (origin/feat/uc3-resident-inspector-status-tracker) feat(uc-003): originator status tracker — live updates, detail view, ratings
+* | a8c3aac 2026-07-30 philena (origin/feat/manager-queue-tabs-and-history) feat: manager queue tabs + closed-record history page
+* | c6f7a77 2026-07-30 philena fix: closed inspection detail page no longer 404s
+* |   b6697f7 2026-07-30 hasini Merge branch 'fix/dashboard-display'
+|\ \  
+| * | c1f1e9d 2026-07-30 hasini (origin/fix/dashboard-display, fix/dashboard-display) dashboard design fixes
+| * | 508c3c0 2026-07-30 hasini fix(dashboards): honest trend axis, folded alert list, and review fixes
+* | |   bbc53be 2026-07-30 mahdiyaa (origin/fix/improving-cv-accuracy-and-precision) Merge branch 'fix/editing-inspector-page-landing-page'
+|\ \ \  
+| |/ /  
+|/| |   
+| * | 8c7aa75 2026-07-30 mahdiyaa (origin/fix/editing-inspector-page-landing-page) feat(UC-013): Add paper inspection form scanning and inspector workflow improvements
+* | | 949578a 2026-07-30 hasini (origin/check/dashboard, feat/uc11-connect-cost-dashboard) feat(UC-011): connect admin cost dashboard to the backend, drop demo data
+* | |   71119d3 2026-07-29 dav_1ann Merge pull request #6 from PhilenaWu/fix-emails
+|\ \ \  
+| |/ /  
+|/| |   
+| * | dfe575f 2026-07-29 dav_1ann fix: closed records were excluded from cost, report and velocity queries
+|/ /  
+* |   b2bf425 2026-07-29 philena Merge branch 'fix/inspector-page-login'
+|\ \  
+| * | 6ee2fd8 2026-07-29 philena (origin/fix/inspector-page-login) fix: surface suspended accounts explicitly; rename demo logins to be presentation-ready
+* | | 4d63e18 2026-07-29 mahdiyaa (origin/fix/cv-improvement-from-SAM3, origin/feat/uc-13-setup) feat(UC-013): add paper-form OCR prefill for inspections
+|/ /  
+* |   cd67966 2026-07-29 mahdiyaa Merge branch 'fix/cv-improvements'
+|\ \  
+| * | cc14531 2026-07-29 mahdiyaa (origin/fix/cv-improvements) Editing CV analysis box
+| |/  
+* | a1bca84 2026-07-29 philena (origin/feat/uc1-inspector-esignature) fix: closed reports were missing from a resident's own My Reports
+* | 612fef7 2026-07-29 philena feat: inspector e-signature at submission (G5)
+* | be298b5 2026-07-29 philena feat: zero-defect auto-close (G6)
+* | 194b05c 2026-07-28 philena feat: inspector e-signature at submission (G5)
+* | 842e48e 2026-07-28 philena (origin/chore/inspection-flow-hardening) fix: enforce spot-check guard rails server-side (G1-G4)
+* | fe0b110 2026-07-28 philena fix: close-flow integrity — endorser role verification + state precondition
+* |   74ac332 2026-07-28 dav_1ann Merge pull request #5 from PhilenaWu/feat/uc9-automated-reports
+|\ \  
+| * | 14c4bd4 2026-07-28 dav_1ann (origin/feat/uc9-automated-reports) feat(inspections): auto-email defect alerts on assign + demo workflow
+* | |   8b3aa00 2026-07-28 dav_1ann Merge pull request #4 from PhilenaWu/feat/uc11-backend
+|\ \ \  
+| * | | ed813da 2026-07-28 dav_1ann (origin/feat/uc11-backend) feat(uc-011): add admin cost PPTX export engine
+| * | | a5474c4 2026-07-28 dav_1ann UC-011: Admin Cost Dashboard — Phase 3: Advanced Filtering Engine (Davian)   I am Davian, responsible for the Backend of UC-011: Admin Operational Cost Analytics Dashboard. Hasini is adding filters to the UI, and my goal in Phase 3 is to implement the backend logic to handle these filters dynamically.Before changing code, inspect the current repository and briefly state your implementation plan. Relevant project context is below.Area Project requirement Stack Node.js/Express, Supabase (PostgreSQL). Target files adminController.js, admin.js routes. Goal Update all cost endpoints to accept and apply query parameters for filtering.     Functional requirements  1. Update All Admin Cost Endpoints:  • Modify summary, breakdown, and trends to accept: startDate, endDate, block, liftId, and contractorId.  • Logic: Dynamically build the SQL WHERE clause based on the provided parameters.    2. Date Range Filtering:  • Ensure actual_cost is filtered by the inspection's closed_at date.  • Ensure estimated_cost is filtered by the prediction's created_at date.    3. Parameter Validation:  • Validate that dates are in the correct format and IDs are valid UUIDs before querying the database.    Testing requirements  Update backend/tests/integration/adminCosts.integration.test.js.• Test each filter individually (e.g., filter by Block only).  • Test combined filters (e.g., filter by Block AND Date Range).  • Verify that the counts and sums update correctly when filters are applied.  Required response format  After implementation, respond with:1. Your short plan and assumptions.  2. The exact files changed.  3. The Filter API Documentation (list the supported query params for Hasini).  4. The test commands run and their actual results.
+| * | | 91069de 2026-07-28 dav_1ann feat(uc-011): add cost trends endpoint and harden cost API
+| * | | cf5d2ad 2026-07-28 dav_1ann feat(uc-011): add admin cost analytics API (summary + breakdown)
+|/ / /  
+* | |   2e82527 2026-07-28 hasini Merge branch 'fix/main'
+|\ \ \  
+| * | | 9e2e507 2026-07-28 hasini (origin/fix/main, fix/main) feat(analytics): section filter, re-open metric, and dashboard flow fixes
+* | | | 1b55f12 2026-07-28 philena (origin/feat/uc1-checklist-and-form-fields) feat: replace placeholder checklist with real spot-check form + lift metadata
+* | | | 71ea361 2026-07-28 philena feat: seed real lift spot-check checklist (25 items) + add serviced_at
+|/ / /  
+* | | 5676c20 2026-07-28 hasini fix: default 14-day deadline and guard null scorecard values
+* | |   507834c 2026-07-28 hasini Merge branch 'feat/uc-10-contractor-portal'
+|\ \ \  
+| |_|/  
+|/| |   
+| * | f03e52f 2026-07-28 zzzzz (origin/feat/uc-10-contractor-portal, feat/uc-10-contractor-portal) feat(contractor): add UC-010 contractor portal
+* | | f392959 2026-07-27 mahdiyaa (origin/feat/improve-cv-add-manager-to-do) Fixing Error: Unable to run backend
+* | | 8cd01ae 2026-07-27 mahdiyaa Merge branch 'main' into feat/improve-cv-add-manager-to-do
+|\| | 
+| * |   c694019 2026-07-27 hasini Merge branch 'feat/uc11-admin-cost-dashboard-ui'
+| |\ \  
+| | * | 3ee88d0 2026-07-27 hasini (origin/feat/uc11-admin-cost-dashboard-ui, feat/uc11-admin-cost-dashboard-ui) feat: add UC-011 admin cost analytics dashboard (frontend)
+* | | | 86a12b4 2026-07-27 mahdiyaa completed cv + manager connection TEST 1
+|/ / /  
+* | |   9c4965a 2026-07-26 dav_1ann Merge pull request #3 from PhilenaWu/feat/uc9-automated-reports
+|\ \ \  
+| |/ /  
+|/| /   
+| |/    
+| * 1bba5ff 2026-07-26 dav_1ann fix(reports): count report costs correctly and enrich AI summary
+| * ec323d4 2026-07-24 dav_1ann fix(reports): serve report PDFs via Cloudinary image pipeline
+| * 2e34f75 2026-07-24 dav_1ann feat(reports): add UC-009 reports archive UI (Phase 4)
+| * 9b68da2 2026-07-24 dav_1ann feat(reports): expose UC-009 report routes and monthly cron schedule
+| * ce99df8 2026-07-24 dav_1ann feat(reports): orchestrate UC-009 generation, upload, persistence, and email
+| * 34c331a 2026-07-24 dav_1ann feat(reports): add UC-009 monthly report data → summary → PDF pipeline
+|/  
+* 8cf3131 2026-07-23 hasini (origin/feat/uc12-vendor-lifecycle-colour_change, feat/priority-colour-scale) feat: priority colour scale (yellow→orange→red→dark red) + queue demo seed
+*   a30f167 2026-07-23 philena Merge branch 'feat/uc4-close-esign'
+|\  
+| * 0669701 2026-07-23 philena (origin/feat/uc4-close-esign) feat: add UC-004 close with dual e-signature (frontend)
+| * ac430a9 2026-07-23 philena feat: add UC-004 close with remark and dual e-signature (backend)
+* | 36a754c 2026-07-23 hasini (origin/feat/uc12-vendor-lifecycle, feat/uc12-vendor-lifecycle) Update AdminVendorPage.jsx
+* | 04abd83 2026-07-18 hasini feat(uc12): vendor account lifecycle — accountable onboarding, contract-driven suspension, audit trail, admin vendor UI
+|/  
+*   9bc1acb 2026-07-17 philena Merge branch 'feat/uc2-triage-and-resident-home-and-statsboard'
+|\  
+| * 894ecec 2026-07-17 philena (origin/feat/resident-home-and-reports) feat: add resident home page
+| * 3e020e7 2026-07-17 philena feat: resident status board + manager triage (status/contractor/priority update)
+| * 36967f9 2026-07-17 philena feat: link My Reports to real submitted inspections (UC-003 REST layer)
+* | d93161c 2026-07-16 hashinn Revise Data Playground for CSV what-if scenario preview
+* | 855cad8 2026-07-16 hashinn Revise Data Playground description for clarity
+* | 1844ce0 2026-07-16 mahdiyaa Merge branch 'main' of https://github.com/PhilenaWu/FSAD_PROJECT
+|\| 
+| *   12f06ca 2026-07-16 philena Merge remote-tracking branch 'origin/feat/uc8-notification'
+| |\  
+| | * 88419ed 2026-07-16 zzzzz feat(notifications): add UC-008 manager scoped notifications
+| * | 326d5c5 2026-07-16 philena Merge remote-tracking branch 'origin/feat/socket-foundation'
+| |\| 
+| | * 42f954c 2026-07-16 zzzzz (origin/feat/socket-foundation) feat(realtime): add shared Socket.IO foundation
+| * |   345080d 2026-07-16 philena Merge remote-tracking branch 'origin/backend/feat/recommendation-engine'
+| |\ \  
+| | |/  
+| |/|   
+| | * 20bdcdf 2026-07-16 dav_1ann (origin/backend/feat/recommendation-engine) frontend fix
+| | * d89345a 2026-07-15 dav_1ann link ai recommendation to frontend
+| | * 9e3707c 2026-07-15 dav_1ann feat(uc-006): implement recommendation engine orchestration
+| | * e9b2c73 2026-07-15 dav_1ann feat(uc-006): implement tested defect velocity calculator
+* | |   89ff006 2026-07-16 mahdiyaa Merge branch 'feat/set-up-cv'
+|\ \ \  
+| |/ /  
+|/| |   
+| * | e06b474 2026-07-16 mahdiyaa (origin/origin/feat/set-up-cv) Add CV Review page for managers
+| * | 42e95f2 2026-07-16 mahdiyaa Add UC-007 CV pipeline: retry queue, review-queue endpoint, and frontend components
+| |/  
+* | 79bbdf0 2026-07-15 hasini (origin/feat/admin-portal, feat/admin-portal) feat: add admin portal layout, navbar, and seed guide
+* | 7f6b14e 2026-07-15 hashinn Revise project phases and add new use cases
+* | 35c50af 2026-07-15 hashinn Update HIGH_LEVEL_DESIGN.md with new features
+|/  
+* 306ba9e 2026-07-14 hasini fix: route managers to manager workspace after login
+* 2817f77 2026-07-11 hasini (origin/feat/analytics-dashboard, feat/analytics-dashboard) dashboard KPI row, data-driven filters, and accuracy/UX polish
+*   74ba70c 2026-07-11 hasini Merge branch 'main' into feat/analytics-dashboard
+|\  
+| * 5e5e435 2026-07-11 philena (origin/feat/uc1-form-enhancements) Update theme.js
+| * efb62c3 2026-07-11 philena feat: client-side photo compression before upload (uc-1)
+| * 5029293 2026-07-11 philena feat: voice input for resident complaint (uc-1)
+| * e6b3213 2026-07-11 philena feat: GPS capture on resident and inspector forms (uc-1)
+| * b456977 2026-07-11 philena (origin/feat/uc1-inspector-checklist) feat: role-based post-login routing
+| * 580b84b 2026-07-11 philena feat: add inspector lift spot-check with per-item photo (uc-1)
+| * eb35dd4 2026-07-11 philena feat: add inspector lift spot-check backend
+* | bdc53da 2026-07-11 hasini CSV what-if import preview on analytics dashboard
+* | 7bed3d8 2026-07-10 hasini UC-005 analytics dashboard end-to-end
+|/  
+* 75e657c 2026-07-10 hasini Add manager header nav with role-based layout switching
+* 893f91b 2026-07-10 philena fix: remove Vite template CSS; full-width header, themed nav links
+*   816c0f7 2026-07-10 philena Merge branch 'main' into feat/resident-app-header
+|\  
+| * 99e3161 2026-07-10 philena (origin/feat/uc1-inspections) refactor: retarget UC-001 from incidents to inspections
+| *   d12985c 2026-07-10 philena Merge branch 'feat/updated-migrations'
+| |\  
+| | * fc469a1 2026-07-10 philena (origin/feat/updated-migrations) feat: replace schema with updated: v3 migrations (001-015)
+| * | 90de78d 2026-07-10 Philena (school) Revise AGENTS.md for clarity and completeness
+| |/  
+| * dd6c9fe 2026-07-09 Philena (school) Add updated Project Implementation and HLD
+| * a3c8fc6 2026-07-09 Philena (school) Delete HIGH_LEVEL_DESIGN_v2.md
+| * 54cd080 2026-07-09 Philena (school) Delete PROJECT_IMPLEMENTATION_PHASES_v2.md
+* | 8f24672 2026-07-06 philena feat: add resident app header + GET /api/users/me
+|/  
+* 0b66662 2026-07-06 philena feat: add UC-001 report issue page + DB connection timeout
+* 535fb04 2026-07-06 philena feat: add UC-001 report issue page (frontend)
+* f51d119 2026-07-06 philena feat: add UC-001 backend (incident create with photo upload)
+* a5e3718 2026-06-30 philena (origin/feat/mui-auth-shell) feat: skip login for active sessions and remember email
+* 2150148 2026-06-30 philena feat: add MUI auth shell (theme, AuthContext, login form, API client)
+* 2d35782 2026-06-28 philena (origin/feat/react-router) feat: add React Router with protected routes and page stubs
+* 750364f 2026-06-27 philena (origin/feat/user-model-cron-guard, feat/user-model-cron-guard) feat: add user model, cron guard middleware, and DB connection
+*   6c55f2d 2026-06-26 Philena (school) Merge pull request #2 from PhilenaWu/chore/setup-supabase
+|\  
+| * 5466756 2026-06-26 philena (origin/chore/setup-supabase) feat: integrate Supabase auth and database
+|/  
+*   708126c 2026-06-26 hashinn Merge pull request #1 from PhilenaWu/chore/setup-repo
+|\  
+| * 0910290 2026-06-26 philena (origin/chore/setup-repo, chore/setup-repo) chore: setup backend and frontend
+|/  
+* fd7359e 2026-06-24 Philena (school) README for Estate Incident Management System
+* 43a91a6 2026-06-24 Philena (school) README for comprehensive project documentation
+* 5619bf2 2026-06-24 Philena (school) README for Estate Incident Management System
+* ae1e291 2026-06-23 hasini folder structure of the project
+* 17a0452 2026-06-23 hasini added the high level design and project implementation file
+* 7a9066e 2026-05-01 Philena (school) Initial commit
