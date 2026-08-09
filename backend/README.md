@@ -192,6 +192,9 @@ Seed accounts and demo data are covered in the root README; admin logins are in
 
 ## Deployment (Render)
 
+**Live:** the deployed frontend at https://fsad-project-pied.vercel.app talks to
+this backend on Render.
+
 1. Create a Render Web Service from this repo.
 2. Start command: `node server.js`.
 3. Add the environment variables above; set `FRONTEND_URL` to the deployed Vercel URL.
