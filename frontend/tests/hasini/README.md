@@ -1,6 +1,6 @@
 # Ginjala Hasini — unit tests
 
-**391 tests across 32 files. All passing.**
+**431 tests across 33 files. All passing.**
 
 [TEST_CASES.md](TEST_CASES.md) lists every one of them by name, generated from
 the runners' own JSON output rather than typed by hand.
@@ -12,7 +12,7 @@ that reason alone; both are unit tests of my own code.
 
 | | Folder | Files | Tests |
 |---|---|---|---|
-| Backend (jest) | [`backend/tests/hasini/`](../../../backend/tests/hasini/) | 9 | 124 |
+| Backend (jest) | [`backend/tests/hasini/`](../../../backend/tests/hasini/) | 10 | 164 |
 | Frontend (vitest) | [`frontend/tests/hasini/`](.) (this folder) | 23 | 267 |
 
 ## Running them
@@ -48,7 +48,8 @@ pool, Supabase client, Cloudinary and OpenAI seams are all mocked.
 | `userContacts.test.js` | 6 | `GET /api/users/contacts` — role→counterpart mapping from the verified token, null phone, `403` for a resident |
 | `recommendations.test.js` | 4 | UC-005 dashboard read of active AI alerts |
 | `auth.test.js` | 5 | `requireRole` — suspended vs wrong-role vs missing profile, each with its own code, and `401` with no caller |
-| `auth.integration.test.js` | 1 | Placeholder (`todo`) for the end-to-end token check; needs a live Supabase project |
+| `auth.integration.test.js` | 34 | Token verification across all 14 protected UC-005 / UC-011 routes — every one refused without a token, how the token must be presented, role and status gates behind it, and that neither a token claim nor the request body can change who the caller is |
+| `profile.test.js` | 7 | `PATCH /api/users/me` — the resident profile page's self-service edit of name and phone |
 
 ## Frontend — `frontend/tests/hasini/`
 

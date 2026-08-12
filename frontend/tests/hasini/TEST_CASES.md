@@ -1,16 +1,16 @@
 # Test case record — Ginjala Hasini
 
-Every test in my two folders, by name, as reported by the test runners themselves. Generated from `jest --json` and `vitest --reporter=json` on 2026-08-09, so this list cannot drift from what actually runs.
+Every test in my two folders, by name, as reported by the test runners themselves. Generated from `jest --json` and `vitest --reporter=json` on 2026-08-12, so this list cannot drift from what actually runs.
 
-**391 tests, 390 passing, 0 failing, 1 todo.**
+**431 tests, 431 passing, 0 failing, 0 todo.**
 
-The one `todo` is `auth.integration.test.js › token verification against protected routes` — a placeholder for the end-to-end token check, which needs a live Supabase project and so is not run here.
+The last `todo` — `auth.integration.test.js › token verification against protected routes` — is now implemented (34 tests). It turned out not to need a live Supabase project after all: mocking `getClaims` exercises the real `requireAuth` → `requireRole` chain, which is the part that belongs to us, and the token signature check itself is Supabase's code, not ours to test.
 
 See [README.md](README.md) for what each file covers and how to run it.
 
 ## Backend (jest)
 
-`backend/tests/hasini/` — 9 files, 124 tests, run with `npx jest tests/hasini` (from `backend/`).
+`backend/tests/hasini/` — 10 files, 164 tests, run with `npx jest tests/hasini` (from `backend/`).
 
 ### analytics.test.js (27)
 
@@ -74,9 +74,53 @@ See [README.md](README.md) for what each file covers and how to run it.
 - the guard is mounted on every analytics route, not just one
 - valid dates still pass through and reach the query
 
-### auth.integration.test.js (1)
+### auth.integration.test.js (34)
 
-- token verification against protected routes
+**no token reaches no protected route**
+
+- get /api/analytics/filter-options → 401 UNAUTHENTICATED
+- get /api/analytics/summary → 401 UNAUTHENTICATED
+- get /api/analytics/issues-by-block → 401 UNAUTHENTICATED
+- get /api/analytics/trends → 401 UNAUTHENTICATED
+- get /api/analytics/sla-compliance → 401 UNAUTHENTICATED
+- get /api/analytics/contractor-scorecard → 401 UNAUTHENTICATED
+- get /api/analytics/priority-queue → 401 UNAUTHENTICATED
+- get /api/admin/costs/summary → 401 UNAUTHENTICATED
+- get /api/admin/costs/filter-options → 401 UNAUTHENTICATED
+- get /api/admin/costs/jobs → 401 UNAUTHENTICATED
+- get /api/admin/costs/breakdown → 401 UNAUTHENTICATED
+- get /api/admin/costs/trends → 401 UNAUTHENTICATED
+- post /api/export/pptx → 401 UNAUTHENTICATED
+- post /api/export/admin-costs-pptx → 401 UNAUTHENTICATED
+- the profile lookup never runs when there is no token
+
+**how the token must be presented**
+
+- 401 when the token is sent without the Bearer prefix
+- 401 for a different auth scheme carrying the same token
+- 401 for the Bearer prefix with an empty token
+- 401 for a lowercase bearer prefix
+- 401 when a valid token is passed as a query parameter instead
+- 401 when the signature does not verify
+
+**the token identifies, the profile row authorises**
+
+- a manager reaches the analytics dashboard
+- an admin reaches the cost dashboard
+- 403 FORBIDDEN: a resident holding a valid token cannot read analytics
+- 403 FORBIDDEN: a manager cannot read the admin cost figures
+- 403 FORBIDDEN: an admin cannot read the manager analytics
+- 403 FORBIDDEN: the manager cost deck is refused to a manager
+- 403 FORBIDDEN: a role claim inside the token grants nothing
+- 403 FORBIDDEN: naming another user in the request does not switch identity
+- 403 FORBIDDEN when the verified token has no profile row at all
+
+**account status is checked behind a valid token**
+
+- suspended-token → 403 ACCOUNT_SUSPENDED even with the manager role
+- pending-token → 403 ACCOUNT_PENDING even with the manager role
+- rejected-token → 403 ACCOUNT_REJECTED even with the manager role
+- a blocked account is refused on every protected route, not just one
 
 ### auth.test.js (5)
 
@@ -165,6 +209,18 @@ See [README.md](README.md) for what each file covers and how to run it.
 - 500 EXPORT_FAILED when the deck build throws
 - 500 EXPORT_FAILED when the Cloudinary upload throws
 - 500 EXPORT_FAILED when a cost query fails, and no upload is attempted
+
+### profile.test.js (7)
+
+**PATCH /api/users/me**
+
+- 200: updates full_name and phone and returns the updated row
+- 200: omitted fields are left unchanged (COALESCE path)
+- 200: empty-string phone clears the stored number
+- 400 VALIDATION_ERROR: blank full_name
+- 400 VALIDATION_ERROR: phone over 30 characters
+- 401 without a token
+- 404 NOT_FOUND when the caller has no profile row
 
 ### recommendations.test.js (4)
 

@@ -54,5 +54,19 @@ export default defineConfig({
     setupFiles: ['./src/setupTests.js'],
     globals: true,
     restoreMocks: true,
+    // Vitest's default is 5000ms, which the component tests kept losing to by a
+    // hair — observed failures ran 5016–5414ms, i.e. barely over, in four files
+    // across three test folders, and which ones tripped changed on every run
+    // while all of them passed in isolation. Rendering a full MUI page in jsdom
+    // and driving it with userEvent simply costs more than that once 37 files
+    // are competing for workers.
+    //
+    // Set here rather than per file: the two files that already raise
+    // testing-library's own asyncUtilTimeout to 5000 need the outer budget to
+    // exceed the inner one, and any component test can hit this on a loaded
+    // machine — patching them one at a time as they surface just moves the
+    // failure somewhere else. A timeout costs nothing when a test passes; the
+    // only price is that a genuinely hung test now takes 15s to say so.
+    testTimeout: 15000,
   },
 })
