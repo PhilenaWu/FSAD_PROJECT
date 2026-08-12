@@ -13,6 +13,10 @@ const router = express.Router();
 // GET /api/users/me — any authenticated user may read their own profile row.
 router.get('/me', requireAuth, userController.getMe);
 
+// PATCH /api/users/me — edit one's own contact details (full_name, phone).
+// requireAuth's status gates keep pending/suspended accounts out.
+router.patch('/me', requireAuth, userController.updateMe);
+
 // POST /api/users/register-profile — resident self-registration. requireAuth
 // still applies: the caller must hold the Supabase session they just created,
 // which is what pins the new row to their own auth id. Their profile row does

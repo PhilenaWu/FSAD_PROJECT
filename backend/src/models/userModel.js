@@ -104,6 +104,23 @@ async function setContractorId(id, contractorId) {
   return result.rows[0];
 }
 
+// Self-service profile edit (PATCH /api/users/me). Only the caller's own
+// contact fields — never role/status/block/unit, which staff manage. Only
+// supplied fields change; an empty-string phone clears the number (it is
+// nullable, and COALESCE alone could never un-set it).
+async function updateOwnProfile(id, { full_name, phone }) {
+  const result = await query(
+    `UPDATE users
+     SET full_name = COALESCE($2, full_name),
+         phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF($3, '') END,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, full_name, phone]
+  );
+  return result.rows[0];
+}
+
 // Update a vendor account holder's name/title (UC-012 edit dialog). Only
 // supplied fields change.
 async function updateHolder(id, { full_name, job_title }) {
@@ -129,5 +146,6 @@ module.exports = {
   findActiveContactsByRole,
   setStatus,
   setContractorId,
+  updateOwnProfile,
   updateHolder,
 };

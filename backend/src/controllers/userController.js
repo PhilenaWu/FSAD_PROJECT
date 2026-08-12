@@ -53,6 +53,36 @@ async function getMe(req, res, next) {
   }
 }
 
+// PATCH /api/users/me — self-service edit of the caller's own contact details.
+// Only full_name and phone are accepted: block/unit/role/status are managed by
+// staff, and the email/password live in Supabase Auth. Identity comes from the
+// verified token (req.user.id), never from the body.
+async function updateMe(req, res, next) {
+  try {
+    const { full_name, phone } = req.body;
+
+    if (full_name !== undefined
+        && (typeof full_name !== 'string' || !full_name.trim() || full_name.length > 255)) {
+      return validationError(res, 'full_name must be a non-empty string of 255 characters or fewer.');
+    }
+    // Empty string is allowed: it clears the (nullable) number.
+    if (phone !== undefined && (typeof phone !== 'string' || phone.length > 30)) {
+      return validationError(res, 'phone must be a string of 30 characters or fewer.');
+    }
+
+    const updated = await userModel.updateOwnProfile(req.user.id, {
+      full_name: full_name === undefined ? undefined : full_name.trim(),
+      phone,
+    });
+    if (!updated) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Profile not found' });
+    }
+    res.json(updated); // raw row, same shape as getMe
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/users/inspectors — active inspectors for the UC-004 close panel's
 // endorser picker. Manager-only (enforced at the route).
 async function listInspectors(req, res, next) {
@@ -195,6 +225,7 @@ const rejectResident = (req, res, next) => decidePendingResident(req, res, next,
 
 module.exports = {
   getMe,
+  updateMe,
   listInspectors,
   listContacts,
   registerProfile,

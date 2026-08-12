@@ -72,8 +72,8 @@ export default function ResidentLayout() {
     <AppShell
       navItems={navItems}
       accountSubtitle={accountSubtitle}
-      // No profile page wired up for residents/inspectors yet — placeholder only.
-      profileLinkEnabled={false}
+      // Residents get the editable profile page; inspectors the read-only card.
+      profileLinkEnabled
       quickAccessItems={QUICK_ACCESS_BY_ROLE[role]}
       helpPhone={helpPhone}
       helpCaption={helpCaption}

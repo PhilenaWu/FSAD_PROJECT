@@ -15,6 +15,12 @@ export function signOut() {
   return supabase.auth.signOut();
 }
 
+// Change the signed-in user's password (profile page). Supabase Auth owns the
+// credential; the session must be live, and no backend endpoint is involved.
+export function updatePassword(password) {
+  return supabase.auth.updateUser({ password });
+}
+
 // Current session's access token (JWT), or null if signed out.
 export async function getAccessToken() {
   const { data } = await supabase.auth.getSession();
