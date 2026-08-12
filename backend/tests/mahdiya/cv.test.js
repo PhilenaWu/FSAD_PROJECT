@@ -369,13 +369,20 @@ describe('cvController.detect', () => {
     ).toBe(false);
   });
 
-  test('a non-429 failure propagates (caller logs and continues, per inspectionController)', async () => {
+  test('a non-429 failure is also queued to retry_queue, not just 429s', async () => {
     jest.spyOn(roboflowService, 'detectDefect').mockRejectedValue(new Error('boom'));
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'rq-2', status: 'pending' }] });
 
-    await expect(
-      cvController.detect('https://example.com/photo.jpg', 'resident_upload', { location_block: '44A' })
-    ).rejects.toThrow('boom');
-    expect(mockQuery).not.toHaveBeenCalled();
+    const result = await cvController.detect('https://example.com/photo.jpg', 'resident_upload', {
+      location_block: '44A',
+      inspection_id: 'insp-2',
+    });
+
+    expect(result).toEqual({ cvDetection: null, inspection: null, queued: true });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO retry_queue/i);
+    expect(params).toEqual(['https://example.com/photo.jpg', 'insp-2']);
   });
 
   describe('priority blend (a report with both a human complaint and a photo)', () => {

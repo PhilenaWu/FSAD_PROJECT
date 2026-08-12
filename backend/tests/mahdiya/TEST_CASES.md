@@ -44,7 +44,7 @@ See [README.md](README.md) for what each file covers and how to run it.
 - CV-T02: confidence misses the threshold — cv_detections row only, no ticket created
 - CV-T03: Roboflow returns 429 — image queued to retry_queue, no ticket, manager not notified
 - a category migration 042 retired is refused as a 400, not left to the DB
-- a non-429 failure propagates (caller logs and continues, per inspectionController)
+- a non-429 failure is also queued to retry_queue, not just 429s
 
 **cvController.detect — priority blend (a report with both a human complaint and a photo)**
 
