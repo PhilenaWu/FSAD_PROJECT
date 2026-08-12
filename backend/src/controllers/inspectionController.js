@@ -258,19 +258,27 @@ async function create(req, res, next) {
       ...gpsFields(req.body),
     });
 
-    // CV defect detection on the same photo (UC-007), fired asynchronously so
-    // it never blocks the resident's submission. On a high-confidence match
-    // it creates its own separate cv_auto_detected ticket; a Roboflow rate
-    // limit queues the image to retry_queue, linked back to this inspection.
-    // Other failures are logged only.
+    // CV defect detection on the same photo (UC-007) — awaited, not fired and
+    // forgotten, so cv_detection_id and the blended priority are already on
+    // the record before this response returns. Fire-and-forget left a window
+    // where a manager could open the report before CV ever ran, or — if the
+    // process died mid-request — lose the result entirely with nothing to
+    // retry. Still wrapped in its own try/catch: a CV failure must not fail
+    // the resident's submission. cvController.detect() itself queues any
+    // Roboflow failure to retry_queue for the batch-scan cron to pick up; this
+    // catch is only for something failing before that queue write completes.
+    let finalInspection = inspection;
     if (photo_url) {
-      cvController
-        .detect(photo_url, 'resident_upload', {
+      try {
+        const { inspection: blended } = await cvController.detect(photo_url, 'resident_upload', {
           location_block,
           location_unit,
           inspection_id: inspection.id,
-        })
-        .catch((err) => console.error('CV detection failed:', err.message));
+        });
+        if (blended) finalInspection = blended;
+      } catch (err) {
+        console.error('CV detection failed:', err.message);
+      }
     }
 
     // A complaint sitting untriaged is the failure mode here — nothing told a
@@ -279,12 +287,12 @@ async function create(req, res, next) {
     await notificationService.notifyEvent({
       event_type: 'complaint_submitted',
       scope: { type: 'managers' },
-      message: `New resident report — ${recordLabel(inspection)}`,
-      urgency: (inspection.ai_priority_score ?? 0) >= 80 ? 'Critical' : 'Informational',
-      link: `/inspections/${inspection.id}`,
+      message: `New resident report — ${recordLabel(finalInspection)}`,
+      urgency: (finalInspection.ai_priority_score ?? 0) >= 80 ? 'Critical' : 'Informational',
+      link: `/inspections/${finalInspection.id}`,
     });
 
-    res.status(201).json(inspection);
+    res.status(201).json(finalInspection);
   } catch (err) {
     next(err);
   }

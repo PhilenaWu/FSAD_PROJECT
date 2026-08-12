@@ -42,8 +42,9 @@ jest.mock('../../src/services/openaiService', () => ({
   extractSpotCheckForm: jest.fn(),
 }));
 
-// --- Mock: CV detection. detect() is fired fire-and-forget by the controller
-// (its resolved value isn't used), so a resolved no-op is enough. batchScan/
+// --- Mock: CV detection. The controller now awaits detect(), so this resolves
+// with inspection: null (no blend) rather than hanging — a resolved no-op is
+// enough since these tests don't exercise the blended-priority path. batchScan/
 // listDetections aren't exercised here but must exist as functions — app.js
 // requires this module at load time and cv.js passes listDetections directly
 // as a route handler, so an undefined export would blow up require(). No

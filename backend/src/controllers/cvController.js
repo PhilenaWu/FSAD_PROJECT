@@ -160,19 +160,21 @@ async function recordDetection({
 // ticket's location and (when known) the inspection_id of the submission the
 // photo came from — used both to link a queued retry back to its origin, and
 // to blend the result into that report's priority (see recordDetection).
-// On a 429 (rate limit), the image is queued to retry_queue instead of
-// failing outright, and the manager is not notified yet (CV-T03).
+// detect() is called fire-and-forget right after upload (inspectionController
+// doesn't await it), so any failure here — a 429, a network blip, or the
+// process restarting mid-request — would otherwise vanish into a console.error
+// with no record that a scan was ever owed. Queueing on every failure, not
+// just 429, means the batch-scan cron (CV-T03) is the automatic safety net for
+// all of them, not just rate limits.
 // Returns { cvDetection, inspection, queued? }.
 async function detect(imageUrl, source, context = {}) {
   let result;
   try {
     result = await roboflowService.detectDefect(imageUrl);
   } catch (err) {
-    if (err.status === 429) {
-      await retryQueueModel.create({ image_url: imageUrl, inspection_id: context.inspection_id });
-      return { cvDetection: null, inspection: null, queued: true };
-    }
-    throw err;
+    console.error('[cvController] detect failed, queued for retry:', err.message);
+    await retryQueueModel.create({ image_url: imageUrl, inspection_id: context.inspection_id });
+    return { cvDetection: null, inspection: null, queued: true };
   }
 
   return recordDetection({
