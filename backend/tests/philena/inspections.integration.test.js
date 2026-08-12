@@ -232,9 +232,28 @@ const mockQuery = jest.fn(async (sql, params = []) => {
       if (field === 'name') continue; // the contractor subquery, applied above
       rows = rows.filter((i) => i[field] === params[Number(idx) - 1]);
     }
-    rows = archived
-      ? [...rows].sort((a, b) => String(b.closed_at ?? '').localeCompare(String(a.closed_at ?? '')))
-      : [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
+    // Sort: archived is always by closed_at; the live queue depends on which
+    // ORDER BY the model built (default most-urgent-first, ?sort=recent, or
+    // either priority direction) — mirror findAllForManager's own branching
+    // rather than re-deriving it, so a change to one is caught by the other.
+    if (archived) {
+      rows = [...rows].sort((a, b) => String(b.closed_at ?? '').localeCompare(String(a.closed_at ?? '')));
+    } else if (/ORDER BY created_at DESC$/i.test(sql.trim())) {
+      rows = [...rows].sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+    } else {
+      const priorityOrder = /CASE priority[\s\S]*?END (ASC|DESC)/i.exec(sql);
+      if (priorityOrder) {
+        const rank = { Critical: 1, High: 2, Medium: 3, Low: 4 };
+        const ascending = priorityOrder[1].toUpperCase() === 'ASC';
+        rows = [...rows].sort((a, b) => {
+          const diff = (rank[a.priority] ?? 5) - (rank[b.priority] ?? 5);
+          const ranked = ascending ? diff : -diff;
+          return ranked !== 0 ? ranked : String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+        });
+      } else {
+        rows = [...rows].sort((a, b) => (b.ai_priority_score ?? -1) - (a.ai_priority_score ?? -1));
+      }
+    }
     return { rows };
   }
   // close gate: SELECT 1 FROM inspection_history WHERE ... AND action = '...'.
@@ -1609,6 +1628,72 @@ describe('GET /api/inspections (manager queue)', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
+  });
+
+  // The "All open" tab's default — and anyone else who asks for it explicitly.
+  test('200 ?sort=recent orders newest-submitted-first', async () => {
+    const firstId = await seedComplaint('Filed first');
+    const secondId = await seedComplaint('Filed second');
+    const thirdId = await seedComplaint('Filed third');
+    // Real timestamps a few ticks apart would sort correctly too, but setting
+    // them explicitly makes the assertion deterministic rather than relying on
+    // however fast the test happens to run.
+    store.inspections.find((i) => i.id === firstId).created_at = '2026-08-01T00:00:00.000Z';
+    store.inspections.find((i) => i.id === secondId).created_at = '2026-08-02T00:00:00.000Z';
+    store.inspections.find((i) => i.id === thirdId).created_at = '2026-08-03T00:00:00.000Z';
+
+    const res = await request(app)
+      .get('/api/inspections?sort=recent')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r) => r.id)).toEqual([thirdId, secondId, firstId]);
+  });
+
+  // The priority-sort toggle, both directions — named severities, not the
+  // numeric ai_priority_score, since that's what the manager actually picks.
+  test('200 ?sort=priority_critical_first orders Critical to Low', async () => {
+    const lowId = await seedComplaint('Low priority item');
+    const criticalId = await seedComplaint('Critical priority item');
+    const highId = await seedComplaint('High priority item');
+    const mediumId = await seedComplaint('Medium priority item');
+    for (const [id, priority] of [
+      [lowId, 'Low'], [criticalId, 'Critical'], [highId, 'High'], [mediumId, 'Medium'],
+    ]) {
+      await request(app)
+        .patch(`/api/inspections/${id}`)
+        .set('Authorization', 'Bearer manager-token')
+        .send({ priority });
+    }
+
+    const res = await request(app)
+      .get('/api/inspections?sort=priority_critical_first')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r) => r.id)).toEqual([criticalId, highId, mediumId, lowId]);
+  });
+
+  test('200 ?sort=priority_low_first reverses the same order', async () => {
+    const lowId = await seedComplaint('Low priority item');
+    const criticalId = await seedComplaint('Critical priority item');
+    const highId = await seedComplaint('High priority item');
+    const mediumId = await seedComplaint('Medium priority item');
+    for (const [id, priority] of [
+      [lowId, 'Low'], [criticalId, 'Critical'], [highId, 'High'], [mediumId, 'Medium'],
+    ]) {
+      await request(app)
+        .patch(`/api/inspections/${id}`)
+        .set('Authorization', 'Bearer manager-token')
+        .send({ priority });
+    }
+
+    const res = await request(app)
+      .get('/api/inspections?sort=priority_low_first')
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r) => r.id)).toEqual([lowId, mediumId, highId, criticalId]);
   });
 });
 

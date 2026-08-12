@@ -1,10 +1,15 @@
-// UC-002 manager triage queue. Open inspections from GET /api/inspections,
-// most urgent first (AI priority score). Status-group tabs ("Needs action",
-// "In progress", "Awaiting endorsement") answer the question a manager opens
-// the queue to ask; category/block narrow within a tab. All of it lives in the
-// URL so the dashboard heatmap can drill through to a pre-filtered queue and a
-// filtered view stays bookmarkable. Row click opens the detail/triage view.
-// Closed records are archived and live on /inspections/history instead.
+// UC-002 manager triage queue. Live (non-archived) inspections from
+// GET /api/inspections. Status-group tabs ("Needs action", "In progress",
+// "Awaiting inspector", "Resolved") answer the question a manager opens the
+// queue to ask; "All open" is every live record, regardless of status, and
+// is the one exception to the shared most-urgent-first default — it sorts
+// newest-submitted-first instead. Any tab's default can be overridden with
+// the priority-sort toggle, in either direction. category/block narrow
+// within a tab. All of it lives in the URL so the dashboard heatmap can
+// drill through to a pre-filtered queue and a filtered view stays
+// bookmarkable. Row click opens the detail/triage view.
+// Closed records are archived (is_deleted = TRUE) and dropped from every tab
+// here — they live on /inspections/history instead.
 // Inspectors also read this endpoint (backend allows it read-only) to review
 // completed work before the manager's joint close — always filtered to
 // status=Rectified and without the tabs.
@@ -34,6 +39,7 @@ import {
 import { alpha } from '@mui/material/styles';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
+import SwapVertOutlinedIcon from '@mui/icons-material/SwapVertOutlined';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
@@ -70,6 +76,19 @@ export default function InspectionListPage() {
   // Set by the UC-005 contractor-scorecard drill-through; cleared by its chip.
   const contractor = searchParams.get('contractor') ?? '';
   const overdue = searchParams.get('overdue') === 'true';
+  // Explicit priority-order override, either direction, set by the toggle
+  // below. Absent means "use whatever this tab's default order is".
+  const prioritySort = ['priority_critical_first', 'priority_low_first'].includes(
+    searchParams.get('sort')
+  )
+    ? searchParams.get('sort')
+    : null;
+  // "All open" defaults to newest-first; every other tab keeps the existing
+  // most-urgent-first default. Inspectors have no "All open" tab of their
+  // own (their queue is always status=Rectified), so their default is
+  // untouched by this. The priority toggle overrides either default, on any
+  // tab.
+  const effectiveSort = prioritySort || (!isInspector && tab === 'all' ? 'recent' : '');
 
   // The tab owns the status filter: each one maps to a comma-separated list the
   // API expands with `status = ANY(...)`. Inspectors bypass the tabs entirely —
@@ -108,6 +127,7 @@ export default function InspectionListPage() {
       if (block) params.block = block;
       if (contractor) params.contractor = contractor;
       if (overdue) params.overdue = 'true';
+      if (effectiveSort) params.sort = effectiveSort;
       api
         .get('/api/inspections', { params })
         .then((res) => {
@@ -120,7 +140,7 @@ export default function InspectionListPage() {
           else setLoading(false);
         });
     },
-    [tab, status, category, block, contractor, overdue]
+    [tab, status, category, block, contractor, overdue, effectiveSort]
   );
 
   useEffect(() => {
@@ -170,11 +190,21 @@ export default function InspectionListPage() {
     : tab === REVIEW_TAB
     ? 'Needs Manual Review'
     : 'Triage queue';
+  // Names whichever order is actually in effect, so the subtitle can't drift
+  // from what the table (and the API call above) actually did.
+  const sortDescription =
+    prioritySort === 'priority_critical_first'
+      ? 'sorted by priority, Critical to Low'
+      : prioritySort === 'priority_low_first'
+      ? 'sorted by priority, Low to Critical'
+      : effectiveSort === 'recent'
+      ? 'most recently submitted first'
+      : 'most urgent first — sorted by AI priority score';
   const pageSubtitle = isInspector
     ? 'Work a contractor has submitted, waiting on your check before it can be closed'
     : tab === REVIEW_TAB
     ? 'Low-confidence CV detections awaiting a manual call'
-    : 'Open work, most urgent first — sorted by AI priority score';
+    : `Open work, ${sortDescription}`;
 
   return (
     <Box sx={{ p: { xs: 2, sm: 4 } }}>
@@ -249,6 +279,41 @@ export default function InspectionListPage() {
                     <MenuItem key={b} value={b}>{b}</MenuItem>
                   ))}
                 </TextField>
+                {/* Priority sort: off by default (the tab's own order stands).
+                    One click turns it on Critical-first; a second click flips
+                    the direction; the chip's own delete icon turns it off
+                    again — same removable-chip shape as the drill-through
+                    filter above. */}
+                {prioritySort ? (
+                  <Chip
+                    size="small"
+                    color="primary"
+                    icon={<SwapVertOutlinedIcon fontSize="small" />}
+                    label={
+                      prioritySort === 'priority_critical_first'
+                        ? 'Priority: Critical → Low'
+                        : 'Priority: Low → Critical'
+                    }
+                    onClick={() =>
+                      setParam(
+                        'sort',
+                        prioritySort === 'priority_critical_first'
+                          ? 'priority_low_first'
+                          : 'priority_critical_first'
+                      )
+                    }
+                    onDelete={() => setParam('sort', '')}
+                  />
+                ) : (
+                  <Button
+                    size="small"
+                    color="inherit"
+                    startIcon={<SwapVertOutlinedIcon fontSize="small" />}
+                    onClick={() => setParam('sort', 'priority_critical_first')}
+                  >
+                    Sort by priority
+                  </Button>
+                )}
               </>
             )}
             {/* Closed records live on their own page — out of the way unless

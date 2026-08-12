@@ -677,17 +677,21 @@ async function listStatusBoard(req, res, next) {
 }
 
 // GET /api/inspections — manager triage queue (UC-002): all records, optional
-// ?status=&category=&block= filters, most urgent first. { data, total } per HLD.
+// ?status=&category=&block= filters, most urgent first by default, or ?sort=
+// to override. { data, total } per HLD.
 async function listForManager(req, res, next) {
   try {
-    const { status, category, block, contractor } = req.query;
+    const { status, category, block, contractor, sort } = req.query;
     // ?archived=true switches to the closed-record history view. Anything else
     // (absent, 'false') keeps the default live queue. ?overdue=true narrows to
     // past-deadline work (scorecard drill-through); same true-string convention.
     const archived = req.query.archived === 'true';
     const overdue = req.query.overdue === 'true';
+    // ?sort=recent | priority_critical_first | priority_low_first overrides the
+    // default order (most-urgent-first); anything else falls back to it — see
+    // findAllForManager's comment for why an unrecognised value is safe.
     const data = await inspectionModel.findAllForManager({
-      status, category, block, contractor, overdue, archived,
+      status, category, block, contractor, overdue, archived, sort,
     });
     res.json({ data, total: data.length });
   } catch (err) {

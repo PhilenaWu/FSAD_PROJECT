@@ -281,7 +281,7 @@ async function findByOriginator(userId) {
 //
 // Archived records are ordered by when they closed, since priority score is
 // meaningless once the work is done; the live queue stays most-urgent-first.
-async function findAllForManager({ status, category, block, contractor, overdue, archived = false } = {}) {
+async function findAllForManager({ status, category, block, contractor, overdue, archived = false, sort } = {}) {
   const params = [archived];
   const where = [`is_deleted = $${params.length}`];
 
@@ -317,9 +317,30 @@ async function findAllForManager({ status, category, block, contractor, overdue,
     );
   }
 
-  const orderBy = archived
-    ? 'closed_at DESC NULLS LAST, created_at DESC'
-    : 'ai_priority_score DESC NULLS LAST, created_at DESC';
+  // Archived (the history page) always sorts by when the record closed —
+  // priority score is meaningless once the work is done. The live queue's
+  // default is most-urgent-first (AI priority score); the "All open" tab
+  // overrides that to newest-first (`sort=recent`), and the manager can
+  // explicitly ask for either priority direction from any tab. Fixed set of
+  // literal ORDER BY clauses selected by strict equality, not built from the
+  // param, so there's nothing here for `sort` to inject.
+  let orderBy;
+  if (archived) {
+    orderBy = 'closed_at DESC NULLS LAST, created_at DESC';
+  } else if (sort === 'recent') {
+    orderBy = 'created_at DESC';
+  } else if (sort === 'priority_critical_first' || sort === 'priority_low_first') {
+    const direction = sort === 'priority_critical_first' ? 'ASC' : 'DESC';
+    orderBy = `CASE priority
+                 WHEN 'Critical' THEN 1
+                 WHEN 'High' THEN 2
+                 WHEN 'Medium' THEN 3
+                 WHEN 'Low' THEN 4
+                 ELSE 5
+               END ${direction}, created_at DESC`;
+  } else {
+    orderBy = 'ai_priority_score DESC NULLS LAST, created_at DESC';
+  }
 
   const result = await query(
     `SELECT * FROM inspections
