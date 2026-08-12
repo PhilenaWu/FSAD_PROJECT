@@ -904,14 +904,14 @@ async function updateInspection(req, res, next) {
 }
 
 // POST /api/inspections/:id/close — manager closes a record (UC-004) with a
-// mandatory remark, dual e-signature (manager + endorser), and optional cost.
-// Multipart: closing_remark, actual_cost?, endorser_role, endorser_id text
-// fields + manager_signature & endorser_signature PNG parts. This is separate
-// from PATCH /:id (which deliberately excludes 'Closed') because closing has its
-// own validation, signature capture, and archival (is_deleted = TRUE).
+// mandatory remark, the manager's own signature, and optional cost. Multipart:
+// closing_remark, actual_cost? text fields + a manager_signature PNG part.
+// This is separate from PATCH /:id (which deliberately excludes 'Closed')
+// because closing has its own validation, signature capture, and archival
+// (is_deleted = TRUE).
 async function closeInspection(req, res, next) {
   try {
-    const { closing_remark, actual_cost, endorser_role, endorser_id, waiver_note } = req.body;
+    const { closing_remark, actual_cost, waiver_note } = req.body;
 
     // Remark: mandatory, at least 10 characters (trimmed).
     if (!closing_remark || closing_remark.trim().length < 10) {
@@ -933,29 +933,12 @@ async function closeInspection(req, res, next) {
       }
     }
 
-    // G7 / R9 — the client asked for "a digital sign-off from the EM Services
-    // inspector", so the second signature must be an inspector's. Notably this
-    // stops the contractor who did the work from endorsing that it was done.
-    if (endorser_role !== 'inspector') {
-      return res.status(400).json({
-        code: 'ENDORSER_MUST_BE_INSPECTOR',
-        message: 'The endorsing signature must belong to an inspector.',
-      });
-    }
-    if (!endorser_id) {
-      return res.status(400).json({
-        code: 'VALIDATION_ERROR',
-        message: 'endorser_id is required.',
-      });
-    }
-
-    // Both signature images are required (dual endorsement).
+    // The manager's signature image is required.
     const managerFile = req.files?.manager_signature?.[0];
-    const endorserFile = req.files?.endorser_signature?.[0];
-    if (!managerFile || !endorserFile) {
+    if (!managerFile) {
       return res.status(400).json({
         code: 'SIGNATURE_REQUIRED',
-        message: 'Both manager_signature and endorser_signature images are required.',
+        message: 'manager_signature image is required.',
       });
     }
 
@@ -990,24 +973,10 @@ async function closeInspection(req, res, next) {
       });
     }
 
-    // The endorser must be a real user (signatures.signer_id FK) whose stored
-    // role actually matches the role being attributed to their signature —
-    // without this, a signature could record a role the signer doesn't hold.
-    const endorser = await query('SELECT id, role FROM users WHERE id = $1', [endorser_id]);
-    if (endorser.rows.length === 0) {
-      return res.status(404).json({ code: 'NOT_FOUND', message: 'Endorser user not found.' });
-    }
-    if (endorser.rows[0].role !== endorser_role) {
-      return res.status(400).json({
-        code: 'ENDORSER_MUST_BE_INSPECTOR',
-        message: 'The nominated endorser is not an inspector.',
-      });
-    }
-
     // G8: every defect must be rectified with the contractor's proof photo
-    // before the record can be jointly endorsed. A manager who needs to close
-    // regardless supplies `waiver_note` (>= 10 chars), which is recorded in the
-    // closing remark so the exception is visible in the audit trail.
+    // before the record can be closed. A manager who needs to close regardless
+    // supplies `waiver_note` (>= 10 chars), which is recorded in the closing
+    // remark so the exception is visible in the audit trail.
     const outstanding = await inspectionModel.findUnrectifiedDefects(req.params.id);
     const waiver = typeof waiver_note === 'string' ? waiver_note.trim() : '';
     if (outstanding.length > 0 && waiver.length < 10) {
@@ -1018,12 +987,10 @@ async function closeInspection(req, res, next) {
       });
     }
 
-    // Store both signatures in Cloudinary (/signatures folder). Every rejection
-    // above happens first, so a failed close never leaves orphaned uploads.
-    const [managerUrl, endorserUrl] = await Promise.all([
-      cloudinaryService.uploadImage(managerFile.buffer, 'signatures'),
-      cloudinaryService.uploadImage(endorserFile.buffer, 'signatures'),
-    ]);
+    // Store the manager's signature in Cloudinary (/signatures folder). Every
+    // rejection above happens first, so a failed close never leaves orphaned
+    // uploads.
+    const managerUrl = await cloudinaryService.uploadImage(managerFile.buffer, 'signatures');
 
     const inspection = await inspectionModel.closeInspection(
       req.params.id,
@@ -1038,7 +1005,6 @@ async function closeInspection(req, res, next) {
         actual_cost: cost,
         signatures: [
           { signer_role: 'manager', signer_id: req.user.id, image_url: managerUrl },
-          { signer_role: endorser_role, signer_id: endorser_id, image_url: endorserUrl },
         ],
       },
       req.user.id

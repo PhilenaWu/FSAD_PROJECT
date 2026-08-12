@@ -106,7 +106,6 @@ export default function InspectionDetailPage() {
 
   const [inspection, setInspection] = useState(null);
   const [contractors, setContractors] = useState([]);
-  const [inspectors, setInspectors] = useState([]); // endorser candidates (G7)
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -128,7 +127,6 @@ export default function InspectionDetailPage() {
   const [closed, setClosed] = useState(false); // freezes the panel post-success
   const [closeFeedback, setCloseFeedback] = useState(null);
   const managerPadRef = useRef(null);
-  const endorserPadRef = useRef(null);
 
   // Reject panel state (UC-004 Alt 4).
   const [rejectReason, setRejectReason] = useState('');
@@ -169,41 +167,18 @@ export default function InspectionDetailPage() {
     [inspection]
   );
 
-  // Second endorser for the dual e-signature. G7/R9: the endorsing signature
-  // must belong to an inspector — the client asked for sign-off from EM
-  // Services, so the contractor who did the work can't endorse it. Defaults to
-  // the record's own inspector where there is one (lift spot-checks); resident
-  // complaints have none, so the manager nominates any active inspector.
-  // Empty selection → close stays disabled with an explanatory note.
-  const [endorserId, setEndorserId] = useState('');
-  const endorser = useMemo(() => {
-    const chosen = inspectors.find((i) => i.id === endorserId);
-    if (!chosen) return null;
-    return { role: 'inspector', id: chosen.id, label: chosen.full_name ?? chosen.email };
-  }, [inspectors, endorserId]);
-
   const load = useCallback(() => {
     setLoading(true);
     // Inspectors are read-only and can't reach the manager-only /contractors
-    // and /users/inspectors endpoints, so skip fetching them entirely.
+    // endpoint, so skip fetching it entirely.
     const requests = isInspector
       ? [api.get(`/api/inspections/${id}`)]
-      : [
-          api.get(`/api/inspections/${id}`),
-          api.get('/api/contractors'),
-          api.get('/api/users/inspectors'),
-        ];
+      : [api.get(`/api/inspections/${id}`), api.get('/api/contractors')];
     Promise.all(requests)
-      .then(([insRes, conRes, inspRes]) => {
+      .then(([insRes, conRes]) => {
         const ins = insRes.data;
         setInspection(ins);
         if (conRes) setContractors(conRes.data);
-        if (inspRes) setInspectors(inspRes.data);
-        // Default the endorser to the record's own inspector when it has one
-        // (lift spot-checks); the manager can still nominate a different one.
-        if (ins.inspector_id && inspRes?.data.some((i) => i.id === ins.inspector_id)) {
-          setEndorserId(ins.inspector_id);
-        }
         setForm({
           priority: ins.priority,
           category: ins.category,
@@ -262,8 +237,8 @@ export default function InspectionDetailPage() {
     }
   }
 
-  // UC-004: close with remark + dual e-signature. Client guards mirror the
-  // backend's validation (same messages); the backend re-validates everything.
+  // UC-004: close with remark + the manager's signature. Client guards mirror
+  // the backend's validation (same messages); the backend re-validates everything.
   async function handleClose(e) {
     e.preventDefault();
     setCloseFeedback(null);
@@ -286,30 +261,24 @@ export default function InspectionDetailPage() {
         return;
       }
     }
-    if (managerPadRef.current?.isEmpty() || endorserPadRef.current?.isEmpty()) {
+    if (managerPadRef.current?.isEmpty()) {
       setCloseFeedback({
         severity: 'error',
-        message: 'Both signatures are required before closing.',
+        message: 'Your signature is required before closing.',
       });
       return;
     }
 
     setClosing(true);
     try {
-      const [managerBlob, endorserBlob] = await Promise.all([
-        managerPadRef.current.toBlob(),
-        endorserPadRef.current.toBlob(),
-      ]);
+      const managerBlob = await managerPadRef.current.toBlob();
       const formData = new FormData();
       formData.append('closing_remark', closeForm.closing_remark.trim());
       if (cost !== undefined) formData.append('actual_cost', cost);
       if (outstandingItems.length > 0) {
         formData.append('waiver_note', closeForm.waiver_note.trim());
       }
-      formData.append('endorser_role', endorser.role);
-      formData.append('endorser_id', endorser.id);
       formData.append('manager_signature', managerBlob, 'manager.png');
-      formData.append('endorser_signature', endorserBlob, 'endorser.png');
 
       await api.post(`/api/inspections/${id}/close`, formData);
       setClosed(true);
@@ -849,7 +818,7 @@ export default function InspectionDetailPage() {
               </Stack>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
                 Closing is final: the record is archived to the 5-year audit trail and
-                leaves all active queues. Requires a remark and dual e-signature.
+                leaves all active queues. Requires a remark and your signature.
               </Typography>
 
               <Stack spacing={2}>
@@ -923,52 +892,16 @@ export default function InspectionDetailPage() {
                   </>
                 )}
 
-                {/* G7: pick who endorses before signing, so the pad below is
-                    labelled with the inspector actually signing off. */}
-                {inspectors.length === 0 ? (
-                  <Alert severity="warning">
-                    No active inspector account exists — dual endorsement requires
-                    one (G7). Closing is disabled until an inspector is available.
-                  </Alert>
-                ) : (
-                  <TextField
-                    select
-                    required
-                    label="Endorsing inspector"
-                    size="small"
-                    value={endorserId}
-                    onChange={(e) => setEndorserId(e.target.value)}
-                    helperText="The EM Services inspector signing off on this closure"
-                    disabled={closed}
-                  >
-                    {inspectors.map((i) => (
-                      <MenuItem key={i.id} value={i.id}>
-                        {i.full_name ?? i.email}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                )}
-
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                  <Box sx={{ flex: 1 }}>
-                    <SignaturePad
-                      ref={managerPadRef}
-                      label={`Manager signature — ${profile?.full_name ?? 'you'}`}
-                    />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <SignaturePad
-                      ref={endorserPadRef}
-                      label={`Endorser signature — ${endorser?.label ?? 'unavailable'}`}
-                    />
-                  </Box>
-                </Stack>
+                <SignaturePad
+                  ref={managerPadRef}
+                  label={`Manager signature — ${profile?.full_name ?? 'you'}`}
+                />
 
                 <Button
                   type="submit"
                   variant="contained"
                   color="error"
-                  disabled={!endorser || !reviewedByInspector || closing || closed}
+                  disabled={!reviewedByInspector || closing || closed}
                   startIcon={
                     closing ? (
                       <CircularProgress size={16} color="inherit" />

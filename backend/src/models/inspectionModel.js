@@ -615,9 +615,9 @@ async function updateByManager(id, changes, actorId, note) {
 }
 
 // Close a record (UC-004): set the closing fields + computed resolution time,
-// archive it (is_deleted = TRUE for the 5-year audit trail), store the dual
-// endorsement signatures, and write a 'Jointly Endorsed & Closed' audit row —
-// all atomically.
+// archive it (is_deleted = TRUE for the 5-year audit trail), store the
+// manager's signature, and write a 'Closed by Manager' audit row — all
+// atomically.
 // `signatures` is an array of { signer_role, signer_id, image_url }.
 // Returns the updated row, or undefined if the id isn't a live record.
 async function closeInspection(id, { closing_remark, actual_cost, signatures }, actorId) {
@@ -652,7 +652,6 @@ async function closeInspection(id, { closing_remark, actual_cost, signatures }, 
     );
     const after = updated.rows[0];
 
-    // Dual endorsement signatures (manager + the second endorser).
     for (const sig of signatures) {
       await signatureModel.create({ inspection_id: id, ...sig }, client);
     }
@@ -662,9 +661,7 @@ async function closeInspection(id, { closing_remark, actual_cost, signatures }, 
          inspection_id, actor_id, action, previous_status, new_status, note
        )
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      // UC-015 names this action 'Jointly Endorsed & Closed' — it records the
-      // dual endorsement, not just the status change (new_status carries that).
-      [id, actorId, 'Jointly Endorsed & Closed', before.status, 'Closed', closing_remark]
+      [id, actorId, 'Closed by Manager', before.status, 'Closed', closing_remark]
     );
 
     await client.query('COMMIT');

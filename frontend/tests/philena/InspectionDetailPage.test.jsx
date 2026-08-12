@@ -211,9 +211,6 @@ describe('InspectionDetailPage', () => {
     });
 
     // The gate reads the audit trail the detail endpoint already returns.
-    // inspector_id is set so the endorser defaults to the record's own
-    // inspector — the close also needs one nominated, and that is a separate
-    // precondition from the review.
     test('is allowed once the review is in the record history', async () => {
       mockLoad(
         record({
