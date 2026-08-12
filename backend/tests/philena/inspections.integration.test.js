@@ -1549,10 +1549,7 @@ describe('GET /api/inspections (manager queue)', () => {
       .post(`/api/inspections/${toClose}/close`)
       .set('Authorization', 'Bearer manager-token')
       .field('closing_remark', 'Verified fixed on site by the technician.')
-      .field('endorser_role', 'inspector')
-      .field('endorser_id', 'ins-1')
-      .attach('manager_signature', PNG, 'm.png')
-      .attach('endorser_signature', PNG, 'e.png');
+      .attach('manager_signature', PNG, 'm.png');
 
     const live = await request(app)
       .get('/api/inspections')
@@ -1777,18 +1774,15 @@ describe('POST /api/inspections/:id/close', () => {
     return id;
   }
 
-  // Close a record with the two required signature parts + a valid endorser.
+  // Close a record with the manager's signature.
   function closeRecord(id, extra = {}) {
     const req = request(app)
       .post(`/api/inspections/${id}/close`)
       .set('Authorization', 'Bearer manager-token')
-      .field('closing_remark', extra.remark ?? REMARK)
-      .field('endorser_role', extra.endorser_role ?? 'inspector')
-      .field('endorser_id', extra.endorser_id ?? 'ins-1');
+      .field('closing_remark', extra.remark ?? REMARK);
     if (extra.actual_cost !== undefined) req.field('actual_cost', extra.actual_cost);
     if (extra.waiver_note !== undefined) req.field('waiver_note', extra.waiver_note);
     if (!extra.omitManagerSig) req.attach('manager_signature', PNG, 'mgr.png');
-    if (!extra.omitEndorserSig) req.attach('endorser_signature', PNG, 'insp.png');
     return req;
   }
 
@@ -1816,8 +1810,8 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.status).toBe('Closed');
     // The audit trail the archive exists to preserve is all still there.
     expect(res.body.checklist_results).toHaveLength(2);
-    expect(res.body.signatures.length).toBeGreaterThanOrEqual(2);
-    expect(res.body.history.some((h) => h.action === 'Jointly Endorsed & Closed')).toBe(true);
+    expect(res.body.signatures.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.history.some((h) => h.action === 'Closed by Manager')).toBe(true);
   });
 
   // findById stays filtered on is_deleted, so the mutation guards are unmoved
@@ -1869,7 +1863,7 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.code).toBe('NOT_REVIEWED');
   });
 
-  test('200 closes with remark + dual signatures, computes fields, archives', async () => {
+  test('200 closes with remark + manager signature, computes fields, archives', async () => {
     const id = await seedRectified('Lift button stuck at L3');
 
     const res = await closeRecord(id, { actual_cost: '250.50' });
@@ -1880,18 +1874,18 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.closed_at).toBeTruthy();
     expect(res.body.resolution_time_hours).not.toBeNull();
 
-    // Two signatures stored: manager + endorser.
-    expect(store.signatures).toHaveLength(2);
-    expect(store.signatures.map((s) => s.signer_role).sort()).toEqual(['inspector', 'manager']);
+    // One signature stored: the manager's.
+    expect(store.signatures).toHaveLength(1);
+    expect(store.signatures.map((s) => s.signer_role)).toEqual(['manager']);
     expect(store.signatures.find((s) => s.signer_role === 'manager').signer_id).toBe('mgr-1');
 
     // UC-015 audit row written under its documented name.
-    expect(store.history.some((h) => h.action === 'Jointly Endorsed & Closed')).toBe(true);
+    expect(store.history.some((h) => h.action === 'Closed by Manager')).toBe(true);
 
-    // Both signatures uploaded to the /signatures folder.
+    // The signature uploaded to the /signatures folder.
     const cloudinaryService = require('../../src/services/cloudinaryService');
     expect(cloudinaryService.uploadImage).toHaveBeenCalledWith(expect.anything(), 'signatures');
-    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(2);
+    expect(cloudinaryService.uploadImage).toHaveBeenCalledTimes(1);
   });
 
   test('400 when the closing remark is too short', async () => {
@@ -1903,9 +1897,9 @@ describe('POST /api/inspections/:id/close', () => {
     expect(res.body.message).toBe('Closing remark must be at least 10 characters.');
   });
 
-  test('400 SIGNATURE_REQUIRED when a signature image is missing', async () => {
+  test('400 SIGNATURE_REQUIRED when the manager signature image is missing', async () => {
     const id = await seedComplaint('Missing signature case');
-    const res = await closeRecord(id, { omitEndorserSig: true });
+    const res = await closeRecord(id, { omitManagerSig: true });
 
     expect(res.status).toBe(400);
     // Same code the UC-010 contractor rectify flow uses for the same condition.
@@ -1918,10 +1912,7 @@ describe('POST /api/inspections/:id/close', () => {
       .post(`/api/inspections/${id}/close`)
       .set('Authorization', 'Bearer resident-token')
       .field('closing_remark', REMARK)
-      .field('endorser_role', 'inspector')
-      .field('endorser_id', 'ins-1')
-      .attach('manager_signature', PNG, 'm.png')
-      .attach('endorser_signature', PNG, 'e.png');
+      .attach('manager_signature', PNG, 'm.png');
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
@@ -1931,44 +1922,6 @@ describe('POST /api/inspections/:id/close', () => {
     const res = await closeRecord('insp-nope');
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('NOT_FOUND');
-  });
-
-  test('404 when the endorser is not a real user', async () => {
-    const id = await seedRectified('Bad endorser case');
-    const res = await closeRecord(id, { endorser_id: 'ghost-user' });
-
-    expect(res.status).toBe(404);
-    expect(res.body.code).toBe('NOT_FOUND');
-  });
-
-  // G7 / R9: the endorsing signature must belong to a real inspector — both
-  // that the claimed role is 'inspector' and that the nominated user actually
-  // holds it, so the audit trail can't record a false attestation.
-  test('400 ENDORSER_MUST_BE_INSPECTOR when the nominated user is not an inspector', async () => {
-    const id = await seedRectified('Role mismatch case');
-    // res-1 is a resident being passed off as the inspector endorser.
-    const res = await closeRecord(id, { endorser_id: 'res-1' });
-
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('ENDORSER_MUST_BE_INSPECTOR');
-
-    // Rejected before any upload — no orphaned signature images in Cloudinary.
-    const cloudinaryService = require('../../src/services/cloudinaryService');
-    expect(cloudinaryService.uploadImage).not.toHaveBeenCalled();
-    expect(store.signatures).toHaveLength(0);
-  });
-
-  // The contractor who did the work may not endorse that it was done.
-  test('400 ENDORSER_MUST_BE_INSPECTOR when a contractor is nominated', async () => {
-    const id = await seedRectified('Contractor endorsement case');
-    const res = await closeRecord(id, {
-      endorser_role: 'contractor',
-      endorser_id: 'con-user-1',
-    });
-
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('ENDORSER_MUST_BE_INSPECTOR');
-    expect(store.signatures).toHaveLength(0);
   });
 
   test('409 INVALID_STATE when the record has not been rectified yet', async () => {

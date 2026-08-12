@@ -121,14 +121,11 @@ mocked.
 - 409 — a Rectified record no inspector has reviewed cannot be closed
 - 200 once an inspector reviews it, the same record closes
 - a waiver note does not buy past the inspector check
-- 200 closes with remark + dual signatures, computes fields, archives
+- 200 closes with remark + manager signature, computes fields, archives
 - 400 when the closing remark is too short
-- 400 SIGNATURE_REQUIRED when a signature image is missing
+- 400 SIGNATURE_REQUIRED when the manager signature image is missing
 - 403 when the caller is not a manager
 - 404 for an unknown inspection id
-- 404 when the endorser is not a real user
-- 400 ENDORSER_MUST_BE_INSPECTOR when the nominated user is not an inspector
-- 400 ENDORSER_MUST_BE_INSPECTOR when a contractor is nominated
 - 409 INVALID_STATE when the record has not been rectified yet
 - 409 UNRECTIFIED_DEFECTS naming the item numbers still outstanding
 - 200 closes once the defect carries a completion photo
