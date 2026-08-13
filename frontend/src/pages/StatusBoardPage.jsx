@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
-  Button,
   Chip,
   CircularProgress,
   FormControl,
@@ -36,7 +35,6 @@ import {
 import { alpha } from '@mui/material/styles';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
-import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import FilterAltOffOutlinedIcon from '@mui/icons-material/FilterAltOffOutlined';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
@@ -44,7 +42,6 @@ import api from '../services/api';
 import { STATUS_GROUPS, statusDisplay, statusGroup } from '../utils/statusDisplay';
 import { categoryDisplay } from '../utils/categoryDisplay';
 import { timeAgo } from '../utils/timeAgo';
-import { downloadCsv } from '../utils/csvDownload';
 import Sparkline from '../components/common/Sparkline';
 import EmptyState from '../components/common/EmptyState';
 
@@ -183,19 +180,6 @@ export default function StatusBoardPage() {
     setCategoryFilter('all');
     setBlockFilter('all');
     setSearch('');
-  }
-
-  function handleExport() {
-    downloadCsv(
-      filtered.map((r) => ({
-        Block: r.location_block,
-        Category: r.category,
-        Status: statusDisplay(r.status).label,
-        Reported: new Date(r.created_at).toLocaleString(),
-        Updated: new Date(r.updated_at).toLocaleString(),
-      })),
-      'estate-status-board.csv'
-    );
   }
 
   return (
@@ -363,15 +347,6 @@ export default function StatusBoardPage() {
                     },
                   }}
                 />
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<FileDownloadOutlinedIcon />}
-                  onClick={handleExport}
-                  disabled={filtered.length === 0}
-                >
-                  Export
-                </Button>
                 <Tooltip title="Reset filters">
                   <span>
                     <IconButton size="small" onClick={resetFilters} disabled={!isFiltering}>

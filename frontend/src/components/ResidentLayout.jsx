@@ -9,7 +9,6 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
-import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import LocalPhoneOutlinedIcon from '@mui/icons-material/LocalPhoneOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 
@@ -21,7 +20,6 @@ const NAV_BY_ROLE = {
     { label: 'Report issue', to: '/report', icon: AddCircleOutlineIcon },
     { label: 'My reports', to: '/my-reports', icon: AssignmentOutlinedIcon },
     { label: 'Status board', to: '/status-board', icon: GridViewOutlinedIcon },
-    { label: 'Notices', to: '/notices', icon: CampaignOutlinedIcon },
   ],
   inspector: [
     { label: 'Home', to: '/dashboard', icon: HomeOutlinedIcon },
