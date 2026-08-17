@@ -27,6 +27,15 @@ router.get(
   myReportsController.getOwnDetail
 );
 
+// GET /api/my-reports/:id/translation — the manager/inspector/contractor
+// notes on the caller's own record, translated for them (048).
+router.get(
+  '/:id/translation',
+  requireAuth,
+  requireRole('resident', 'inspector'),
+  myReportsController.getOwnTranslation
+);
+
 // PATCH /api/my-reports/:id — resident edits their own complaint within 30
 // minutes of filing it (title, description, category, location).
 router.patch(

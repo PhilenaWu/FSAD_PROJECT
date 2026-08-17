@@ -12,10 +12,11 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+const mockUseAuth = vi.fn(() => ({ profile: { role: 'manager', full_name: 'Mdm Tan' } }));
 vi.mock('../../src/context/AuthContext', () => ({
-  useAuth: () => ({ profile: { role: 'manager', full_name: 'Mdm Tan' } }),
+  useAuth: () => mockUseAuth(),
 }));
 
 vi.mock('../../src/context/SocketContext', () => ({
@@ -115,5 +116,60 @@ describe('InspectionListPage — sort', () => {
     await user.click(await screen.findByRole('button', { name: /sort by priority/i }));
 
     await waitFor(() => expect(lastRequestedSort()).toBe('priority_critical_first'));
+  });
+});
+
+describe('InspectionListPage — translation flag', () => {
+  beforeEach(() => {
+    api.get.mockReset();
+  });
+
+  // Flags a title not written in English, but only opens the full translation
+  // on the detail page — translating every row here would fire one OpenAI
+  // call per row on every table load.
+  test('a title with Chinese characters gets a globe icon', async () => {
+    api.get.mockResolvedValue({
+      data: { data: [{ ...ROW, title: '门坏了' }], total: 1 },
+    });
+    renderPage();
+
+    await screen.findByText('门坏了');
+    expect(screen.getByTestId('LanguageOutlinedIcon')).toBeInTheDocument();
+  });
+
+  test('an English title gets no icon', async () => {
+    api.get.mockResolvedValue({ data: { data: [ROW], total: 1 } });
+    renderPage();
+
+    await screen.findByText('Lift door not closing');
+    expect(screen.queryByTestId('LanguageOutlinedIcon')).not.toBeInTheDocument();
+  });
+});
+
+describe('InspectionListPage — category label', () => {
+  beforeEach(() => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: { data: [ROW], total: 1 } });
+  });
+
+  afterEach(() => {
+    mockUseAuth.mockReturnValue({ profile: { role: 'manager', full_name: 'Mdm Tan' } });
+  });
+
+  // Static display translation (categoryLabels.js) for the category enum —
+  // separate from the AI translation of a report's own free text.
+  test("shows the category in the manager's display language", async () => {
+    mockUseAuth.mockReturnValue({
+      profile: { role: 'manager', full_name: 'Mdm Tan', preferred_language: 'zh' },
+    });
+    renderPage();
+
+    expect(await screen.findByText('电梯')).toBeInTheDocument();
+  });
+
+  test('stays English with no display language set', async () => {
+    renderPage();
+
+    expect(await screen.findByText('Lift')).toBeInTheDocument();
   });
 });

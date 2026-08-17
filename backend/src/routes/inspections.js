@@ -116,6 +116,17 @@ router.get(
   inspectionController.getDetail
 );
 
+// GET /api/inspections/:id/translation?lang=en|zh|ms|ta — the record's title/
+// description translated for a viewer whose preferred_language differs from
+// the resident's. On-demand and cached; never called automatically by the
+// list or detail views. Same audience as GET /:id.
+router.get(
+  '/:id/translation',
+  requireAuth,
+  requireRole('manager', 'inspector'),
+  inspectionController.getTranslation
+);
+
 // PATCH /api/inspections/:id — manager triage (UC-002): priority, status,
 // contractor assignment, deadline. Registered after /my and /status-board so
 // those aren't captured as :id.

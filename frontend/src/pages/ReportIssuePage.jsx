@@ -1,5 +1,5 @@
 // UC-001 "Report an issue" page. Residents file a complaint (optional photo,
-// optional voice dictation into Description) via POST /api/inspections.
+// optional voice dictation into Title or Description) via POST /api/inspections.
 // The resident picks the category; priority is still set by the backend AI.
 import { useEffect, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
@@ -74,11 +74,13 @@ export default function ReportIssuePage() {
   const [feedback, setFeedback] = useState(null); // { severity, message }
   const [dragOver, setDragOver] = useState(false);
 
-  // Voice dictation (Web Speech API). Finalised chunks are appended into the
-  // Description field; the in-progress guess shows as a live caption.
+  // Voice dictation (Web Speech API). Finalised chunks are appended into
+  // whichever of Title/Description the resident tapped the mic on; the
+  // in-progress guess shows as a live caption. `recordingField` (rather than
+  // a plain boolean) tracks which one, since only one can dictate at a time.
   const voiceSupported = isSpeechSupported();
   const [voiceLang, setVoiceLang] = useState('en-SG');
-  const [recording, setRecording] = useState(false);
+  const [recordingField, setRecordingField] = useState(null); // null | 'title' | 'description'
   const [interim, setInterim] = useState('');
   const recognitionRef = useRef(null);
 
@@ -87,29 +89,32 @@ export default function ReportIssuePage() {
     return () => recognitionRef.current?.stop();
   }, []);
 
-  function toggleVoice() {
-    if (recording) {
+  function toggleVoice(field) {
+    if (recordingField === field) {
       recognitionRef.current?.stop(); // onEnd resets the state below
       return;
     }
+    if (recordingField) return; // another field is already dictating
+
+    const setField = field === 'title' ? setTitle : setDescription;
     const recognition = startRecognition({
       lang: voiceLang,
       onResult: (finalChunk, interimText) => {
         if (finalChunk) {
           const chunk = finalChunk.trim();
-          setDescription((prev) => (prev ? `${prev.trimEnd()} ${chunk}` : chunk));
+          setField((prev) => (prev ? `${prev.trimEnd()} ${chunk}` : chunk));
         }
         setInterim(interimText);
       },
       onEnd: () => {
-        setRecording(false);
+        setRecordingField(null);
         setInterim('');
         recognitionRef.current = null;
       },
     });
     if (recognition) {
       recognitionRef.current = recognition;
-      setRecording(true);
+      setRecordingField(field);
     }
   }
 
@@ -251,6 +256,19 @@ export default function ReportIssuePage() {
                         <DescriptionOutlinedIcon fontSize="small" color="action" />
                       </InputAdornment>
                     ),
+                    endAdornment: voiceSupported && (
+                      <InputAdornment position="end">
+                        <IconButton
+                          size="small"
+                          aria-label={recordingField === 'title' ? 'Stop dictation' : 'Dictate title'}
+                          onClick={() => toggleVoice('title')}
+                          disabled={recordingField && recordingField !== 'title'}
+                          sx={{ color: recordingField === 'title' ? 'primary.main' : 'action.active' }}
+                        >
+                          {recordingField === 'title' ? <StopIcon fontSize="small" /> : <MicIcon fontSize="small" />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
                   },
                 }}
               />
@@ -272,12 +290,25 @@ export default function ReportIssuePage() {
                         <EditOutlinedIcon fontSize="small" color="action" />
                       </InputAdornment>
                     ),
+                    endAdornment: voiceSupported && (
+                      <InputAdornment position="end" sx={{ alignSelf: 'flex-start', mt: 1.5 }}>
+                        <IconButton
+                          size="small"
+                          aria-label={recordingField === 'description' ? 'Stop dictation' : 'Dictate description'}
+                          onClick={() => toggleVoice('description')}
+                          disabled={recordingField && recordingField !== 'description'}
+                          sx={{ color: recordingField === 'description' ? 'primary.main' : 'action.active' }}
+                        >
+                          {recordingField === 'description' ? <StopIcon fontSize="small" /> : <MicIcon fontSize="small" />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
                   },
                 }}
               />
 
-              {/* Voice dictation: pick a language, tap to talk, tap to stop.
-                  Transcript lands in Description (still editable). */}
+              {/* Shared voice-input language picker for both mic buttons
+                  above — pick a language, tap either field's mic to talk. */}
               <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'background.default' }}>
                 <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
                   Voice language
@@ -288,7 +319,7 @@ export default function ReportIssuePage() {
                     size="small"
                     value={voiceLang}
                     onChange={(e) => setVoiceLang(e.target.value)}
-                    disabled={recording || !voiceSupported}
+                    disabled={Boolean(recordingField) || !voiceSupported}
                     sx={{ minWidth: 180, bgcolor: 'background.paper' }}
                     slotProps={{
                       input: {
@@ -306,32 +337,14 @@ export default function ReportIssuePage() {
                       </MenuItem>
                     ))}
                   </TextField>
-                  <IconButton
-                    aria-label={recording ? 'Stop dictation' : 'Start dictation'}
-                    onClick={toggleVoice}
-                    disabled={!voiceSupported}
-                    sx={{
-                      color: recording ? 'primary.contrastText' : 'primary.main',
-                      bgcolor: recording ? 'primary.main' : 'background.paper',
-                      border: 1,
-                      borderColor: 'primary.main',
-                      '&:hover': {
-                        bgcolor: recording
-                          ? 'primary.dark'
-                          : (theme) => alpha(theme.palette.primary.main, 0.08),
-                      },
-                    }}
-                  >
-                    {recording ? <StopIcon /> : <MicIcon />}
-                  </IconButton>
                   <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }}>
                     {!voiceSupported
                       ? 'Voice input not supported in this browser'
-                      : recording
+                      : recordingField
                         ? interim
-                          ? `Listening… "${interim}"`
-                          : 'Listening…'
-                        : 'Tap the mic to dictate your description'}
+                          ? `Listening for ${recordingField}… "${interim}"`
+                          : `Listening for ${recordingField}…`
+                        : 'Tap the mic on Title or Description to dictate it'}
                   </Typography>
                 </Stack>
               </Box>

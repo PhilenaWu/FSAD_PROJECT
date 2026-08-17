@@ -437,10 +437,219 @@ function reconcileByItemNumber(items, expectedCount) {
   return Array.from({ length: expectedCount }, (_, i) => byNumber.get(i + 1));
 }
 
+// Display names the prompt uses — kept out of the public language codes so a
+// caller can't smuggle arbitrary text into the prompt through `targetLanguage`.
+const LANGUAGE_NAMES = {
+  en: 'English',
+  zh: 'Mandarin Chinese',
+  ms: 'Malay',
+  ta: 'Tamil',
+};
+
+/**
+ * Translate a report's title/description for a reader whose preferred
+ * language differs from whatever the resident wrote it in.
+ *
+ * Unlike generateRiskAlert/generateExecutiveSummary there is no sensible
+ * deterministic fallback for translating someone else's words — this throws
+ * on any failure (no key, API error, malformed response) so the caller can
+ * tell "translated" apart from "translation unavailable right now" rather
+ * than silently showing invented text.
+ *
+ * @param {{title: string, description: string}} text
+ * @param {'en'|'zh'|'ms'|'ta'} targetLanguage
+ * @returns {Promise<{title: string, description: string, was_translated: boolean}>}
+ *   was_translated is false when the text was already in targetLanguage —
+ *   the model is asked to say so rather than the caller diffing strings,
+ *   since only it actually knows whether a match is coincidence (a title
+ *   that's just a block number reads the same in every language).
+ * @throws {Error} when OPENAI_API_KEY is unset, the API call fails, or the
+ *   response isn't valid JSON in the expected shape.
+ */
+async function translateInspectionText({ title, description }, targetLanguage) {
+  const languageName = LANGUAGE_NAMES[targetLanguage];
+  if (!languageName) {
+    throw new Error(`Unsupported target language: ${targetLanguage}`);
+  }
+  if (!config.OPENAI_API_KEY) {
+    const err = new Error('Translation unavailable: OPENAI_API_KEY is not configured.');
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+
+  const prompt =
+    `Translate the following estate-defect report into ${languageName}. Detect ` +
+    `the source language yourself — do not assume it.\n\n` +
+    `Title: ${title}\n` +
+    `Description: ${description || '(none given)'}\n\n` +
+    `Return strict JSON, and nothing else, in exactly this shape:\n` +
+    `{\n` +
+    `  "title": the title translated into ${languageName},\n` +
+    `  "description": the description translated into ${languageName} (empty string if none was given),\n` +
+    `  "was_translated": true, unless the source text was already written in ${languageName},` +
+    ` in which case false and return the text unchanged\n` +
+    `}\n` +
+    `Preserve technical terms, unit/block numbers, and names as-is. Do not add ` +
+    `commentary, quotation marks, or explanation — only the JSON object.`;
+
+  let resp;
+  try {
+    resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 800,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+  } catch (err) {
+    // The API call itself failing (network, rate limit, quota) means the
+    // service is unavailable, not that the text was untranslatable.
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  const text = resp?.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error('OpenAI returned no content for the translation.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('OpenAI response was not valid JSON.');
+  }
+  if (typeof parsed.title !== 'string') {
+    throw new Error('OpenAI response is missing a translated title.');
+  }
+
+  return {
+    title: parsed.title,
+    description: typeof parsed.description === 'string' ? parsed.description : '',
+    was_translated: parsed.was_translated !== false,
+  };
+}
+
+/**
+ * Translate the free text OTHER people wrote on a resident's own report —
+ * the manager's closing remark, inspector/contractor checklist remarks, and
+ * audit-history notes (MyReportsPage) — for a resident reading it in their
+ * own preferred_language. Not the resident's own title/description; they
+ * wrote those themselves already (see translateInspectionText for that half).
+ *
+ * One call for everything on the card, cached together (inspectionModel's
+ * saveTranslation extras columns) rather than one call per remark — a report
+ * with a closing remark plus a dozen checklist items would otherwise be a
+ * dozen+ OpenAI calls for a single page view.
+ *
+ * @param {{
+ *   closing_remark: string|null,
+ *   checklist_results: {id: string, remark: string|null}[],
+ *   history: {id: string, note: string|null}[],
+ * }} extras
+ * @param {'en'|'zh'|'ms'|'ta'} targetLanguage
+ * @returns {Promise<{
+ *   closing_remark: string|null,
+ *   checklist_remarks: {id: string, remark: string}[],
+ *   history_notes: {id: string, note: string}[],
+ *   was_translated: boolean,
+ * }>}
+ * @throws {Error} when OPENAI_API_KEY is unset, the API call fails, or the
+ *   response isn't valid JSON in the expected shape.
+ */
+async function translateReportExtras({ closing_remark, checklist_results = [], history = [] }, targetLanguage) {
+  const languageName = LANGUAGE_NAMES[targetLanguage];
+  if (!languageName) {
+    throw new Error(`Unsupported target language: ${targetLanguage}`);
+  }
+
+  // Only items that actually carry text are worth a round trip — most
+  // checklist rows and history entries have no remark/note at all. remark
+  // only, not completion_remark — ReportCard.jsx never renders that field.
+  const checklistItems = checklist_results
+    .filter((r) => r.remark)
+    .map((r) => ({ id: r.id, remark: r.remark }));
+  const historyItems = history
+    .filter((h) => h.note)
+    .map((h) => ({ id: h.id, note: h.note }));
+
+  // Nothing to translate — a report with no remarks yet needs no API call.
+  if (!closing_remark && checklistItems.length === 0 && historyItems.length === 0) {
+    return { closing_remark: null, checklist_remarks: [], history_notes: [], was_translated: false };
+  }
+
+  if (!config.OPENAI_API_KEY) {
+    const err = new Error('Translation unavailable: OPENAI_API_KEY is not configured.');
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+
+  const prompt =
+    `Translate the following notes from an estate-defect report into ` +
+    `${languageName}, for the resident who filed it. Detect the source ` +
+    `language of each yourself — do not assume it. Every "id" below must be ` +
+    `echoed back exactly as given; only the text fields change.\n\n` +
+    `Closing remark (how a manager resolved it, or null if not yet closed): ` +
+    `${JSON.stringify(closing_remark ?? null)}\n\n` +
+    `Checklist remarks:\n${JSON.stringify(checklistItems)}\n\n` +
+    `History notes:\n${JSON.stringify(historyItems)}\n\n` +
+    `Return strict JSON, and nothing else, in exactly this shape:\n` +
+    `{\n` +
+    `  "closing_remark": the closing remark translated into ${languageName}, or null if it was null,\n` +
+    `  "checklist_remarks": [{"id": ..., "remark": ...}, ...] translated, same ids and order,\n` +
+    `  "history_notes": [{"id": ..., "note": ...}, ...] translated, same ids and order,\n` +
+    `  "was_translated": true, unless all of the given text was already written in ${languageName},` +
+    ` in which case false and return every text field unchanged\n` +
+    `}\n` +
+    `Preserve technical terms, unit/block numbers, and names as-is. Do not add ` +
+    `commentary, quotation marks, or explanation — only the JSON object.`;
+
+  let resp;
+  try {
+    resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1500,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+  } catch (err) {
+    err.serviceUnavailable = true;
+    throw err;
+  }
+
+  const text = resp?.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error('OpenAI returned no content for the translation.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('OpenAI response was not valid JSON.');
+  }
+
+  return {
+    closing_remark: typeof parsed.closing_remark === 'string' ? parsed.closing_remark : null,
+    checklist_remarks: Array.isArray(parsed.checklist_remarks) ? parsed.checklist_remarks : [],
+    history_notes: Array.isArray(parsed.history_notes) ? parsed.history_notes : [],
+    was_translated: parsed.was_translated !== false,
+  };
+}
+
 module.exports = {
   categoriseIncident,
   generateRiskAlert,
   generateExecutiveSummary,
   fallbackSummary,
   extractSpotCheckForm,
+  translateInspectionText,
+  translateReportExtras,
 };

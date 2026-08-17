@@ -50,6 +50,9 @@ import InspectionDetailPage from '../../src/pages/InspectionDetailPage';
 
 const MANAGER = { profile: { role: 'manager', full_name: 'Mdm Tan' } };
 const INSPECTOR = { profile: { role: 'inspector', full_name: 'Nurul Aisyah' } };
+const MANAGER_ZH = {
+  profile: { role: 'manager', full_name: 'Mdm Tan', preferred_language: 'zh' },
+};
 
 // A record the contractor has finished: 'Rectified' is stored, and shown as
 // "Pending View By Inspector".
@@ -85,8 +88,11 @@ const CONTRACTORS = [{ id: 'con-1', name: 'Otis Service SG', brands_serviced: 'O
 const INSPECTORS = [{ id: 'insp-user-1', full_name: 'Nurul Aisyah', email: 'n@example.com' }];
 
 // The page fires three GETs for a manager and one for an inspector.
-function mockLoad(ins = record()) {
+// `translation` is checked first: GET .../:id/translation also starts with
+// the same '/api/inspections/' prefix as the record fetch itself.
+function mockLoad(ins = record(), translation = null) {
   api.get.mockImplementation((url) => {
+    if (url.endsWith('/translation')) return Promise.resolve({ data: translation });
     if (url.startsWith('/api/inspections/')) return Promise.resolve({ data: ins });
     if (url === '/api/contractors') return Promise.resolve({ data: CONTRACTORS });
     if (url === '/api/users/inspectors') return Promise.resolve({ data: INSPECTORS });
@@ -276,6 +282,94 @@ describe('InspectionDetailPage', () => {
       expect(
         screen.queryByRole('button', { name: /^Mark as reviewed$/i })
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('translation', () => {
+    test('the control is hidden for a viewer with no display language set', async () => {
+      await renderPage(MANAGER);
+
+      expect(
+        screen.queryByRole('button', { name: /Translate to/i })
+      ).not.toBeInTheDocument();
+    });
+
+    // The category enum has its own static label table (categoryLabels.js),
+    // separate from the AI translation of free text tested below.
+    test('the category subtitle shows in the viewer\'s language', async () => {
+      await renderPage(MANAGER_ZH);
+
+      expect(screen.getByText(/电梯 · Block 44A/)).toBeInTheDocument();
+    });
+
+    test('the category subtitle stays English with no display language set', async () => {
+      await renderPage(MANAGER);
+
+      expect(screen.getByText(/^Lift · Block 44A/)).toBeInTheDocument();
+    });
+
+    test('offers to translate into the viewer\'s own preferred language', async () => {
+      await renderPage(MANAGER_ZH);
+
+      expect(
+        screen.getByRole('button', { name: 'Translate to 中文 (Mandarin)' })
+      ).toBeInTheDocument();
+    });
+
+    test('fetches the translation for this record in the viewer\'s language and shows it', async () => {
+      mockLoad(record(), { title: '门坏了', description: '厨房水槽下方。', was_translated: true });
+      const user = userEvent.setup({ delay: null });
+      await renderPage(MANAGER_ZH);
+
+      await user.click(screen.getByRole('button', { name: 'Translate to 中文 (Mandarin)' }));
+
+      expect(await screen.findByText('门坏了')).toBeInTheDocument();
+      expect(screen.getByText('厨房水槽下方。')).toBeInTheDocument();
+      const [url, config] = api.get.mock.calls.find(([u]) => u.endsWith('/translation'));
+      expect(url).toBe('/api/inspections/insp-1/translation');
+      expect(config).toEqual({ params: { lang: 'zh' } });
+    });
+
+    test('the toggle flips between the translation and the original', async () => {
+      mockLoad(record(), { title: '门坏了', description: '厨房水槽下方。', was_translated: true });
+      const user = userEvent.setup({ delay: null });
+      await renderPage(MANAGER_ZH);
+
+      await user.click(screen.getByRole('button', { name: 'Translate to 中文 (Mandarin)' }));
+      await screen.findByText('门坏了');
+
+      await user.click(screen.getByText('Showing: 中文 (Mandarin) translation'));
+      expect(screen.getByText('Lift door not closing')).toBeInTheDocument();
+
+      await user.click(screen.getByText('Showing: Original'));
+      expect(screen.getByText('门坏了')).toBeInTheDocument();
+    });
+
+    test('already-in-that-language is stated, not offered as a toggle', async () => {
+      mockLoad(record(), { title: 'Lift door not closing', description: 'Judders halfway.', was_translated: false });
+      const user = userEvent.setup({ delay: null });
+      await renderPage(MANAGER_ZH);
+
+      await user.click(screen.getByRole('button', { name: 'Translate to 中文 (Mandarin)' }));
+
+      expect(await screen.findByText(/Already in 中文 \(Mandarin\)/)).toBeInTheDocument();
+      expect(screen.queryByText(/^Showing:/)).not.toBeInTheDocument();
+    });
+
+    test('a failed translation surfaces the backend message', async () => {
+      const user = userEvent.setup({ delay: null });
+      await renderPage(MANAGER_ZH);
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/translation')) {
+          return Promise.reject({ response: { data: { message: 'Translation service is unavailable.' } } });
+        }
+        if (url.startsWith('/api/inspections/')) return Promise.resolve({ data: record() });
+        return Promise.resolve({ data: [] });
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Translate to 中文 (Mandarin)' }));
+
+      expect(await screen.findByText('Translation service is unavailable.')).toBeInTheDocument();
     });
   });
 });

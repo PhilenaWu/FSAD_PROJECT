@@ -108,15 +108,21 @@ async function setContractorId(id, contractorId) {
 // contact fields — never role/status/block/unit, which staff manage. Only
 // supplied fields change; an empty-string phone clears the number (it is
 // nullable, and COALESCE alone could never un-set it).
-async function updateOwnProfile(id, { full_name, phone }) {
+async function updateOwnProfile(id, { full_name, phone, preferred_language }) {
   const result = await query(
     `UPDATE users
      SET full_name = COALESCE($2, full_name),
          phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF($3, '') END,
+         -- Same "empty string clears it" shape as phone: a blank selection
+         -- means "go back to seeing everyone's own words, untranslated".
+         preferred_language = CASE
+           WHEN $4::text IS NULL THEN preferred_language
+           ELSE NULLIF($4, '')
+         END,
          updated_at = NOW()
      WHERE id = $1
      RETURNING *`,
-    [id, full_name, phone]
+    [id, full_name, phone, preferred_language]
   );
   return result.rows[0];
 }

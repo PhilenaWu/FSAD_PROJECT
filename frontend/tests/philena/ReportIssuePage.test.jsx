@@ -9,7 +9,7 @@
 // The API, the photo compressor and the voice service are mocked; the form is
 // real. Category became required when residents took over categorising their
 // own reports, so it is covered as its own case.
-import { configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -31,11 +31,14 @@ vi.mock('../../src/utils/imageCompress', () => ({
 }));
 
 // The browser speech API does not exist in jsdom. Reporting it unsupported
-// keeps the dictation button out of the way of these tests.
+// keeps the dictation button out of the way of most of these tests; the
+// dictation describe block below overrides isSpeechSupported per test.
+const mockIsSpeechSupported = vi.fn(() => false);
+const mockStartRecognition = vi.fn();
 vi.mock('../../src/services/voiceService', () => ({
   VOICE_LANGUAGES: [{ code: 'en-SG', label: 'English' }],
-  isSpeechSupported: () => false,
-  startRecognition: vi.fn(),
+  isSpeechSupported: () => mockIsSpeechSupported(),
+  startRecognition: (...args) => mockStartRecognition(...args),
 }));
 
 import api from '../../src/services/api';
@@ -92,6 +95,8 @@ describe('ReportIssuePage', () => {
     // its call history between tests unless it is reset here.
     api.post.mockReset();
     api.post.mockResolvedValue({ data: { id: 'insp-1' } });
+    mockIsSpeechSupported.mockReset().mockReturnValue(false);
+    mockStartRecognition.mockReset();
   });
 
   describe('validation', () => {
@@ -263,6 +268,74 @@ describe('ReportIssuePage', () => {
       const alert = await screen.findByText(/You just submitted this/i);
       expect(alert).toBeInTheDocument();
       expect(within(alert.closest('.MuiAlert-root')).queryByText(/went wrong/i)).toBeNull();
+    });
+  });
+
+  describe('voice dictation', () => {
+    // startRecognition's real onResult/onEnd callbacks are exercised here
+    // directly, standing in for the browser actually recognising speech.
+    function micButton(name) {
+      return screen.getByRole('button', { name });
+    }
+
+    beforeEach(() => {
+      mockIsSpeechSupported.mockReturnValue(true);
+      // A truthy return is what makes the page commit to "recording started"
+      // (see ReportIssuePage's toggleVoice) — mirrors the real SpeechRecognition
+      // instance startRecognition() normally hands back.
+      mockStartRecognition.mockReturnValue({ stop: vi.fn() });
+    });
+
+    test('title has its own mic, independent of description\'s', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      await user.click(micButton('Dictate title'));
+
+      expect(mockStartRecognition).toHaveBeenCalledTimes(1);
+      const { onResult } = mockStartRecognition.mock.calls[0][0];
+      act(() => onResult('Lift door broken', ''));
+
+      expect(screen.getByLabelText(/^Title/i, { exact: false })).toHaveValue('Lift door broken');
+      expect(screen.getByLabelText(/^Description/i, { exact: false })).toHaveValue('');
+    });
+
+    test('description dictation still lands in Description, not Title', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      await user.click(micButton('Dictate description'));
+
+      const { onResult } = mockStartRecognition.mock.calls[0][0];
+      act(() => onResult('Door judders halfway.', ''));
+
+      expect(screen.getByLabelText(/^Description/i, { exact: false })).toHaveValue(
+        'Door judders halfway.'
+      );
+      expect(screen.getByLabelText(/^Title/i, { exact: false })).toHaveValue('');
+    });
+
+    // Only one recognition session makes sense at a time — starting title's
+    // mic mid-description-dictation would otherwise silently drop input.
+    test('the other field\'s mic is disabled while one is dictating', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      await user.click(micButton('Dictate title'));
+
+      expect(micButton('Dictate description')).toBeDisabled();
+      expect(mockStartRecognition).toHaveBeenCalledTimes(1);
+    });
+
+    test('stopping dictation re-enables the other field\'s mic', async () => {
+      const user = userEvent.setup({ delay: null });
+      renderPage();
+
+      await user.click(micButton('Dictate title'));
+      const { onEnd } = mockStartRecognition.mock.calls[0][0];
+      act(() => onEnd());
+
+      expect(await screen.findByRole('button', { name: 'Dictate description' })).toBeEnabled();
     });
   });
 });

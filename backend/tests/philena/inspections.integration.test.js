@@ -40,6 +40,12 @@ jest.mock('../../src/services/cloudinaryService', () => ({
 jest.mock('../../src/services/openaiService', () => ({
   ...jest.requireActual('../../src/services/openaiService'),
   extractSpotCheckForm: jest.fn(),
+  // translateInspectionText makes its own real OpenAI call (translation has
+  // no sensible deterministic fallback, unlike categoriseIncident); mocked
+  // here for the same reason extractSpotCheckForm is, so these tests are
+  // deterministic and hit no network. translation.test.js covers the
+  // function's own real behaviour, unmocked.
+  translateInspectionText: jest.fn(),
 }));
 
 // --- Mock: CV detection. The controller now awaits detect(), so this resolves
@@ -101,6 +107,9 @@ const store = {
   inspections: [], checklist_results: [], history: [], signatures: [], ai_jobs: [], cv_detections: [],
   // UC-014 defect_email_log rows (migration 036) — D.3's proof of send.
   emailLog: [],
+  // inspection_translations cache (migration 047) — one row per (inspection,
+  // target_language) pair.
+  translations: [],
 };
 
 const mockQuery = jest.fn(async (sql, params = []) => {
@@ -453,6 +462,35 @@ const mockQuery = jest.fn(async (sql, params = []) => {
     store.ai_jobs.push({ location_block, category, triggered_by });
     return { rows: [] };
   }
+  // translation cache write: saveTranslation's upsert. Checked before the
+  // generic SELECT branch below, since "INSERT INTO inspection_translations"
+  // and "FROM inspection_translations" both need to be told apart from the
+  // same table name.
+  if (/INSERT INTO inspection_translations/i.test(sql)) {
+    const [inspection_id, target_language, title, description, was_translated] = params;
+    const existing = store.translations.find(
+      (t) => t.inspection_id === inspection_id && t.target_language === target_language
+    );
+    if (existing) {
+      Object.assign(existing, { title, description, was_translated });
+    } else {
+      store.translations.push({ inspection_id, target_language, title, description, was_translated });
+    }
+    return { rows: [] };
+  }
+  // translation cache read: findTranslation's SELECT. Matched on the table
+  // name alone (not the full multi-line SELECT text) — the real query spans
+  // several lines, and a literal-space regex against it silently never
+  // matches, which read as "always a cache miss" rather than an error.
+  if (/FROM inspection_translations/i.test(sql)) {
+    const [inspectionId, targetLanguage] = params;
+    const row = store.translations.find(
+      (t) => t.inspection_id === inspectionId && t.target_language === targetLanguage
+    );
+    return {
+      rows: row ? [{ title: row.title, description: row.description, was_translated: row.was_translated }] : [],
+    };
+  }
   // reject (UC-004 Alt 4): status/deadline/reopen_count are SQL expressions,
   // not $-params, so the generic branch below can't apply them.
   if (/UPDATE inspections[\s\S]*reopen_count = reopen_count \+ 1/i.test(sql)) {
@@ -551,6 +589,7 @@ beforeEach(() => {
   store.ai_jobs.length = 0;
   store.cv_detections.length = 0;
   store.emailLog.length = 0;
+  store.translations.length = 0;
   jest.clearAllMocks();
 });
 
@@ -1810,6 +1849,158 @@ describe('GET /api/inspections/:id (manager detail)', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.title).toBe('Stuck rubbish chute');
+  });
+});
+
+// Translating a resident's title/description for a viewer whose
+// preferred_language differs. openaiService.translateInspectionText is
+// mocked (see the top-of-file jest.mock) — this suite is about the route's
+// own contract: validation, caching, and telling a real translation apart
+// from "the service is down" — not about OpenAI's own output.
+describe('GET /api/inspections/:id/translation', () => {
+  const openaiService = require('../../src/services/openaiService');
+
+  beforeEach(() => {
+    openaiService.translateInspectionText.mockReset();
+  });
+
+  test('400 when lang is missing or not one of the four supported codes', async () => {
+    const id = await seedComplaint('Leaking pipe');
+
+    const missing = await request(app)
+      .get(`/api/inspections/${id}/translation`)
+      .set('Authorization', 'Bearer manager-token');
+    expect(missing.status).toBe(400);
+    expect(missing.body.code).toBe('VALIDATION_ERROR');
+
+    const bogus = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=fr`)
+      .set('Authorization', 'Bearer manager-token');
+    expect(bogus.status).toBe(400);
+
+    expect(openaiService.translateInspectionText).not.toHaveBeenCalled();
+  });
+
+  test('404 for an unknown inspection id', async () => {
+    const res = await request(app)
+      .get('/api/inspections/insp-nope/translation?lang=zh')
+      .set('Authorization', 'Bearer manager-token');
+    expect(res.status).toBe(404);
+  });
+
+  test('403 for a resident', async () => {
+    const id = await seedComplaint('Leaking pipe');
+    const res = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer resident-token');
+    expect(res.status).toBe(403);
+  });
+
+  test('200 for an inspector too — the same audience as the detail view', async () => {
+    const id = await seedComplaint('Leaking pipe');
+    openaiService.translateInspectionText.mockResolvedValueOnce({
+      title: '漏水的管道', description: '', was_translated: true,
+    });
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.title).toBe('漏水的管道');
+  });
+
+  test('200 calls the translator on a cache miss and returns its result', async () => {
+    const id = await seedComplaint('Leaking pipe', 'Plumbing');
+    openaiService.translateInspectionText.mockResolvedValueOnce({
+      title: '漏水的管道', description: '厨房水槽下方。', was_translated: true,
+    });
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ title: '漏水的管道', description: '厨房水槽下方。', was_translated: true });
+    expect(openaiService.translateInspectionText).toHaveBeenCalledTimes(1);
+    expect(openaiService.translateInspectionText).toHaveBeenCalledWith(
+      { title: 'Leaking pipe', description: 'Details here' }, // seedComplaint's fixed description
+      'zh'
+    );
+  });
+
+  // The whole point of the cache: two managers who both prefer Chinese must
+  // not cost two OpenAI calls for the same record.
+  test('200 a second request for the same (record, language) is served from cache', async () => {
+    const id = await seedComplaint('Leaking pipe');
+    openaiService.translateInspectionText.mockResolvedValueOnce({
+      title: '漏水的管道', description: '', was_translated: true,
+    });
+
+    const first = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer manager-token');
+    const second = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer inspector-token');
+
+    expect(first.body).toEqual(second.body);
+    expect(openaiService.translateInspectionText).toHaveBeenCalledTimes(1);
+  });
+
+  // Same record, two different target languages, must NOT collide in the
+  // cache — this is exactly what the (inspection_id, target_language)
+  // UNIQUE constraint (migration 047) exists to keep separate.
+  test('200 different target languages for the same record are cached separately', async () => {
+    const id = await seedComplaint('Leaking pipe');
+    openaiService.translateInspectionText
+      .mockResolvedValueOnce({ title: '漏水的管道', description: '', was_translated: true })
+      .mockResolvedValueOnce({ title: 'Paip bocor', description: '', was_translated: true });
+
+    const zh = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer manager-token');
+    const ms = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=ms`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(zh.body.title).toBe('漏水的管道');
+    expect(ms.body.title).toBe('Paip bocor');
+    expect(openaiService.translateInspectionText).toHaveBeenCalledTimes(2);
+  });
+
+  // A title that happens to already be English (e.g. it's mostly a unit
+  // number) is a real, valid response — not an error — and must not claim a
+  // translation happened when nothing actually changed.
+  test('200 was_translated: false when the text was already in the target language', async () => {
+    const id = await seedComplaint('44A #12-05');
+    openaiService.translateInspectionText.mockResolvedValueOnce({
+      title: '44A #12-05', description: 'Details here', was_translated: false,
+    });
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=en`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.was_translated).toBe(false);
+  });
+
+  test('503 TRANSLATION_UNAVAILABLE when the service is down, and nothing is cached', async () => {
+    const id = await seedComplaint('Leaking pipe');
+    const err = new Error('OpenAI request failed');
+    err.serviceUnavailable = true;
+    openaiService.translateInspectionText.mockRejectedValueOnce(err);
+
+    const res = await request(app)
+      .get(`/api/inspections/${id}/translation?lang=zh`)
+      .set('Authorization', 'Bearer manager-token');
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('TRANSLATION_UNAVAILABLE');
+    // A failed attempt must not poison the cache with nothing — the next
+    // request has to actually retry, not silently 200 with stale emptiness.
+    expect(store.translations).toHaveLength(0);
   });
 });
 

@@ -5,7 +5,10 @@
 'use strict';
 
 const myReportModel = require('../models/myReportModel');
+const inspectionModel = require('../models/inspectionModel');
+const openaiService = require('../services/openaiService');
 const { CATEGORIES } = require('../utils/inspectionOptions');
+const { TRANSLATION_LANGUAGES } = require('../utils/translationOptions');
 
 // A resident's report can be edited for a short window after submission —
 // long enough to fix a typo or add detail shortly after filing. Time-only:
@@ -92,4 +95,62 @@ async function updateOwnReport(req, res, next) {
   }
 }
 
-module.exports = { getOwnDetail, listOwnHistory, updateOwnReport };
+// GET /api/my-reports/:id/translation?lang=zh — the OTHER people's free text
+// on the caller's own report (a manager's closing remark, checklist remarks,
+// audit-history notes) translated into their preferred_language. Never the
+// caller's own title/description — they wrote those themselves. Cache-first,
+// same (inspection_id, target_language) row the manager-side translation
+// uses, but its own columns (048) — see inspectionModel.findExtrasTranslation.
+async function getOwnTranslation(req, res, next) {
+  try {
+    const lang = req.query.lang;
+    if (!TRANSLATION_LANGUAGES.includes(lang)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `lang must be one of: ${TRANSLATION_LANGUAGES.join(', ')}.`,
+      });
+    }
+
+    const inspection = await myReportModel.findOwnDetail(req.params.id, req.user.id);
+    if (!inspection) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Report not found.' });
+    }
+
+    const cached = await inspectionModel.findExtrasTranslation(req.params.id, lang);
+    if (cached) {
+      return res.json({
+        closing_remark: cached.closing_remark,
+        checklist_remarks: cached.checklist_remarks,
+        history_notes: cached.history_notes,
+        was_translated: cached.extras_was_translated,
+      });
+    }
+
+    let translated;
+    try {
+      translated = await openaiService.translateReportExtras(
+        {
+          closing_remark: inspection.closing_remark ?? null,
+          checklist_results: inspection.checklist_results,
+          history: inspection.history,
+        },
+        lang
+      );
+    } catch (err) {
+      if (err.serviceUnavailable) {
+        return res.status(503).json({
+          code: 'TRANSLATION_UNAVAILABLE',
+          message: 'Translation is temporarily unavailable. Please try again shortly.',
+        });
+      }
+      throw err;
+    }
+
+    await inspectionModel.saveExtrasTranslation(req.params.id, lang, translated);
+    res.json(translated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getOwnDetail, getOwnTranslation, listOwnHistory, updateOwnReport };

@@ -30,37 +30,66 @@ jest.mock('../../src/config/supabase', () => ({
 }));
 
 // --- Mock: the pg layer. A tiny in-memory users table. ---
-const users = {
-  'res-1': {
-    id: 'res-1',
-    email: 'res@example.com',
-    full_name: 'Marcus Tan',
-    role: 'resident',
-    block_number: '44A',
-    unit_number: '12-05',
-    status: 'active',
-  },
-  'mgr-1': { id: 'mgr-1', email: 'mgr@example.com', full_name: 'Priya Nair', role: 'manager', status: 'active' },
-  // Endorser candidates for GET /api/users/inspectors (G7).
-  'ins-1': { id: 'ins-1', email: 'ins@example.com', full_name: 'Wei Lim', role: 'inspector', status: 'active' },
-  'ins-2': { id: 'ins-2', email: 'old@example.com', full_name: 'Retired Inspector', role: 'inspector', status: 'suspended' },
-};
+// A function, not a literal: the PATCH /me tests below mutate rows in place
+// (full_name, phone, preferred_language), so each test needs its own pristine
+// copy rather than accumulating another test's edits.
+function freshUsers() {
+  return {
+    'res-1': {
+      id: 'res-1',
+      email: 'res@example.com',
+      full_name: 'Marcus Tan',
+      role: 'resident',
+      block_number: '44A',
+      unit_number: '12-05',
+      status: 'active',
+    },
+    'mgr-1': { id: 'mgr-1', email: 'mgr@example.com', full_name: 'Priya Nair', role: 'manager', status: 'active' },
+    // Endorser candidates for GET /api/users/inspectors (G7).
+    'ins-1': { id: 'ins-1', email: 'ins@example.com', full_name: 'Wei Lim', role: 'inspector', status: 'active' },
+    'ins-2': { id: 'ins-2', email: 'old@example.com', full_name: 'Retired Inspector', role: 'inspector', status: 'suspended' },
+  };
+}
+const mockUsers = freshUsers();
+
+// Reset in place (not reassign — the mock's query() closure already holds a
+// reference to this exact object) before every test, wiping both value edits
+// and any property a previous PATCH test added.
+beforeEach(() => {
+  for (const id of Object.keys(mockUsers)) delete mockUsers[id];
+  Object.assign(mockUsers, freshUsers());
+});
 
 jest.mock('../../src/config/db', () => ({
   pool: {},
   testConnection: jest.fn(),
   query: jest.fn(async (sql, params = []) => {
+    // updateOwnProfile: UPDATE users SET full_name = COALESCE(...), phone =
+    // CASE ..., preferred_language = CASE ... WHERE id = $1 RETURNING *.
+    // Mirrors the real CASE/NULLIF semantics: a null/undefined param leaves
+    // the column untouched; '' clears it; anything else sets it.
+    if (/UPDATE users/i.test(sql)) {
+      const [id, full_name, phone, preferred_language] = params;
+      const u = mockUsers[id];
+      if (!u) return { rows: [] };
+      if (full_name != null) u.full_name = full_name;
+      if (phone != null) u.phone = phone === '' ? null : phone;
+      if (preferred_language != null) {
+        u.preferred_language = preferred_language === '' ? null : preferred_language;
+      }
+      return { rows: [{ ...u }] };
+    }
     // findActiveInspectors: SELECT ... WHERE role = 'inspector' AND status = 'active'
     if (/FROM users/i.test(sql) && /role = 'inspector'/i.test(sql)) {
       return {
-        rows: Object.values(users).filter(
+        rows: Object.values(mockUsers).filter(
           (u) => u.role === 'inspector' && u.status === 'active'
         ),
       };
     }
     // findById: SELECT * FROM users WHERE id = $1
     if (/FROM users/i.test(sql)) {
-      const u = users[params[0]];
+      const u = mockUsers[params[0]];
       return { rows: u ? [u] : [] };
     }
     return { rows: [] };
@@ -153,5 +182,78 @@ describe('GET /api/users/inspectors', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
+  });
+});
+
+// The display-language preference (migration 047) that drives the on-demand
+// translation on GET /api/inspections/:id/translation. A reading preference,
+// not a manager-only tool — every role reads someone else's free text
+// somewhere — so it is accepted from any role here, unlike full_name/phone,
+// which the frontend only ever offers a resident an editable form for.
+describe('PATCH /api/users/me — preferred_language', () => {
+  test('200 a resident can set it', async () => {
+    const res = await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ preferred_language: 'zh' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.preferred_language).toBe('zh');
+  });
+
+  test('200 a manager can set it too — this is not resident-only', async () => {
+    const res = await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer manager-token')
+      .send({ preferred_language: 'ta' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.preferred_language).toBe('ta');
+  });
+
+  test('200 an empty string clears it — back to seeing everything untranslated', async () => {
+    await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ preferred_language: 'zh' });
+
+    const res = await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ preferred_language: '' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.preferred_language).toBeNull();
+  });
+
+  test('omitting it entirely leaves whatever was already set untouched', async () => {
+    await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ preferred_language: 'ms' });
+
+    const res = await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ full_name: 'Marcus Tan Wei Ming' }); // unrelated field, no language key at all
+
+    expect(res.status).toBe(200);
+    expect(res.body.full_name).toBe('Marcus Tan Wei Ming');
+    expect(res.body.preferred_language).toBe('ms'); // still there
+  });
+
+  test('400 for a code outside en/zh/ms/ta', async () => {
+    const res = await request(app)
+      .patch('/api/users/me')
+      .set('Authorization', 'Bearer resident-token')
+      .send({ preferred_language: 'fr' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('401 without a token', async () => {
+    const res = await request(app).patch('/api/users/me').send({ preferred_language: 'zh' });
+    expect(res.status).toBe(401);
   });
 });

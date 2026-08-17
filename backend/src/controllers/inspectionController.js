@@ -18,6 +18,7 @@ const config = require('../config/env');
 // Categories a resident picks on the report form and a manager can correct
 // during triage (migration 042).
 const { CATEGORIES } = require('../utils/inspectionOptions');
+const { TRANSLATION_LANGUAGES } = require('../utils/translationOptions');
 
 // Schema enums (migration 004 CHECKs) for PATCH validation.
 const STATUSES = [
@@ -713,6 +714,55 @@ async function getDetail(req, res, next) {
   }
 }
 
+// GET /api/inspections/:id/translation?lang=zh — the record's title/description
+// translated for a viewer whose preferred language differs from whatever the
+// resident wrote it in. Cache-first (inspection_translations): only the first
+// request for a given (record, language) pair ever calls OpenAI. Deliberately
+// its own on-demand endpoint rather than folded into getDetail — the triage
+// queue and detail view must not fire a translation call on every read.
+async function getTranslation(req, res, next) {
+  try {
+    const lang = req.query.lang;
+    if (!TRANSLATION_LANGUAGES.includes(lang)) {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: `lang must be one of: ${TRANSLATION_LANGUAGES.join(', ')}.`,
+      });
+    }
+
+    const inspection = await inspectionModel.findById(req.params.id);
+    if (!inspection) {
+      return res.status(404).json({ code: 'NOT_FOUND', message: 'Inspection not found.' });
+    }
+
+    const cached = await inspectionModel.findTranslation(req.params.id, lang);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    let translated;
+    try {
+      translated = await openaiService.translateInspectionText(
+        { title: inspection.title, description: inspection.description ?? '' },
+        lang
+      );
+    } catch (err) {
+      if (err.serviceUnavailable) {
+        return res.status(503).json({
+          code: 'TRANSLATION_UNAVAILABLE',
+          message: 'Translation is temporarily unavailable. Please try again shortly.',
+        });
+      }
+      throw err;
+    }
+
+    await inspectionModel.saveTranslation(req.params.id, lang, translated);
+    res.json(translated);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // PATCH /api/inspections/:id — manager triage (UC-002): set priority, status,
 // contractor assignment, deadline, or hold reason. Writes an inspection_history
 // audit row and pushes a `status_update` socket event so originators see the
@@ -1352,6 +1402,7 @@ module.exports = {
   createLiftInspection,
   defectAlertDemo,
   getDetail,
+  getTranslation,
   listForManager,
   listMine,
   listStatusBoard,

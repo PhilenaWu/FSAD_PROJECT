@@ -1039,6 +1039,73 @@ async function findForStatusBoard() {
   return result.rows;
 }
 
+// Cached translation for one (inspection, target language) pair, or undefined
+// if nobody has asked for that pair yet. A cache read/write, not a source of
+// truth — `inspections.title`/`description` are never touched by either.
+async function findTranslation(inspectionId, targetLanguage) {
+  const result = await query(
+    `SELECT title, description, was_translated
+       FROM inspection_translations
+      WHERE inspection_id = $1 AND target_language = $2`,
+    [inspectionId, targetLanguage]
+  );
+  return result.rows[0];
+}
+
+// Persist a translation so the next viewer who shares this target language
+// gets the cached copy instead of another OpenAI call. ON CONFLICT rather than
+// a prior existence check: two requests for the same never-yet-cached pair
+// (two managers opening the same record moments apart) would otherwise race
+// to insert and one would 500 on the UNIQUE constraint.
+async function saveTranslation(inspectionId, targetLanguage, { title, description, was_translated }) {
+  await query(
+    `INSERT INTO inspection_translations
+       (inspection_id, target_language, title, description, was_translated)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (inspection_id, target_language)
+     DO UPDATE SET title = $3, description = $4, was_translated = $5, created_at = NOW()`,
+    [inspectionId, targetLanguage, title, description, was_translated]
+  );
+}
+
+// The resident-facing half of the same cache row (048): the closing remark,
+// checklist remarks and history notes other people wrote — kept in separate
+// columns from title/description/was_translated above so the two halves
+// never overwrite each other, whichever side asks first.
+async function findExtrasTranslation(inspectionId, targetLanguage) {
+  const result = await query(
+    `SELECT closing_remark, checklist_remarks, history_notes, extras_was_translated
+       FROM inspection_translations
+      WHERE inspection_id = $1 AND target_language = $2
+        AND extras_was_translated IS NOT NULL`,
+    [inspectionId, targetLanguage]
+  );
+  return result.rows[0];
+}
+
+async function saveExtrasTranslation(
+  inspectionId,
+  targetLanguage,
+  { closing_remark, checklist_remarks, history_notes, was_translated }
+) {
+  await query(
+    `INSERT INTO inspection_translations
+       (inspection_id, target_language, closing_remark, checklist_remarks, history_notes, extras_was_translated)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (inspection_id, target_language)
+     DO UPDATE SET closing_remark = $3, checklist_remarks = $4, history_notes = $5,
+                   extras_was_translated = $6, created_at = NOW()`,
+    [
+      inspectionId,
+      targetLanguage,
+      closing_remark,
+      JSON.stringify(checklist_remarks),
+      JSON.stringify(history_notes),
+      was_translated,
+    ]
+  );
+}
+
 module.exports = {
   create,
   createLiftInspection,
@@ -1061,4 +1128,8 @@ module.exports = {
   queueRecurrenceJob,
   updateByManager,
   updatePriority,
+  findTranslation,
+  saveTranslation,
+  findExtrasTranslation,
+  saveExtrasTranslation,
 };

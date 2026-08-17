@@ -67,6 +67,16 @@ export default function MyReportsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
 
+  // On-demand translation (048) of the OTHER people's free text on the
+  // expanded card — closing remark, checklist remarks, history notes — into
+  // profile.preferred_language (Profile page). Not the resident's own
+  // title/description; they wrote those themselves. One slot, not per-record
+  // cached state, since only one card is ever expanded at a time.
+  const [translation, setTranslation] = useState(null);
+  const [showingTranslation, setShowingTranslation] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState(null);
+
   const [toast, setToast] = useState(null);
 
   // Editing (within 30 minutes of filing — utils/myReports.isEditable).
@@ -147,8 +157,15 @@ export default function MyReportsPage() {
     }
   }, []);
 
+  function resetTranslation() {
+    setTranslation(null);
+    setShowingTranslation(false);
+    setTranslateError(null);
+  }
+
   function toggleDetail(id) {
     if (expandedId) leaveRoom(`insp-${expandedId}`);
+    resetTranslation();
     if (expandedId === id) {
       setExpandedId(null);
       setDetail(null);
@@ -158,6 +175,24 @@ export default function MyReportsPage() {
     setDetail(null);
     joinRoom(`insp-${id}`);
     loadDetail(id);
+  }
+
+  async function handleTranslate(id) {
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const { data } = await api.get(`/api/my-reports/${id}/translation`, {
+        params: { lang: profile.preferred_language },
+      });
+      setTranslation(data);
+      setShowingTranslation(data.was_translated);
+    } catch (err) {
+      setTranslateError(
+        err.response?.data?.message ?? 'Could not translate this report. Please try again.'
+      );
+    } finally {
+      setTranslating(false);
+    }
   }
 
   // Live status pushed by the manager (UC-002) or contractor (UC-010): patch the
@@ -263,6 +298,13 @@ export default function MyReportsPage() {
     detailError,
     onToggle: () => toggleDetail(r.id),
     onRetryDetail: () => loadDetail(r.id),
+    preferredLanguage: profile?.preferred_language,
+    translation,
+    showingTranslation,
+    translating,
+    translateError,
+    onTranslate: () => handleTranslate(r.id),
+    onToggleShowTranslation: () => setShowingTranslation((s) => !s),
     // Resident-only, and only within 30 minutes of filing (matches the
     // server's EDIT_WINDOW_MS in myReportsController.js).
     editable: !isInspector && isEditable(r),

@@ -15,6 +15,7 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -27,6 +28,7 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import { useAuth } from '../context/AuthContext';
 import { updatePassword } from '../lib/auth';
 import { PASSWORD_RULES, checkPassword, isValidPassword } from '../utils/validation';
+import { DISPLAY_LANGUAGES } from '../utils/languages';
 import api from '../services/api';
 
 // Field rows shown when the profile has a value for them.
@@ -178,6 +180,74 @@ function ChangePasswordSection({ onSaved }) {
   );
 }
 
+// Every role's reading preference: which language someone else's report gets
+// translated into for them. Every role reads someone else's free text
+// somewhere (a manager triages a resident's report; an inspector reviews
+// contractor notes), so this is shared between both variants rather than
+// belonging to just one. Saves on change rather than joining either variant's
+// own Save button — it's a single, independent preference, not part of
+// whatever else that variant is mid-editing.
+function DisplayLanguageSetting({ profile, reloadProfile }) {
+  const [value, setValue] = useState(profile?.preferred_language ?? '');
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    setValue(profile?.preferred_language ?? '');
+  }, [profile]);
+
+  async function handleChange(e) {
+    const next = e.target.value;
+    const previous = value;
+    setValue(next);
+    setSaving(true);
+    try {
+      await api.patch('/api/users/me', { preferred_language: next });
+      reloadProfile();
+      setToast('Display language updated.');
+    } catch {
+      setValue(previous); // revert — the select must not claim a save that failed
+      setToast('Could not update your display language. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Box sx={{ mb: 3 }}>
+      <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+        Display language
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+        When someone else's report is written in a different language, you'll
+        get the option to translate it into this one. Your own words are
+        never changed — this only affects what you read.
+      </Typography>
+      <TextField
+        select
+        size="small"
+        fullWidth
+        label="Translate others' reports into"
+        value={value}
+        onChange={handleChange}
+        disabled={saving}
+      >
+        <MenuItem value="">Don't translate — show as written</MenuItem>
+        {DISPLAY_LANGUAGES.map((l) => (
+          <MenuItem key={l.code} value={l.code}>{l.label}</MenuItem>
+        ))}
+      </TextField>
+      <Snackbar
+        open={Boolean(toast)}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        message={toast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
+    </Box>
+  );
+}
+
 // Resident variant: name + phone editable, everything else read-only.
 function ResidentProfile({ user, profile, reloadProfile }) {
   const [fullName, setFullName] = useState('');
@@ -276,6 +346,9 @@ function ResidentProfile({ user, profile, reloadProfile }) {
       </Stack>
 
       <Divider sx={{ mb: 2 }} />
+      <DisplayLanguageSetting profile={profile} reloadProfile={reloadProfile} />
+
+      <Divider sx={{ mb: 2 }} />
       <ChangePasswordSection onSaved={() => setToast('Password updated')} />
 
       <Alert severity="info" sx={{ mt: 2 }}>
@@ -294,8 +367,8 @@ function ResidentProfile({ user, profile, reloadProfile }) {
   );
 }
 
-// Staff variant — the original read-only card.
-function StaffProfile({ user, profile }) {
+// Staff variant — everything but display language stays read-only.
+function StaffProfile({ user, profile, reloadProfile }) {
   return (
     <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
       <ProfileHeader user={user} profile={profile} />
@@ -318,10 +391,13 @@ function StaffProfile({ user, profile }) {
         )}
       </Stack>
 
-      <Alert severity="info">
+      <Alert severity="info" sx={{ mb: 2 }}>
         Staff accounts are provisioned by HR. To change your login details or
         role, contact the estate administrator.
       </Alert>
+
+      <Divider sx={{ mb: 2 }} />
+      <DisplayLanguageSetting profile={profile} reloadProfile={reloadProfile} />
     </Paper>
   );
 }
@@ -345,7 +421,7 @@ export default function ProfilePage() {
       ) : isResident ? (
         <ResidentProfile user={user} profile={profile} reloadProfile={reloadProfile} />
       ) : (
-        <StaffProfile user={user} profile={profile} />
+        <StaffProfile user={user} profile={profile} reloadProfile={reloadProfile} />
       )}
     </Box>
   );

@@ -34,11 +34,13 @@ import {
   TableRow,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
+import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined';
 import SwapVertOutlinedIcon from '@mui/icons-material/SwapVertOutlined';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
@@ -47,6 +49,8 @@ import { getFilterOptions } from '../services/analyticsService';
 import { priorityDisplay } from '../utils/priorityDisplay';
 import { statusDisplay } from '../utils/statusDisplay';
 import { categoryDisplay } from '../utils/categoryDisplay';
+import { looksNonLatin } from '../utils/languages';
+import { categoryLabel } from '../utils/categoryLabels';
 import { CATEGORIES, QUEUE_TABS } from '../utils/inspectionOptions';
 import ManualReviewQueue from '../components/cv/ManualReviewQueue';
 import EmptyState from '../components/common/EmptyState';
@@ -400,9 +404,23 @@ export default function InspectionListPage() {
                       sx={{ cursor: 'pointer' }}
                     >
                       <TableCell sx={{ maxWidth: 320 }}>
-                        <Typography variant="body2" fontWeight={600} noWrap>
-                          {r.title}
-                        </Typography>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          {/* Flags a title not written in English — full
+                              translation is a detail-page action (opening a
+                              record is already the click this row exists for);
+                              translating every row inline here would fire one
+                              OpenAI call per row on every table load. */}
+                          {looksNonLatin(r.title) && (
+                            <Tooltip title="Not in English — open the record to translate">
+                              <LanguageOutlinedIcon
+                                sx={{ fontSize: 16, color: 'text.secondary', flexShrink: 0 }}
+                              />
+                            </Tooltip>
+                          )}
+                          <Typography variant="body2" fontWeight={600} noWrap>
+                            {r.title}
+                          </Typography>
+                        </Stack>
                       </TableCell>
                       <TableCell>{r.location_block}</TableCell>
                       <TableCell>
@@ -422,7 +440,9 @@ export default function InspectionListPage() {
                           >
                             <CatIcon sx={{ fontSize: 15 }} />
                           </Box>
-                          <Typography variant="body2">{r.category}</Typography>
+                          <Typography variant="body2">
+                            {categoryLabel(r.category, profile?.preferred_language)}
+                          </Typography>
                         </Stack>
                       </TableCell>
                       <TableCell>

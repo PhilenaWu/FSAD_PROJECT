@@ -17,11 +17,24 @@ import {
   Typography,
 } from '@mui/material';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined';
 import { groupBySection } from '../../utils/myReports';
 import { statusDisplay } from '../../utils/statusDisplay';
 import { timeAgo } from '../../utils/timeAgo';
 import { BLOCKS } from '../../utils/blocks';
 import { CATEGORIES } from '../../utils/inspectionOptions';
+import { languageLabel } from '../../utils/languages';
+import { categoryLabel } from '../../utils/categoryLabels';
+
+// translation.checklist_remarks/history_notes only carry entries for items
+// that actually had text (translateReportExtras skips blanks) — anything
+// missing here had nothing to translate, so the original (empty) stands.
+function translatedRemark(checklistRemarks, id, fallback) {
+  return checklistRemarks?.find((t) => t.id === id)?.remark ?? fallback;
+}
+function translatedNote(historyNotes, id, fallback) {
+  return historyNotes?.find((t) => t.id === id)?.note ?? fallback;
+}
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -50,6 +63,16 @@ export default function ReportCard({
   onEditChange,
   onEditSave,
   onEditCancel,
+  // On-demand translation (048) of the closing remark / checklist remarks /
+  // history notes — the free text OTHER people wrote on this report. Hidden
+  // entirely if the viewer has no preferred_language, or nothing to translate.
+  preferredLanguage,
+  translation,
+  showingTranslation,
+  translating,
+  translateError,
+  onTranslate,
+  onToggleShowTranslation,
 }) {
   const display = statusDisplay(report.status);
   const panelId = `report-detail-${report.id}`;
@@ -73,7 +96,7 @@ export default function ReportCard({
             <Chip size="small" color={display.color} label={display.label} />
           </Stack>
           <Typography variant="body2" color="text.secondary" noWrap>
-            {report.category} · Block {report.location_block}
+            {categoryLabel(report.category, preferredLanguage)} · Block {report.location_block}
             {report.location_unit ? ` #${report.location_unit}` : ''} ·{' '}
             {formatDate(report.created_at)}
           </Typography>
@@ -186,12 +209,66 @@ export default function ReportCard({
               )}
               {detail.description && <Typography variant="body2">{detail.description}</Typography>}
 
+              {/* On-demand translation of the closing remark / checklist
+                  remarks / history notes below — text OTHER people wrote,
+                  not the resident's own words. Hidden if there's no
+                  preferred_language set, or nothing here to translate. */}
+              {preferredLanguage &&
+                (detail.closing_remark ||
+                  detail.checklist_results?.some((i) => i.remark) ||
+                  detail.history?.some((h) => h.note)) && (
+                  <Box>
+                    {!translation && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={translating}
+                        startIcon={
+                          translating
+                            ? <CircularProgress size={14} color="inherit" />
+                            : <LanguageOutlinedIcon fontSize="small" />
+                        }
+                        onClick={onTranslate}
+                      >
+                        {translating ? 'Translating…' : `Translate to ${languageLabel(preferredLanguage)}`}
+                      </Button>
+                    )}
+                    {translation && !translation.was_translated && (
+                      <Typography variant="caption" color="text.secondary">
+                        Already in {languageLabel(preferredLanguage)}.
+                      </Typography>
+                    )}
+                    {translation && translation.was_translated && (
+                      <Chip
+                        size="small"
+                        color="primary"
+                        icon={<LanguageOutlinedIcon fontSize="small" />}
+                        label={
+                          showingTranslation
+                            ? `Showing: ${languageLabel(preferredLanguage)} translation`
+                            : 'Showing: Original'
+                        }
+                        onClick={onToggleShowTranslation}
+                      />
+                    )}
+                    {translateError && (
+                      <Alert severity="warning" sx={{ mt: 1 }}>
+                        {translateError}
+                      </Alert>
+                    )}
+                  </Box>
+                )}
+
               {detail.closing_remark && (
                 <Alert severity="success" icon={false}>
                   <Typography variant="subtitle2" fontWeight={700}>
                     How it was resolved
                   </Typography>
-                  <Typography variant="body2">{detail.closing_remark}</Typography>
+                  <Typography variant="body2">
+                    {showingTranslation
+                      ? (translation?.closing_remark ?? detail.closing_remark)
+                      : detail.closing_remark}
+                  </Typography>
                 </Alert>
               )}
 
@@ -222,7 +299,13 @@ export default function ReportCard({
                             />
                             <Typography variant="body2" sx={{ minWidth: 0 }}>
                               {item.item_text}
-                              {item.remark ? ` — ${item.remark}` : ''}
+                              {item.remark
+                                ? ` — ${
+                                    showingTranslation
+                                      ? translatedRemark(translation?.checklist_remarks, item.id, item.remark)
+                                      : item.remark
+                                  }`
+                                : ''}
                             </Typography>
                           </Stack>
                         ))}
@@ -253,7 +336,9 @@ export default function ReportCard({
                         </Typography>
                         {h.note && (
                           <Typography variant="body2" color="text.secondary">
-                            {h.note}
+                            {showingTranslation
+                              ? translatedNote(translation?.history_notes, h.id, h.note)
+                              : h.note}
                           </Typography>
                         )}
                       </Box>

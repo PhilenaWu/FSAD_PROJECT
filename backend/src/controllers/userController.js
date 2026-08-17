@@ -53,13 +53,18 @@ async function getMe(req, res, next) {
   }
 }
 
+// Every role reads other people's free text somewhere (a manager triages a
+// resident's report; an admin's page lists managers) — this is a reading
+// preference, not a manager-only setting, so it's accepted from any role here.
+const PREFERRED_LANGUAGES = ['en', 'zh', 'ms', 'ta'];
+
 // PATCH /api/users/me — self-service edit of the caller's own contact details.
-// Only full_name and phone are accepted: block/unit/role/status are managed by
-// staff, and the email/password live in Supabase Auth. Identity comes from the
-// verified token (req.user.id), never from the body.
+// Only full_name, phone and preferred_language are accepted: block/unit/role/
+// status are managed by staff, and the email/password live in Supabase Auth.
+// Identity comes from the verified token (req.user.id), never from the body.
 async function updateMe(req, res, next) {
   try {
-    const { full_name, phone } = req.body;
+    const { full_name, phone, preferred_language } = req.body;
 
     if (full_name !== undefined
         && (typeof full_name !== 'string' || !full_name.trim() || full_name.length > 255)) {
@@ -69,10 +74,21 @@ async function updateMe(req, res, next) {
     if (phone !== undefined && (typeof phone !== 'string' || phone.length > 30)) {
       return validationError(res, 'phone must be a string of 30 characters or fewer.');
     }
+    // Empty string is allowed here too: it clears the preference, going back
+    // to seeing everyone's own words untranslated.
+    if (preferred_language !== undefined
+        && preferred_language !== ''
+        && !PREFERRED_LANGUAGES.includes(preferred_language)) {
+      return validationError(
+        res,
+        `preferred_language must be one of: ${PREFERRED_LANGUAGES.join(', ')} (or empty to clear it).`
+      );
+    }
 
     const updated = await userModel.updateOwnProfile(req.user.id, {
       full_name: full_name === undefined ? undefined : full_name.trim(),
       phone,
+      preferred_language,
     });
     if (!updated) {
       return res.status(404).json({ code: 'NOT_FOUND', message: 'Profile not found' });

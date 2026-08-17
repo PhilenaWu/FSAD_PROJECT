@@ -22,6 +22,7 @@ import {
 } from '@mui/material';
 import ArchiveOutlinedIcon from '@mui/icons-material/ArchiveOutlined';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined';
 import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import ImageNotSupportedOutlinedIcon from '@mui/icons-material/ImageNotSupportedOutlined';
@@ -36,6 +37,8 @@ import { priorityDisplay } from '../utils/priorityDisplay';
 import { CATEGORIES, PRIORITIES } from '../utils/inspectionOptions';
 import { nearestBlock } from '../utils/blocks';
 import { statusDisplay } from '../utils/statusDisplay';
+import { languageLabel } from '../utils/languages';
+import { categoryLabel } from '../utils/categoryLabels';
 
 // Make the triage controls read as controls against the white card: tinted
 // input background, hover/focus border feedback (standard MUI outlined
@@ -108,6 +111,15 @@ export default function InspectionDetailPage() {
   const [contractors, setContractors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+
+  // On-demand translation of the resident's own title/description into the
+  // viewer's preferred_language (Profile page). Deliberately not fetched on
+  // load — only when this viewer actually asks for it, so opening the queue
+  // never fires a translation call for every record in it.
+  const [translation, setTranslation] = useState(null); // { title, description, was_translated } | null
+  const [showingTranslation, setShowingTranslation] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState(null);
 
   // Triage form state (seeded from the record once loaded).
   const [form, setForm] = useState({
@@ -193,6 +205,32 @@ export default function InspectionDetailPage() {
   }, [id, isInspector]);
 
   useEffect(load, [load]);
+
+  // A stale translation from the previous record must not survive a
+  // navigation to a new one.
+  useEffect(() => {
+    setTranslation(null);
+    setShowingTranslation(false);
+    setTranslateError(null);
+  }, [id]);
+
+  async function handleTranslate() {
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const { data } = await api.get(`/api/inspections/${id}/translation`, {
+        params: { lang: profile.preferred_language },
+      });
+      setTranslation(data);
+      setShowingTranslation(data.was_translated);
+    } catch (err) {
+      setTranslateError(
+        err.response?.data?.message ?? 'Could not translate this record. Please try again.'
+      );
+    } finally {
+      setTranslating(false);
+    }
+  }
 
   async function handleSave(e) {
     e.preventDefault();
@@ -394,7 +432,7 @@ export default function InspectionDetailPage() {
               >
                 <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                   <Typography variant="h6" fontWeight={700} sx={{ pr: 2 }}>
-                    {inspection.title}
+                    {showingTranslation ? translation.title : inspection.title}
                   </Typography>
                   <Stack direction="row" spacing={1}>
                     <Chip
@@ -410,16 +448,72 @@ export default function InspectionDetailPage() {
                   </Stack>
                 </Stack>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  {inspection.category} · Block {inspection.location_block}
+                  {categoryLabel(inspection.category, profile?.preferred_language)} · Block {inspection.location_block}
                   {inspection.location_unit ? ` #${inspection.location_unit}` : ''} ·{' '}
                   {inspection.source_type.replace('_', ' ')} · score{' '}
                   {inspection.ai_priority_score ?? '—'} ·{' '}
                   {formatDateTime(inspection.created_at)}
                 </Typography>
 
+                {/* On-demand translation into the viewer's own preferred_language
+                    (set on the Profile page). Hidden entirely for anyone who
+                    hasn't set one — showing an inert "Translate" control to
+                    someone with nothing to translate into would be noise. */}
+                {profile?.preferred_language && (
+                  <Box sx={{ mb: 1.5 }}>
+                    {!translation && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={translating}
+                        startIcon={
+                          translating
+                            ? <CircularProgress size={14} color="inherit" />
+                            : <LanguageOutlinedIcon fontSize="small" />
+                        }
+                        onClick={handleTranslate}
+                      >
+                        {translating
+                          ? 'Translating…'
+                          : `Translate to ${languageLabel(profile.preferred_language)}`}
+                      </Button>
+                    )}
+                    {translation && !translation.was_translated && (
+                      <Typography variant="caption" color="text.secondary">
+                        Already in {languageLabel(profile.preferred_language)}.
+                      </Typography>
+                    )}
+                    {translation && translation.was_translated && (
+                      // Same click-to-flip idiom as the triage queue's priority
+                      // toggle — the label always names the state you'd get by
+                      // clicking away from, i.e. what's on screen right now.
+                      <Chip
+                        size="small"
+                        color="primary"
+                        icon={<LanguageOutlinedIcon fontSize="small" />}
+                        label={
+                          showingTranslation
+                            ? `Showing: ${languageLabel(profile.preferred_language)} translation`
+                            : 'Showing: Original'
+                        }
+                        onClick={() => setShowingTranslation((s) => !s)}
+                      />
+                    )}
+                    {translateError && (
+                      <Alert
+                        severity="warning"
+                        sx={{ mt: 1 }}
+                        onClose={() => setTranslateError(null)}
+                      >
+                        {translateError}
+                      </Alert>
+                    )}
+                  </Box>
+                )}
+
                 {inspection.description ? (
                   <Typography variant="body1" sx={{ mb: 2, whiteSpace: 'pre-wrap' }}>
-                    {inspection.description}
+                    {showingTranslation ? translation.description : inspection.description}
                   </Typography>
                 ) : (
                   <Typography
