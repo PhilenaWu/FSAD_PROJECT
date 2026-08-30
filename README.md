@@ -382,13 +382,6 @@ The schema is 18 tables, defined across the numbered files in `backend/migration
 - `helmet` security headers, CORS locked to `FRONTEND_URL` (Express and
   Socket.IO), a 1 MB body cap, and `express-rate-limit` across all routes.
 
----
-
-## UC-005 — Manager Analytics Dashboard (Hasini)
-
-The `/dashboard` route (manager role) provides estate analytics computed live
-from the `inspections` table.
-
 ### Features
 
 - **KPI row** — new reports (with % movement vs the prior 30 days), open
@@ -463,32 +456,6 @@ if `Demo:` records exist). Contractors come from `016_seed_reference_data.sql`.
 - Backend: `npx jest tests/hasini/analytics.test.js tests/hasini/export.test.js tests/hasini/recommendations.test.js`
 - Frontend: `npx vitest run tests/hasini` in `frontend/` (dashboard
   panels, cost analytics, CSV import/export, contacts)
-
-### Demo script (~3 min)
-
-1. Log in as manager → dashboard: point out the KPI movement ("+X% new
-   reports vs last month") and the AI alert cards with estimated cost.
-2. Filter to Block 44A → all charts re-query; copy the URL to show the view
-   is shareable.
-3. Import a what-if CSV (lift-surge scenario) → heatmap cell rings, dashed
-   trend line, SLA delta; flick Combined → Imported only → Clear preview.
-4. Click **Export to PowerPoint** → open the deck: native editable charts,
-   ready for the weekly meeting.
-5. Drill-throughs: click a heatmap cell → triage queue pre-filtered to that
-   block + category; click a scorecard overdue count → that contractor's
-   overdue work, shown as a removable filter chip. Browser back returns to
-   the dashboard with its filters intact.
-6. Edge cases (30 s, scripted): set From after To (inline error, no request
-   fired, data stays); filter to an empty result (CSV button disables with a
-   tooltip); import a malformed CSV, then one with a bad date (row-numbered
-   errors, nothing breaks); point out an On Hold record is **not** counted
-   overdue — the clock is paused (G11), matching the chase emails.
-
-## UC-012 — Vendor Account Lifecycle (Hasini)
-
-The `/admin/vendors` route (admin role) manages external vendor (contractor)
-accounts whose access is tied to their servicing contract: onboarding,
-contract-driven auto-suspension, renewal, and a per-vendor audit trail.
 
 ### Features
 
@@ -590,14 +557,3 @@ lockout.
 - Backend: `npx jest tests/hasini/vendors.test.js` (onboarding validation +
   rollback, role gating, expiry job, suspended-login 403, renew/suspend,
   edit + history)
-
-### Demo script (~2 min)
-
-1. Vendors table: expiry countdown chips (red/amber/green), the 30-day
-   warning banner, hover a holder for their access reason.
-2. Onboard a vendor live — watch the login email auto-suggest and Generate a
-   password; give it a contract that ended last month.
-3. Click **Run expiry check** — the new vendor flips to suspended without a
-   reload (Socket.IO), and its History shows "Auto-Suspended — System".
-4. Try logging in as that vendor → "This account is suspended."
-5. **Renew** with next year's date (+ new contract PDF) → active again.
